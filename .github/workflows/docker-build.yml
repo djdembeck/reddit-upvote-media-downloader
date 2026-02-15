@@ -19,6 +19,12 @@ jobs:
       packages: write
 
     steps:
+      - name: Debug Docker
+        run: |
+          docker --version
+          docker buildx version
+          docker info
+          
       - name: Checkout repository
         uses: actions/checkout@v4
 
