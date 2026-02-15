@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Data directories (will be mounted as volumes)
+data/
+output/
+*.db
+
+# Environment files
+.env
+.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+.test/
+
+# Temporary files
+*.tmp
+*.temp
+*.log

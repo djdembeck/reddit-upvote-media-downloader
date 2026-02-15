@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  reddit-downloader:
+    build: .
+    container_name: reddit-media-downloader
+    environment:
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT}
+      - REDDIT_USERNAME=${REDDIT_USERNAME}
+      - REDDIT_PASSWORD=${REDDIT_PASSWORD}
+      - OUTPUT_DIR=/data/output
+      - DB_PATH=/data/posts.db
+      - CONCURRENCY=${CONCURRENCY:-10}
+      - FETCH_LIMIT=${FETCH_LIMIT:-100}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - MIGRATE_ON_START=${MIGRATE_ON_START:-true}
+    volumes:
+      - ./data:/data
+      - ./.env:/.env:ro
+    restart: unless-stopped
+    # Run once per hour using sleep loop
+    command: >
+      sh -c "while true; do
+        ./reddit-downloader &&
+        echo '[$(date)] Download cycle complete. Sleeping for 1 hour...' &&
+        sleep 3600;
+      done"
