@@ -72,6 +72,64 @@ LOG_LEVEL=info                    # debug, info, warn, error
 MIGRATE_ON_START=true             # Auto-migrate from bdfr-html
 ```
 
+## Environment Variables
+
+The application reads all configuration from environment variables. These can be set via:
+- `.env` file (loaded automatically)
+- Docker environment variables
+- System environment variables
+
+### Required Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `REDDIT_CLIENT_ID` | Reddit API client ID | `U-6gk4ZCh3IeNQ` |
+| `REDDIT_CLIENT_SECRET` | Reddit API client secret | `7CZHY6AmKweZME5s50SfDGylaPg` |
+| `REDDIT_USERNAME` | Your Reddit username | `myusername` |
+
+### Optional Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDDIT_USER_AGENT` | `reddit-media-downloader/1.0` | Reddit API user agent string |
+| `REDDIT_PASSWORD` | *(empty)* | Reddit password (optional for OAuth) |
+| `OUTPUT_DIR` | `./data/output` | Directory to save downloaded media |
+| `DB_PATH` | `./data/posts.db` | SQLite database file path |
+| `CONCURRENCY` | `10` | Number of parallel downloads |
+| `FETCH_LIMIT` | `100` | Number of posts to fetch per cycle |
+| `MAX_RETRIES` | `3` | Retry attempts for failed downloads |
+| `LOG_LEVEL` | `info` | Logging level: `debug`, `info`, `warn`, `error` |
+| `MIGRATE_ON_START` | `true` | Auto-import existing bdfr-html data on first run |
+
+### Example `.env` File
+
+```env
+# Required
+REDDIT_CLIENT_ID=your_client_id_here
+REDDIT_CLIENT_SECRET=your_client_secret_here
+REDDIT_USERNAME=your_reddit_username
+
+# Optional - using defaults
+OUTPUT_DIR=./downloads
+CONCURRENCY=20
+LOG_LEVEL=debug
+```
+
+### Docker Compose Environment
+
+In `docker-compose.yml`:
+
+```yaml
+services:
+  reddit-downloader:
+    environment:
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
+      - REDDIT_USERNAME=${REDDIT_USERNAME}
+      - CONCURRENCY=15
+      - LOG_LEVEL=info
+```
+
 ## Migration from bdfr-html
 
 The downloader automatically migrates existing bdfr-html data on first run:
