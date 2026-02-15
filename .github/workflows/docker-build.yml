@@ -20,6 +20,7 @@ jobs:
 
     steps:
       - name: Debug Docker
+        if: github.event_name != 'pull_request'
         run: |
           docker --version
           docker buildx version
