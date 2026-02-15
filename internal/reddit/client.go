@@ -182,10 +182,34 @@ func NewClient(config *Config, tokenStore TokenStore) (*Client, error) {
 }
 
 // authenticate performs OAuth2 authentication with client credentials.
+// It will use refresh_token grant if a refresh token exists, otherwise
+// falls back to password grant.
 func (c *Client) authenticate(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Check if we have a refresh token available
+	if c.token != nil && c.token.RefreshToken != "" {
+		// Use oauth2.TokenSource to refresh the token
+		tokenSource := c.oauthConfig.TokenSource(ctx, c.token)
+		newToken, err := tokenSource.Token()
+		if err == nil && newToken != nil {
+			c.token = newToken
+
+			// Save token if store is available
+			if c.tokenStore != nil {
+				if err := c.tokenStore.SaveToken(c.token); err != nil {
+					// Log but don't fail if save fails
+					// fmt.Printf("warning: failed to save token: %v\n", err)
+				}
+			}
+
+			return nil
+		}
+		// If refresh fails, continue to password grant
+	}
+
+	// Fall back to password grant
 	// Create custom HTTP client for token request with proper User-Agent
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,

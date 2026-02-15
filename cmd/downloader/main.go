@@ -103,6 +103,17 @@ func main() {
 		}
 	}
 
+	if refreshToken := os.Getenv("REDDIT_REFRESH_TOKEN"); refreshToken != "" {
+		token := &oauth2.Token{
+			RefreshToken: refreshToken,
+			TokenType:    "Bearer",
+			Expiry:       time.Now(),
+		}
+		if err := tokenStore.SaveToken(token); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving refresh token from env: %v\n", err)
+		}
+	}
+
 	redditClient, err := reddit.NewClient(redditConfig, tokenStore)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
