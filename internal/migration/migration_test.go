@@ -186,7 +186,10 @@ func TestMigratorActualMove(t *testing.T) {
 		t.Error("Source file should be removed")
 	}
 
-	movedContent, _ := os.ReadFile(destFile)
+	movedContent, err := os.ReadFile(destFile)
+	if err != nil {
+		t.Fatalf("Failed to read moved file: %v", err)
+	}
 	if string(movedContent) != string(content) {
 		t.Error("Content should match")
 	}
@@ -282,7 +285,10 @@ func TestRollback(t *testing.T) {
 		},
 	}
 
-	logData, _ := json.Marshal(log)
+	logData, err := json.Marshal(log)
+	if err != nil {
+		t.Fatalf("Failed to marshal log: %v", err)
+	}
 	if err := os.WriteFile(logPath, logData, 0644); err != nil {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
