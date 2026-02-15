@@ -2,6 +2,7 @@
 package reddit
 
 import (
+	"strings"
 	"time"
 
 	"github.com/user/reddit-media-downloader/internal/storage"
@@ -181,7 +182,7 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 // isImageURL checks if a URL points to an image.
 func isImageURL(url string) bool {
 	imageExtensions := []string{".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
-	lowerURL := url
+	lowerURL := strings.ToLower(url)
 	for _, ext := range imageExtensions {
 		if len(lowerURL) > len(ext) && lowerURL[len(lowerURL)-len(ext):] == ext {
 			return true
@@ -193,7 +194,7 @@ func isImageURL(url string) bool {
 // isVideoURL checks if a URL points to a video.
 func isVideoURL(url string) bool {
 	videoExtensions := []string{".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".wmv"}
-	lowerURL := url
+	lowerURL := strings.ToLower(url)
 	for _, ext := range videoExtensions {
 		if len(lowerURL) > len(ext) && lowerURL[len(lowerURL)-len(ext):] == ext {
 			return true
@@ -203,21 +204,7 @@ func isVideoURL(url string) bool {
 	videoHosts := []string{"youtube.com", "youtu.be", "vimeo.com", "streamable.com", "gfycat.com", "redgifs.com"}
 	for _, host := range videoHosts {
 		// Simple string contains check
-		if contains(lowerURL, host) {
-			return true
-		}
-	}
-	return false
-}
-
-// contains checks if substr is in s.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
+		if strings.Contains(lowerURL, host) {
 			return true
 		}
 	}

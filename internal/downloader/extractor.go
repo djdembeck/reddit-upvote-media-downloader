@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -109,7 +110,8 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	for i, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
-			return nil, fmt.Errorf("gallery media metadata missing for %s", item.MediaID)
+			log.Printf("Warning: gallery media metadata missing for %s", item.MediaID)
+			continue
 		}
 
 		mediaURL := strings.TrimSpace(meta.Source.URL)
@@ -117,7 +119,8 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			mediaURL = strings.TrimSpace(meta.Previews[0].URL)
 		}
 		if mediaURL == "" {
-			return nil, fmt.Errorf("gallery media URL missing for %s", item.MediaID)
+			log.Printf("Warning: gallery media URL missing for %s", item.MediaID)
+			continue
 		}
 
 		mediaURL = decodeMediaURL(mediaURL)
