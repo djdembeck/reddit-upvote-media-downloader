@@ -227,7 +227,7 @@ func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *do
 
 	// Mark posts as downloaded
 	for _, post := range newPosts {
-		post.DownloadedAt = time.Now().Unix()
+		post.DownloadedAt = time.Now()
 		if err := db.SavePost(ctx, &post); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving post: %v\n", err)
 		}
