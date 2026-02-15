@@ -1,5 +1,6 @@
 # Binaries
 reddit-downloader
+main
 *.exe
 *.dll
 *.so
@@ -7,6 +8,7 @@ reddit-downloader
 
 # Data directories
 data/
+output/
 *.db
 *.db-journal
 
