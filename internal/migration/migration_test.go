@@ -123,9 +123,13 @@ func TestMigratorDryRun(t *testing.T) {
 	sourceDir := filepath.Join(tmpDir, "source")
 	destDir := filepath.Join(tmpDir, "dest")
 
-	os.MkdirAll(sourceDir, 0755)
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
 	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	os.WriteFile(testFile, []byte("test"), 0644)
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
 
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
@@ -155,10 +159,14 @@ func TestMigratorActualMove(t *testing.T) {
 	sourceDir := filepath.Join(tmpDir, "source")
 	destDir := filepath.Join(tmpDir, "dest")
 
-	os.MkdirAll(sourceDir, 0755)
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
 	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
 	content := []byte("test content")
-	os.WriteFile(testFile, content, 0644)
+	if err := os.WriteFile(testFile, content, 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
 
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
@@ -189,9 +197,13 @@ func TestMigratorOrphaned(t *testing.T) {
 	sourceDir := filepath.Join(tmpDir, "source")
 	destDir := filepath.Join(tmpDir, "dest")
 
-	os.MkdirAll(sourceDir, 0755)
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
 	testFile := filepath.Join(sourceDir, "Orphaned_xyz789.jpg")
-	os.WriteFile(testFile, []byte("test"), 0644)
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
 
 	postMap := map[string]PostInfo{}
 
@@ -214,9 +226,13 @@ func TestMigratorUserRouting(t *testing.T) {
 	sourceDir := filepath.Join(tmpDir, "source")
 	destDir := filepath.Join(tmpDir, "dest")
 
-	os.MkdirAll(sourceDir, 0755)
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
 	testFile := filepath.Join(sourceDir, "User_1r0z7xp.jpeg")
-	os.WriteFile(testFile, []byte("test"), 0644)
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
 
 	postMap := map[string]PostInfo{
 		"1r0z7xp": {PostID: "1r0z7xp", Subreddit: "u_milakittenx", Username: "milakittenx", IsUserPost: true},
@@ -239,12 +255,18 @@ func TestRollback(t *testing.T) {
 	destDir := filepath.Join(tmpDir, "dest")
 	originalDir := filepath.Join(tmpDir, "original")
 
-	os.MkdirAll(filepath.Join(destDir, "pics"), 0755)
-	os.MkdirAll(originalDir, 0755)
+	if err := os.MkdirAll(filepath.Join(destDir, "pics"), 0755); err != nil {
+		t.Fatalf("Failed to create dest directory: %v", err)
+	}
+	if err := os.MkdirAll(originalDir, 0755); err != nil {
+		t.Fatalf("Failed to create original directory: %v", err)
+	}
 
 	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
 	originalFile := filepath.Join(originalDir, "Test_abc123.jpg")
-	os.WriteFile(destFile, []byte("test content"), 0644)
+	if err := os.WriteFile(destFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to write dest file: %v", err)
+	}
 
 	log := MigrationLog{
 		Version:   "1.0",
@@ -261,7 +283,9 @@ func TestRollback(t *testing.T) {
 	}
 
 	logData, _ := json.Marshal(log)
-	os.WriteFile(logPath, logData, 0644)
+	if err := os.WriteFile(logPath, logData, 0644); err != nil {
+		t.Fatalf("Failed to write log file: %v", err)
+	}
 
 	rb := NewRollback(logPath)
 	rollbackLog, err := rb.Execute()
@@ -299,7 +323,9 @@ func TestRollbackMissingFile(t *testing.T) {
 	}
 
 	logData, _ := json.Marshal(log)
-	os.WriteFile(logPath, logData, 0644)
+	if err := os.WriteFile(logPath, logData, 0644); err != nil {
+		t.Fatalf("Failed to write log file: %v", err)
+	}
 
 	rb := NewRollback(logPath)
 	rollbackLog, err := rb.Execute()
