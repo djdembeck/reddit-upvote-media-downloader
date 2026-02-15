@@ -101,12 +101,22 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 		return record
 	}
 
-	srcInfo, _ := os.Stat(op.DestPath)
-	dstInfo, _ := os.Stat(op.SourcePath)
+	srcInfo, err := os.Stat(op.DestPath)
+	if err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("stat source file %s: %v", op.DestPath, err)
+		return record
+	}
+	dstInfo, err := os.Stat(op.SourcePath)
+	if err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("stat destination file %s: %v", op.SourcePath, err)
+		return record
+	}
 	if srcInfo.Size() != dstInfo.Size() {
 		os.Remove(op.SourcePath)
 		record.Status = "error"
-		record.Error = "size mismatch after copy"
+		record.Error = fmt.Sprintf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 		return record
 	}
 
@@ -116,8 +126,11 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 		return record
 	}
 
+	// Attempt to remove empty destination directory (ignore errors if not empty)
 	destDir := filepath.Dir(op.DestPath)
-	os.Remove(destDir)
+	if entries, err := os.ReadDir(destDir); err == nil && len(entries) == 0 {
+		os.Remove(destDir)
+	}
 
 	record.Status = "success"
 	return record
