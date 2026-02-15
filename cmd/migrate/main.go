@@ -37,11 +37,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Default log path
-	if *logFile == "" {
-		*logFile = filepath.Join(*destDir, ".migration_log.json")
-	}
-
 	runMigration(*sourceDir, *destDir, *indexPath, *logFile, *dryRun)
 }
 
@@ -70,6 +65,11 @@ func runMigration(sourceDir, destDir, indexPath, logFile string, dryRun bool) {
 	if err := migrator.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Set default log path after destDir is guaranteed to exist (created by migrator.Execute())
+	if logFile == "" {
+		logFile = filepath.Join(destDir, ".migration_log.json")
 	}
 
 	// Save log
@@ -112,6 +112,7 @@ func runRollback(logPath string) {
 	rollbackPath := logPath + ".rollback_" + time.Now().Format("20060102_150405") + ".json"
 	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving rollback log: %v\n", err)
+		os.Exit(1)
 	}
 
 	fmt.Println("Rollback Summary")

@@ -98,10 +98,12 @@ func (m *Migrator) processFile(filename string) {
 
 func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 	var subdir string
-	if info.IsUserPost {
+	if info.IsUserPost && info.Username != "" {
 		subdir = filepath.Join("users", info.Username)
-	} else {
+	} else if info.Subreddit != "" {
 		subdir = SanitizePath(info.Subreddit)
+	} else {
+		subdir = "unknown"
 	}
 	return filepath.Join(m.DestDir, subdir, filename)
 }
@@ -119,17 +121,24 @@ func (m *Migrator) moveFile(src, dst string) error {
 	}
 
 	// Verify
-	srcInfo, _ := os.Stat(src)
-	dstInfo, _ := os.Stat(dst)
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("stat source file %s: %w", src, err)
+	}
+	dstInfo, err := os.Stat(dst)
+	if err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("stat destination file %s: %w", dst, err)
+	}
 	if srcInfo.Size() != dstInfo.Size() {
 		os.Remove(dst)
-		return fmt.Errorf("size mismatch after copy")
+		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 	}
 
 	// Delete source
 	if err := os.Remove(src); err != nil {
-		os.Remove(dst)
-		return fmt.Errorf("remove source: %w", err)
+		return fmt.Errorf("remove source %s: %w", src, err)
 	}
 
 	return nil
