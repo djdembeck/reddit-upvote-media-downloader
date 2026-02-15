@@ -147,6 +147,57 @@ The downloader automatically migrates existing bdfr-html data on first run:
 2. Start the downloader with `MIGRATE_ON_START=true`
 3. Logs will show: *"Migrated X existing posts from bdfr-html"*
 
+## File Reorganization (Stash/Hydrus Users)
+
+If your media is organized in a flat directory structure and you want to reorganize it into subreddit-based folders for Stash or Hydrus, use the migration tool:
+
+### Build the migration tool
+```bash
+go build -o migrate cmd/migrate/main.go
+```
+
+### Dry-run (preview changes)
+```bash
+./migrate --source /porn/media --dest ./output --index /porn/index.html --dry-run
+```
+
+### Execute migration
+```bash
+./migrate --source /porn/media --dest ./output --index /porn/index.html
+```
+
+### Output structure
+```
+output/
+├── TeenBlow/                          # Regular subreddit posts
+│   └── 18yo college slut with insane technique_1r4wjj5.mp4
+├── users/                             # User profile posts
+│   └── milakittenx/
+│       └── I couldn't post this_1r0z7xp.jpeg
+└── .migration_log.json                # Migration log for rollback
+```
+
+### Rollback (if needed)
+```bash
+./migrate --rollback --log-file ./output/.migration_log.json
+```
+
+### How it works
+1. **Parses** `/porn/index.html` to extract POSTID→subreddit mapping
+2. **Extracts POSTID** from filenames (`{TITLE}_{POSTID}.{ext}`)
+3. **Detects user posts** (subreddits starting with `u_`) and routes to `users/{username}/`
+4. **Skips orphaned files** that don't match any POSTID in index.html
+5. **Safe file moves** using copy-verify-delete pattern
+6. **Creates JSON log** for rollback and audit
+
+### Features
+- Dry-run mode for preview
+- Cross-filesystem support
+- User profile post detection
+- Comprehensive JSON logging
+- Full rollback support
+- Handles orphaned files
+
 ## Reddit OAuth Setup
 
 1. Go to https://www.reddit.com/prefs/apps
@@ -165,13 +216,20 @@ The downloader automatically migrates existing bdfr-html data on first run:
 ```
 reddit-media-downloader/
 ├── cmd/
-│   └── downloader/
-│       └── main.go              # Entry point
+│   ├── downloader/
+│   │   └── main.go              # Main downloader entry point
+│   └── migrate/
+│       └── main.go              # File reorganization tool
 ├── internal/
 │   ├── config/                  # Configuration
 │   ├── reddit/                  # Reddit API client
 │   ├── downloader/              # Media download logic
-│   └── storage/                 # SQLite database
+│   ├── storage/                 # SQLite database
+│   └── migration/               # File reorganization library
+│       ├── extractor.go         # POSTID extraction
+│       ├── parser.go            # HTML parsing
+│       ├── migrator.go          # Migration logic
+│       └── rollback.go          # Rollback functionality
 ├── Dockerfile                   # Multi-stage build
 ├── docker-compose.yml           # Docker Compose config
 ├── .env.example                 # Environment template
