@@ -34,6 +34,8 @@ func (p *HTMLParser) ParseIndexHTML(indexPath string) error {
 		return fmt.Errorf("open index.html: %w", err)
 	}
 
+	p.PostMap = make(map[string]PostInfo)
+
 	contentStr := string(content)
 
 	postLinkPattern := regexp.MustCompile(`<a\s+href="([a-zA-Z0-9]+)\.html"`)
