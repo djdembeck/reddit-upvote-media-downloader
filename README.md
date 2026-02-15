@@ -151,23 +151,27 @@ The downloader automatically migrates existing bdfr-html data on first run:
 
 If your media is organized in a flat directory structure and you want to reorganize it into subreddit-based folders for Stash or Hydrus, use the migration tool:
 
+
 ### Build the migration tool
 ```bash
 go build -o migrate cmd/migrate/main.go
 ```
+
 
 ### Dry-run (preview changes)
 ```bash
 ./migrate --source /porn/media --dest ./output --index /porn/index.html --dry-run
 ```
 
+
 ### Execute migration
 ```bash
 ./migrate --source /porn/media --dest ./output --index /porn/index.html
 ```
 
+
 ### Output structure
-```
+```text
 output/
 ├── TeenBlow/                          # Regular subreddit posts
 │   └── 18yo college slut with insane technique_1r4wjj5.mp4
@@ -177,10 +181,12 @@ output/
 └── .migration_log.json                # Migration log for rollback
 ```
 
+
 ### Rollback (if needed)
 ```bash
 ./migrate --rollback --log-file ./output/.migration_log.json
 ```
+
 
 ### How it works
 1. **Parses** `/porn/index.html` to extract POSTID→subreddit mapping
@@ -189,6 +195,7 @@ output/
 4. **Skips orphaned files** that don't match any POSTID in index.html
 5. **Safe file moves** using copy-verify-delete pattern
 6. **Creates JSON log** for rollback and audit
+
 
 ### Features
 - Dry-run mode for preview
