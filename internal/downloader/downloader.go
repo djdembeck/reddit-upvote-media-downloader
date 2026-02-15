@@ -150,7 +150,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) error 
 		if err != nil {
 			return err
 		}
-		filename = fmt.Sprintf("%s_1%s", item.PostID, ext)
+		filename = fmt.Sprintf("untitled_%s%s", item.PostID, ext)
 	}
 
 	subreddit := sanitizeSubreddit(item.Subreddit)
@@ -159,19 +159,23 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) error 
 		return fmt.Errorf("create subreddit directory: %w", err)
 	}
 
-	filePath := filepath.Join(outputDir, filename)
-	if fileExists(filePath) {
-		d.logger.Printf("skip existing file %s", filePath)
+	// Check if any file containing this post ID already exists (bdfr-html style matching)
+	existingFile := findExistingFile(outputDir, item.PostID)
+	if existingFile != "" {
+		d.logger.Printf("skip existing file %s", existingFile)
 		return nil
 	}
 
+	filePath := filepath.Join(outputDir, filename)
 	var lastErr error
 	for attempt := 1; attempt <= d.config.Retries; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if fileExists(filePath) {
-			d.logger.Printf("skip existing file %s", filePath)
+		// Re-check for existing file before each attempt
+		existingFile = findExistingFile(outputDir, item.PostID)
+		if existingFile != "" {
+			d.logger.Printf("skip existing file %s", existingFile)
 			return nil
 		}
 
@@ -344,4 +348,20 @@ func combineErrors(errs ...error) error {
 	}
 
 	return joinErrors("multiple errors", combined)
+}
+
+func findExistingFile(dir, postID string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.Contains(entry.Name(), postID) {
+			return filepath.Join(dir, entry.Name())
+		}
+	}
+	return ""
 }

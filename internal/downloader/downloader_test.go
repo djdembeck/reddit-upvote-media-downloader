@@ -92,8 +92,8 @@ func TestExtractorRedditImage(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("Extract() items = %d, want 1", len(items))
 	}
-	if items[0].Filename != "abc123_1.jpg" {
-		t.Errorf("Filename = %s, want abc123_1.jpg", items[0].Filename)
+	if items[0].Filename != "untitled_abc123.jpg" {
+		t.Errorf("Filename = %s, want untitled_abc123.jpg", items[0].Filename)
 	}
 	if items[0].MediaType != "image" {
 		t.Errorf("MediaType = %s, want image", items[0].MediaType)
@@ -121,11 +121,11 @@ func TestExtractorGallery(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("Extract() items = %d, want 2", len(items))
 	}
-	if items[0].Filename != "gal123_1.jpg" {
-		t.Errorf("Filename = %s, want gal123_1.jpg", items[0].Filename)
+	if items[0].Filename != "untitled_gal123.jpg" {
+		t.Errorf("Filename = %s, want untitled_gal123.jpg", items[0].Filename)
 	}
-	if items[1].Filename != "gal123_2.png" {
-		t.Errorf("Filename = %s, want gal123_2.png", items[1].Filename)
+	if items[1].Filename != "untitled_gal123.png" {
+		t.Errorf("Filename = %s, want untitled_gal123.png", items[1].Filename)
 	}
 }
 
@@ -285,8 +285,8 @@ func TestExtractorDirectLink(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("Extract() items = %d, want 1", len(items))
 	}
-	if items[0].Filename != "dir1_1.webm" {
-		t.Errorf("Filename = %s, want dir1_1.webm", items[0].Filename)
+	if items[0].Filename != "untitled_dir1.webm" {
+		t.Errorf("Filename = %s, want untitled_dir1.webm", items[0].Filename)
 	}
 }
 
@@ -296,8 +296,8 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 	if err := os.MkdirAll(subredditDir, 0755); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
-	filePath := filepath.Join(subredditDir, "abc_1.jpg")
-	if err := os.WriteFile(filePath, []byte("existing"), 0644); err != nil {
+	bdfrStyleFilePath := filepath.Join(subredditDir, "test_abc.jpg")
+	if err := os.WriteFile(bdfrStyleFilePath, []byte("existing"), 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 

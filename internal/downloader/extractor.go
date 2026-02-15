@@ -107,7 +107,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	}
 
 	items := make([]Downloadable, 0, len(post.GalleryData.Items))
-	for i, item := range post.GalleryData.Items {
+	for _, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
 			log.Printf("Warning: gallery media metadata missing for %s", item.MediaID)
@@ -129,7 +129,9 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			return nil, err
 		}
 
-		filename := fmt.Sprintf("%s_%d%s", post.ID, i+1, ext)
+		// Sanitize title for filesystem and create filename in bdfr-html format: {TITLE}_{POSTID}.{ext}
+		sanitizedTitle := sanitizeFilename(post.Title)
+		filename := fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -412,7 +414,13 @@ func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, me
 		if mediaType != "" {
 			resolvedType = mediaType
 		}
-		filename := fmt.Sprintf("%s_%d%s", post.ID, i+1, ext)
+		sanitizedTitle := sanitizeFilename(post.Title)
+		var filename string
+		if len(urls) > 1 {
+			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
+		} else {
+			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -550,4 +558,48 @@ func isDirectMediaURL(parsed *url.URL) bool {
 func isSupportedExtension(ext string) bool {
 	_, ok := supportedExtensions[strings.ToLower(ext)]
 	return ok
+}
+
+func sanitizeFilename(title string) string {
+	if title == "" {
+		return "untitled"
+	}
+
+	// Remove/replace invalid filesystem characters
+	sanitized := strings.Map(func(r rune) rune {
+		switch r {
+		// Path separators
+		case '/', '\\':
+			return '-'
+		// Windows reserved characters
+		case ':', '*', '?', '"', '<', '>', '|':
+			return '_'
+		// Control characters
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31:
+			return -1
+		default:
+			return r
+		}
+	}, title)
+
+	// Trim leading/trailing spaces and dots
+	sanitized = strings.TrimSpace(sanitized)
+	sanitized = strings.Trim(sanitized, ".")
+
+	// Collapse multiple spaces
+	for strings.Contains(sanitized, "  ") {
+		sanitized = strings.ReplaceAll(sanitized, "  ", " ")
+	}
+
+	// Limit length to avoid filesystem issues
+	if len(sanitized) > 100 {
+		sanitized = sanitized[:100]
+		sanitized = strings.TrimSpace(sanitized)
+		sanitized = strings.Trim(sanitized, ".")
+	}
+
+	if sanitized == "" {
+		return "untitled"
+	}
+	return sanitized
 }
