@@ -95,6 +95,13 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 		return record
 	}
 
+	// Check if source file already exists (would overwrite)
+	if _, err := os.Stat(op.SourcePath); err == nil {
+		record.Status = "error"
+		record.Error = "source file exists, aborting rollback"
+		return record
+	}
+
 	if err := copyFile(op.DestPath, op.SourcePath); err != nil {
 		record.Status = "error"
 		record.Error = fmt.Sprintf("copy file: %v", err)
