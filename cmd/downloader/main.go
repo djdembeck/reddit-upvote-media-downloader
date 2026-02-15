@@ -90,6 +90,19 @@ func main() {
 	}
 
 	tokenStore := &memoryTokenStore{}
+
+	// Check for existing OAuth access token from environment variable
+	if accessToken := os.Getenv("REDDIT_ACCESS_TOKEN"); accessToken != "" {
+		token := &oauth2.Token{
+			AccessToken: accessToken,
+			TokenType:   "Bearer",
+			Expiry:      time.Now().Add(1 * time.Hour),
+		}
+		if err := tokenStore.SaveToken(token); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving token from env: %v\n", err)
+		}
+	}
+
 	redditClient, err := reddit.NewClient(redditConfig, tokenStore)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
