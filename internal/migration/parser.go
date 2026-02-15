@@ -25,15 +25,13 @@ func (p *HTMLParser) ParseIndexHTML(indexPath string) error {
 	}
 	defer file.Close()
 
-	// Patterns for extracting data from bdfr-html index.html format
-	// POSTID from <a href="POSTID.html"> in title section
-	postLinkPattern := regexp.MustCompile(`<a href="([a-zA-Z0-9]+)\.html">`)
-	// Subreddit from <span class="subreddit">r/SUBREDDIT</span>
-	subredditPattern := regexp.MustCompile(`<span class="subreddit">r/([^<]+)</span>`)
-	// Username from <span class="user">u/USERNAME</span>
-	userPattern := regexp.MustCompile(`<span class="user">u/([^<]+)</span>`)
+	postLinkPattern := regexp.MustCompile(`<a\s+href="([a-zA-Z0-9]+)\.html"`)
+	subredditPattern := regexp.MustCompile(`<span\s+class="subreddit"[^>]*>r/([^<]+)</span>`)
+	userPattern := regexp.MustCompile(`<span\s+class="user"[^>]*>u/([^<]+)</span>`)
 
 	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
 	var currentPostID string
 	var currentSubreddit string
 	var currentUsername string
@@ -72,10 +70,7 @@ func (p *HTMLParser) ParseIndexHTML(indexPath string) error {
 }
 
 func (p *HTMLParser) addPost(postID, subreddit, username string) {
-	// Clean subreddit by stripping "r/" prefix if present
 	cleanSubreddit := strings.TrimPrefix(subreddit, "r/")
-
-	// User profile posts have subreddit starting with "u_"
 	isUserPost := strings.HasPrefix(cleanSubreddit, "u_")
 
 	p.PostMap[postID] = PostInfo{

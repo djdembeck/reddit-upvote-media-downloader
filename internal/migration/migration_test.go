@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -229,5 +230,84 @@ func TestMigratorUserRouting(t *testing.T) {
 	destFile := filepath.Join(destDir, "users", "milakittenx", "User_1r0z7xp.jpeg")
 	if _, err := os.Stat(destFile); err != nil {
 		t.Errorf("Should be in users/{username}/: %v", err)
+	}
+}
+
+func TestRollback(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+	destDir := filepath.Join(tmpDir, "dest")
+	originalDir := filepath.Join(tmpDir, "original")
+
+	os.MkdirAll(filepath.Join(destDir, "pics"), 0755)
+	os.MkdirAll(originalDir, 0755)
+
+	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
+	originalFile := filepath.Join(originalDir, "Test_abc123.jpg")
+	os.WriteFile(destFile, []byte("test content"), 0644)
+
+	log := MigrationLog{
+		Version:   "1.0",
+		SourceDir: originalDir,
+		DestDir:   destDir,
+		Operations: []MigrationRecord{
+			{
+				PostID:     "abc123",
+				SourcePath: originalFile,
+				DestPath:   destFile,
+				Status:     "moved",
+			},
+		},
+	}
+
+	logData, _ := json.Marshal(log)
+	os.WriteFile(logPath, logData, 0644)
+
+	rb := NewRollback(logPath)
+	rollbackLog, err := rb.Execute()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rollbackLog.SuccessCount != 1 {
+		t.Errorf("SuccessCount = %d, want 1", rollbackLog.SuccessCount)
+	}
+
+	if _, err := os.Stat(originalFile); err != nil {
+		t.Errorf("Original file should be restored: %v", err)
+	}
+
+	if _, err := os.Stat(destFile); !os.IsNotExist(err) {
+		t.Error("Dest file should be removed")
+	}
+}
+
+func TestRollbackMissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+
+	log := MigrationLog{
+		Version: "1.0",
+		Operations: []MigrationRecord{
+			{
+				PostID:     "abc123",
+				SourcePath: "/nonexistent/source.jpg",
+				DestPath:   "/nonexistent/dest.jpg",
+				Status:     "moved",
+			},
+		},
+	}
+
+	logData, _ := json.Marshal(log)
+	os.WriteFile(logPath, logData, 0644)
+
+	rb := NewRollback(logPath)
+	rollbackLog, err := rb.Execute()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rollbackLog.ErrorCount != 1 {
+		t.Errorf("ErrorCount = %d, want 1", rollbackLog.ErrorCount)
 	}
 }

@@ -95,14 +95,27 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 		return record
 	}
 
-	// Move back
-	if err := os.Rename(op.DestPath, op.SourcePath); err != nil {
+	if err := copyFile(op.DestPath, op.SourcePath); err != nil {
 		record.Status = "error"
-		record.Error = fmt.Sprintf("rename: %v", err)
+		record.Error = fmt.Sprintf("copy file: %v", err)
 		return record
 	}
 
-	// Try to remove empty dest dir
+	srcInfo, _ := os.Stat(op.DestPath)
+	dstInfo, _ := os.Stat(op.SourcePath)
+	if srcInfo.Size() != dstInfo.Size() {
+		os.Remove(op.SourcePath)
+		record.Status = "error"
+		record.Error = "size mismatch after copy"
+		return record
+	}
+
+	if err := os.Remove(op.DestPath); err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("remove dest: %v", err)
+		return record
+	}
+
 	destDir := filepath.Dir(op.DestPath)
 	os.Remove(destDir)
 
