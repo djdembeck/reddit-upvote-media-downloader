@@ -73,6 +73,8 @@ func (p *HTMLParser) ParseIndexHTML(indexPath string) error {
 	}
 
 	// Process each post link, finding the closest subreddit and user span
+	// Using two-pointer approach for O(n) complexity
+	subIdx, userIdx := 0, 0
 	for _, pm := range postMatches {
 		if len(pm) < 4 {
 			continue
@@ -81,22 +83,22 @@ func (p *HTMLParser) ParseIndexHTML(indexPath string) error {
 		postID := contentStr[pm[2]:pm[3]]
 		postPos := pm[0]
 
-		// Find the first subreddit span that appears after this post link
+		// Advance subIdx to first subreddit after postPos
+		for subIdx < len(subreddits) && subreddits[subIdx].pos <= postPos {
+			subIdx++
+		}
 		var subreddit string
-		for _, s := range subreddits {
-			if s.pos > postPos {
-				subreddit = s.value
-				break
-			}
+		if subIdx < len(subreddits) {
+			subreddit = subreddits[subIdx].value
 		}
 
-		// Find the first user span that appears after this post link
+		// Advance userIdx to first user after postPos
+		for userIdx < len(users) && users[userIdx].pos <= postPos {
+			userIdx++
+		}
 		var username string
-		for _, u := range users {
-			if u.pos > postPos {
-				username = u.value
-				break
-			}
+		if userIdx < len(users) {
+			username = users[userIdx].value
 		}
 
 		if subreddit != "" {
