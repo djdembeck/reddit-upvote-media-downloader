@@ -85,6 +85,10 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 		record.Status = "error"
 		record.Error = "file not found at destination"
 		return record
+	} else if err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("stat dest: %v", err)
+		return record
 	}
 
 	// Ensure source dir exists
@@ -99,6 +103,10 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 	if _, err := os.Stat(op.SourcePath); err == nil {
 		record.Status = "error"
 		record.Error = "source file exists, aborting rollback"
+		return record
+	} else if !os.IsNotExist(err) {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("stat source: %v", err)
 		return record
 	}
 
