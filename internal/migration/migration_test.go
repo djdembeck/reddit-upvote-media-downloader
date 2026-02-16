@@ -41,11 +41,11 @@ func TestSanitizePath(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"TeenBlow", "TeenBlow"},
-		{"r/TeenBlow", "r_TeenBlow"},
-		{"u_milakittenx", "u_milakittenx"},
-		{"body perfection", "body_perfection"},
-		{"deep-throat", "deep-throat"},
+		{"example_sub", "example_sub"},
+		{"r/example_sub", "r_example_sub"},
+		{"u_example_user", "u_example_user"},
+		{"example_sub2", "example_sub2"},
+		{"example_sub3", "example_sub3"},
 		{"special!@#chars", "special___chars"},
 		{"", "unknown"},
 		{"___", "unknown"},
@@ -68,13 +68,13 @@ func TestHTMLParser(t *testing.T) {
 	htmlContent := `<html><body>
 <div class=post>
     <a href="1r4wjj5.html"><h1>Test Post</h1></a>
-    <span class="subreddit">r/TeenBlow</span>
-    <span class="user">u/angrytoban</span>
+    <span class="subreddit">r/example_sub</span>
+    <span class="user">u/example_user2</span>
 </div>
 <div class=post>
     <a href="1r0z7xp.html"><h1>User Post</h1></a>
-    <span class="subreddit">r/u_milakittenx</span>
-    <span class="user">u/milakittenx</span>
+    <span class="subreddit">r/u_example_user</span>
+    <span class="user">u/example_user</span>
 </div>
 </body></html>`
 
@@ -91,11 +91,11 @@ func TestHTMLParser(t *testing.T) {
 	if info, ok := parser.PostMap["1r4wjj5"]; !ok {
 		t.Error("Missing regular post")
 	} else {
-		if info.Subreddit != "TeenBlow" {
-			t.Errorf("Subreddit = %s, want TeenBlow", info.Subreddit)
+		if info.Subreddit != "example_sub" {
+			t.Errorf("Subreddit = %s, want example_sub", info.Subreddit)
 		}
-		if info.Username != "angrytoban" {
-			t.Errorf("Username = %s, want angrytoban", info.Username)
+		if info.Username != "example_user2" {
+			t.Errorf("Username = %s, want example_user2", info.Username)
 		}
 		if info.IsUserPost {
 			t.Error("IsUserPost should be false")
@@ -106,11 +106,11 @@ func TestHTMLParser(t *testing.T) {
 	if info, ok := parser.PostMap["1r0z7xp"]; !ok {
 		t.Error("Missing user post")
 	} else {
-		if info.Subreddit != "u_milakittenx" {
-			t.Errorf("Subreddit = %s, want u_milakittenx", info.Subreddit)
+		if info.Subreddit != "u_example_user" {
+			t.Errorf("Subreddit = %s, want u_example_user", info.Subreddit)
 		}
-		if info.Username != "milakittenx" {
-			t.Errorf("Username = %s, want milakittenx", info.Username)
+		if info.Username != "example_user" {
+			t.Errorf("Username = %s, want example_user", info.Username)
 		}
 		if !info.IsUserPost {
 			t.Error("IsUserPost should be true")
@@ -238,7 +238,7 @@ func TestMigratorUserRouting(t *testing.T) {
 	}
 
 	postMap := map[string]PostInfo{
-		"1r0z7xp": {PostID: "1r0z7xp", Subreddit: "u_milakittenx", Username: "milakittenx", IsUserPost: true},
+		"1r0z7xp": {PostID: "1r0z7xp", Subreddit: "u_example_user", Username: "example_user", IsUserPost: true},
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false)
@@ -246,7 +246,7 @@ func TestMigratorUserRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	destFile := filepath.Join(destDir, "users", "milakittenx", "User_1r0z7xp.jpeg")
+	destFile := filepath.Join(destDir, "users", "example_user", "User_1r0z7xp.jpeg")
 	if _, err := os.Stat(destFile); err != nil {
 		t.Errorf("Should be in users/{username}/: %v", err)
 	}

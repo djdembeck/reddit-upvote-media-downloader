@@ -22,7 +22,7 @@ A lightweight, efficient Reddit media downloader written in Go. Fetches upvoted 
 
 1. Clone and configure:
 ```bash
-cd /home/djdembeck/projects/github/reddit-media-downloader
+cd /path/to/reddit-media-downloader
 cp .env.example .env
 # Edit .env with your Reddit credentials
 ```
@@ -147,9 +147,9 @@ The downloader automatically migrates existing bdfr-html data on first run:
 2. Start the downloader with `MIGRATE_ON_START=true`
 3. Logs will show: *"Migrated X existing posts from bdfr-html"*
 
-## File Reorganization (Stash/Hydrus Users)
+## File Reorganization Tool
 
-If your media is organized in a flat directory structure and you want to reorganize it into subreddit-based folders for Stash or Hydrus, use the migration tool:
+If your media is organized in a flat directory structure and you want to reorganize it into subreddit-based folders for media management, use the migration tool:
 
 
 ### Build the migration tool
@@ -160,24 +160,24 @@ go build -o migrate cmd/migrate/main.go
 
 ### Dry-run (preview changes)
 ```bash
-./migrate --source /porn/media --dest ./output --index /porn/index.html --dry-run
+./migrate --source /path/to/media --dest ./output --index /path/to/index.html --dry-run
 ```
 
 
 ### Execute migration
 ```bash
-./migrate --source /porn/media --dest ./output --index /porn/index.html
+./migrate --source /path/to/media --dest ./output --index /path/to/index.html
 ```
 
 
 ### Output structure
 ```text
 output/
-├── TeenBlow/                          # Regular subreddit posts
-│   └── 18yo college slut with insane technique_1r4wjj5.mp4
+├── example_subreddit/                 # Regular subreddit posts
+│   └── example_post_title_1r4wjj5.mp4
 ├── users/                             # User profile posts
-│   └── milakittenx/
-│       └── I couldn't post this_1r0z7xp.jpeg
+│   └── example_user/
+│       └── example_post_1r0z7xp.jpeg
 └── .migration_log.json                # Migration log for rollback
 ```
 
@@ -189,7 +189,7 @@ output/
 
 
 ### How it works
-1. **Parses** `/porn/index.html` to extract POSTID→subreddit mapping
+1. **Parses** `/path/to/index.html` to extract POSTID→subreddit mapping
 2. **Extracts POSTID** from filenames (`{TITLE}_{POSTID}.{ext}`)
 3. **Detects user posts** (subreddits starting with `u_`) and routes to `users/{username}/`
 4. **Skips orphaned files** that don't match any POSTID in index.html
