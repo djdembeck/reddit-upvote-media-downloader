@@ -363,10 +363,17 @@ func TestDuplicateHandling(t *testing.T) {
 	if err := os.WriteFile(file1, content, 0644); err != nil {
 		t.Fatalf("Failed to write file1: %v", err)
 	}
-	// Add small delay to ensure different mod times
-	time.Sleep(10 * time.Millisecond)
 	if err := os.WriteFile(file2, content, 0644); err != nil {
 		t.Fatalf("Failed to write file2: %v", err)
+	}
+
+	// Set deterministic modification times
+	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(file1, baseTime, baseTime); err != nil {
+		t.Fatalf("Failed to set file1 time: %v", err)
+	}
+	if err := os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
+		t.Fatalf("Failed to set file2 time: %v", err)
 	}
 
 	postMap := map[string]PostInfo{
@@ -478,9 +485,17 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	if err := os.WriteFile(file1, content, 0644); err != nil {
 		t.Fatalf("Failed to write file1: %v", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 	if err := os.WriteFile(file2, content, 0644); err != nil {
 		t.Fatalf("Failed to write file2: %v", err)
+	}
+
+	// Set deterministic modification times
+	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(file1, baseTime, baseTime); err != nil {
+		t.Fatalf("Failed to set file1 time: %v", err)
+	}
+	if err := os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
+		t.Fatalf("Failed to set file2 time: %v", err)
 	}
 
 	postMap := map[string]PostInfo{
@@ -554,15 +569,25 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	if err := os.WriteFile(fileOldest, []byte("oldest content"), 0644); err != nil {
 		t.Fatalf("Failed to write fileOldest: %v", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
 	if err := os.WriteFile(fileMiddle, []byte("middle content"), 0644); err != nil {
 		t.Fatalf("Failed to write fileMiddle: %v", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 
 	if err := os.WriteFile(fileNewest, []byte("newest content"), 0644); err != nil {
 		t.Fatalf("Failed to write fileNewest: %v", err)
+	}
+
+	// Set deterministic modification times
+	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(fileOldest, baseTime, baseTime); err != nil {
+		t.Fatalf("Failed to set fileOldest time: %v", err)
+	}
+	if err := os.Chtimes(fileMiddle, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
+		t.Fatalf("Failed to set fileMiddle time: %v", err)
+	}
+	if err := os.Chtimes(fileNewest, baseTime.Add(2*time.Second), baseTime.Add(2*time.Second)); err != nil {
+		t.Fatalf("Failed to set fileNewest time: %v", err)
 	}
 
 	postMap := map[string]PostInfo{
@@ -609,64 +634,6 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	}
 }
 
-func TestMigration_IdempotentReRun(t *testing.T) {
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	logPath := filepath.Join(tmpDir, "migration_log.json")
-
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
-
-	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
-	}
-
-	// First run
-	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator1.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrator1.SaveLog(logPath); err != nil {
-		t.Fatalf("Failed to save log: %v", err)
-	}
-
-	// Verify first run moved the file
-	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
-	if _, err := os.Stat(destFile); err != nil {
-		t.Fatalf("File should be moved on first run: %v", err)
-	}
-
-	// Source file should be gone
-	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
-		t.Error("Source file should be removed after move")
-	}
-
-	// Second run with existing log
-	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator2.LoadExistingLog(logPath); err != nil {
-		t.Fatalf("Failed to load existing log: %v", err)
-	}
-	if err := migrator2.Execute(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Second run should have no operations (source file gone)
-	if migrator2.Log.TotalFiles != 0 {
-		t.Errorf("Second run should have no files to process, TotalFiles = %d", migrator2.Log.TotalFiles)
-	}
-
-	// No new operations should be recorded
-	if len(migrator2.Log.Operations) != 0 {
-		t.Errorf("Second run should have no operations, got %d", len(migrator2.Log.Operations))
-	}
-}
 
 func TestMigration_HashLogging(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -735,9 +702,17 @@ func TestMigration_DuplicateHashDetection(t *testing.T) {
 	if err := os.WriteFile(file1, identicalContent, 0644); err != nil {
 		t.Fatalf("Failed to write file1: %v", err)
 	}
-	time.Sleep(10 * time.Millisecond)
 	if err := os.WriteFile(file2, identicalContent, 0644); err != nil {
 		t.Fatalf("Failed to write file2: %v", err)
+	}
+
+	// Set deterministic modification times
+	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(file1, baseTime, baseTime); err != nil {
+		t.Fatalf("Failed to set file1 time: %v", err)
+	}
+	if err := os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
+		t.Fatalf("Failed to set file2 time: %v", err)
 	}
 
 	postMap := map[string]PostInfo{

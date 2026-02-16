@@ -360,9 +360,8 @@ func (r *eofReader) Read(p []byte) (n int, err error) {
 
 // partialReader is a reader that returns data in small chunks
 type partialReader struct {
-	data      []byte
-	offset    int
-	chunkSize int
+	data   []byte
+	offset int
 }
 
 func (r *partialReader) Read(p []byte) (n int, err error) {
@@ -451,5 +450,34 @@ func TestHashHexFormat(t *testing.T) {
 		if c >= 'A' && c <= 'F' {
 			t.Errorf("Hash should not contain uppercase hex characters: %c", c)
 		}
+	}
+}
+
+func TestCalculateFileHash_KnownReference(t *testing.T) {
+	// BLAKE3-256 hash for "hello world" (precomputed reference value)
+	expectedHash := "d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24"
+
+	// Create a temporary file with known content
+	tmpFile, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := []byte("hello world")
+	if _, err := tmpFile.Write(content); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	// Calculate hash
+	hash, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	// Verify hash matches the known BLAKE3-256 reference value
+	if hash != expectedHash {
+		t.Errorf("Hash mismatch: got %s, want %s", hash, expectedHash)
 	}
 }

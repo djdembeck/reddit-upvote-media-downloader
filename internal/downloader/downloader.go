@@ -204,7 +204,9 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			hash, hashErr := CalculateFileHash(filePath)
 			if hashErr != nil {
 				d.logger.Printf("error calculating hash for %s: %v", filePath, hashErr)
-				os.Remove(filePath) // Clean up orphaned file
+				if removeErr := os.Remove(filePath); removeErr != nil {
+					d.logger.Printf("failed to remove file %s: %v", filePath, removeErr)
+				}
 				return "", fmt.Errorf("calculate hash: %w", hashErr)
 			}
 
@@ -220,7 +222,9 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 				}
 				if exists {
 					d.logger.Printf("skip duplicate hash %s for post %s", hash, item.PostID)
-					os.Remove(filePath)
+					if removeErr := os.Remove(filePath); removeErr != nil {
+						d.logger.Printf("failed to remove file %s: %v", filePath, removeErr)
+					}
 					return "", nil
 				}
 			}

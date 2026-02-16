@@ -349,13 +349,7 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 
 	// Save posts with whatever hashes we have (preserves partial results on error)
 	for _, post := range newPosts {
-		post.DownloadedAt = time.Now()
 		if hash, ok := hashes[post.ID]; ok {
+			post.DownloadedAt = time.Now()
 			post.Hash = hash
-		}
-		if err := db.SavePost(ctx, &post); err != nil {
-			logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
-			logger.Printf("Error saving post: %v", err)
-		}
-	}
-
+}

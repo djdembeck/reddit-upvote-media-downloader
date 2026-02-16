@@ -465,263 +465,216 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestDeduplication_SkipsExistingHash(t *testing.T) {
+type dedupTestSetup struct {
+	outputDir    string
+	subredditDir string
+	db           *storage.DB
+	server       *httptest.Server
+	downloader   *Downloader
+	existingFile string
+	existingHash string
+}
+
+func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup {
+	t.Helper()
+
 	outputDir := t.TempDir()
 	subredditDir := filepath.Join(outputDir, "pics")
 	if err := os.MkdirAll(subredditDir, 0755); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
 
-	existingFilePath := filepath.Join(subredditDir, "existing_abc.jpg")
-	existingContent := []byte("existing file content")
-	if err := os.WriteFile(existingFilePath, existingContent, 0644); err != nil {
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	db, err := storage.NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("NewDB error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(serverContent)
+	}))
+
+	d := NewDownloader(Config{
+		OutputDir:   outputDir,
+		HTTPClient:  server.Client(),
+		Retries:     1,
+		Timeout:     time.Second,
+		UserAgent:   "test-agent",
+		Concurrency: 1,
+	}, db)
+
+	return &dedupTestSetup{
+		outputDir:    outputDir,
+		subredditDir: subredditDir,
+		db:           db,
+		server:       server,
+		downloader:   d,
+	}
+}
+
+func (s *dedupTestSetup) cleanup() {
+	s.server.Close()
+	s.db.Close()
+}
+
+func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, content []byte, postID string) string {
+	t.Helper()
+
+	existingFilePath := filepath.Join(s.subredditDir, filename)
+	if err := os.WriteFile(existingFilePath, content, 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	existingHash, err := CalculateFileHash(existingFilePath)
+	hash, err := CalculateFileHash(existingFilePath)
 	if err != nil {
 		t.Fatalf("CalculateFileHash error = %v", err)
 	}
 
-	dbDir := t.TempDir()
-	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("NewDB error = %v", err)
-	}
-	defer db.Close()
-
-	ctx := context.Background()
-	existingPost := &storage.Post{
-		ID:           "existing",
-		DownloadedAt: time.Now(),
-		Hash:         existingHash,
-	}
-	if err := db.SavePost(ctx, existingPost); err != nil {
-		t.Fatalf("SavePost error = %v", err)
+	if postID != "" {
+		existingPost := &storage.Post{
+			ID:           postID,
+			DownloadedAt: time.Now(),
+			Hash:         hash,
+		}
+		if err := s.db.SavePost(context.Background(), existingPost); err != nil {
+			t.Fatalf("SavePost error = %v", err)
+		}
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("new content"))
-	}))
-	defer server.Close()
-
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, db)
-
-	items := []Downloadable{{
-		PostID:    "abc",
-		Subreddit: "pics",
-		Filename:  "abc_1.jpg",
-		URL:       server.URL + "/new.jpg",
-	}}
-
-	hashes, err := downloader.Download(context.Background(), items)
-	if err != nil {
-		t.Fatalf("Download() error = %v", err)
-	}
-
-	if hashes["abc"] != "" {
-		t.Errorf("Expected empty hash (skipped), got %s", hashes["abc"])
-	}
-
-	newFilePath := filepath.Join(subredditDir, "abc_1.jpg")
-	if _, err := os.Stat(newFilePath); err == nil {
-		t.Error("New file should not exist when hash exists")
-	}
-
-	if _, err := os.Stat(existingFilePath); err != nil {
-		t.Errorf("Existing file should remain: %v", err)
-	}
+	return hash
 }
 
-func TestDeduplication_KeepsFileOnDBError(t *testing.T) {
-	outputDir := t.TempDir()
-	subredditDir := filepath.Join(outputDir, "pics")
-	if err := os.MkdirAll(subredditDir, 0755); err != nil {
-		t.Fatalf("MkdirAll error = %v", err)
+func TestDeduplication(t *testing.T) {
+	tests := []struct {
+		name                string
+		serverContent       []byte
+		existingFile        bool
+		existingFileContent []byte
+		existingFilename    string
+		existingPostID      string
+		newPostID           string
+		newFilename         string
+		wantEmptyHash       bool
+		wantFileExists      bool
+		wantExistingFile    bool
+		checkHashLength     bool
+		triggerDBError      bool
+		wantError           bool
+	}{
+		{
+			name:                "SkipsExistingHash",
+			serverContent:       []byte("new content"),
+			existingFile:        true,
+			existingFileContent: []byte("existing file content"),
+			existingFilename:    "existing_abc.jpg",
+			existingPostID:      "existing",
+			newPostID:           "abc",
+			newFilename:         "abc_1.jpg",
+			wantEmptyHash:       true,
+			wantFileExists:      false,
+			wantExistingFile:    true,
+		},
+		{
+			name:           "KeepsFileOnDBError",
+			serverContent:  []byte("downloaded content"),
+			existingFile:   false,
+			newPostID:      "newpost",
+			newFilename:    "newpost_1.jpg",
+			wantEmptyHash:  true,
+			wantFileExists: true,
+			triggerDBError: true,
+			wantError:      true,
+		},
+		{
+			name:            "NewHashSaved",
+			serverContent:   []byte("unique content for new hash"),
+			existingFile:    false,
+			newPostID:       "uniquepost",
+			newFilename:     "uniquepost_1.jpg",
+			wantEmptyHash:   false,
+			wantFileExists:  true,
+			checkHashLength: true,
+		},
+		{
+			name:                "IdenticalContent",
+			serverContent:       []byte("shared identical content"),
+			existingFile:        true,
+			existingFileContent: []byte("shared identical content"),
+			existingFilename:    "original_abc.jpg",
+			existingPostID:      "existing",
+			newPostID:           "duplicate",
+			newFilename:         "duplicate_1.jpg",
+			wantEmptyHash:       true,
+			wantFileExists:      false,
+			wantExistingFile:    true,
+		},
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("downloaded content"))
-	}))
-	defer server.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := setupDeduplicationTest(t, tt.serverContent)
+			defer setup.cleanup()
 
-	dbDir := t.TempDir()
-	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("NewDB error = %v", err)
-	}
-	defer db.Close()
+			var existingFilePath string
+			if tt.existingFile {
+				setup.createExistingFile(t, tt.existingFilename, tt.existingFileContent, tt.existingPostID)
+				existingFilePath = filepath.Join(setup.subredditDir, tt.existingFilename)
+			}
 
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, db)
+			items := []Downloadable{{
+				PostID:    tt.newPostID,
+				Subreddit: "pics",
+				Filename:  tt.newFilename,
+				URL:       setup.server.URL + "/download.jpg",
+			}}
 
-	items := []Downloadable{{
-		PostID:    "newpost",
-		Subreddit: "pics",
-		Filename:  "newpost_1.jpg",
-		URL:       server.URL + "/new.jpg",
-	}}
+			if tt.triggerDBError {
+				setup.db.Close()
+			}
 
-	hashes, err := downloader.Download(context.Background(), items)
-	if err != nil {
-		t.Fatalf("Download() error = %v", err)
-	}
+			hashes, err := setup.downloader.Download(context.Background(), items)
+			if tt.wantError && err == nil {
+				t.Fatal("Download() should return an error when DB fails")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("Download() error = %v", err)
+			}
 
-	newFilePath := filepath.Join(subredditDir, "newpost_1.jpg")
-	if _, err := os.Stat(newFilePath); err != nil {
-		t.Errorf("New file should exist: %v", err)
-	}
+			if tt.wantEmptyHash {
+				if hashes[tt.newPostID] != "" {
+					t.Errorf("Expected empty hash (skipped), got %s", hashes[tt.newPostID])
+				}
+			} else {
+				if hashes[tt.newPostID] == "" {
+					t.Error("Hash should be returned for new file")
+				}
+			}
 
-	if hashes["newpost"] == "" {
-		t.Error("Hash should be returned for new file")
-	}
-}
+			if tt.checkHashLength {
+				if len(hashes[tt.newPostID]) != 64 {
+					t.Errorf("Expected hash length 64, got %d", len(hashes[tt.newPostID]))
+				}
+			}
 
-func TestDeduplication_NewHashSaved(t *testing.T) {
-	outputDir := t.TempDir()
-	subredditDir := filepath.Join(outputDir, "pics")
-	if err := os.MkdirAll(subredditDir, 0755); err != nil {
-		t.Fatalf("MkdirAll error = %v", err)
-	}
+			newFilePath := filepath.Join(setup.subredditDir, tt.newFilename)
+			_, err = os.Stat(newFilePath)
+			fileExists := err == nil
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("unique content for new hash"))
-	}))
-	defer server.Close()
+			if tt.wantFileExists && !fileExists {
+				t.Errorf("New file should exist: %v", err)
+			}
+			if !tt.wantFileExists && fileExists {
+				t.Error("New file should not exist")
+			}
 
-	dbDir := t.TempDir()
-	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("NewDB error = %v", err)
-	}
-	defer db.Close()
-
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, db)
-
-	items := []Downloadable{{
-		PostID:    "uniquepost",
-		Subreddit: "pics",
-		Filename:  "uniquepost_1.jpg",
-		URL:       server.URL + "/unique.jpg",
-	}}
-
-	hashes, err := downloader.Download(context.Background(), items)
-	if err != nil {
-		t.Fatalf("Download() error = %v", err)
-	}
-
-	if hashes["uniquepost"] == "" {
-		t.Error("Hash should be returned for new file")
-	}
-
-	// Verify hash format is correct (64 character hex string)
-	if len(hashes["uniquepost"]) != 64 {
-		t.Errorf("Expected hash length 64, got %d", len(hashes["uniquepost"]))
-	}
-
-	// Verify file exists
-	destFilePath := filepath.Join(subredditDir, "uniquepost_1.jpg")
-	if _, err := os.Stat(destFilePath); err != nil {
-		t.Errorf("Downloaded file should exist: %v", err)
-	}
-}
-
-func TestDeduplication_IdenticalContent(t *testing.T) {
-	outputDir := t.TempDir()
-	subredditDir := filepath.Join(outputDir, "pics")
-	if err := os.MkdirAll(subredditDir, 0755); err != nil {
-		t.Fatalf("MkdirAll error = %v", err)
-	}
-
-	existingFilePath := filepath.Join(subredditDir, "original_abc.jpg")
-	sharedContent := []byte("shared identical content")
-	if err := os.WriteFile(existingFilePath, sharedContent, 0644); err != nil {
-		t.Fatalf("WriteFile error = %v", err)
-	}
-
-	existingHash, err := CalculateFileHash(existingFilePath)
-	if err != nil {
-		t.Fatalf("CalculateFileHash error = %v", err)
-	}
-
-	dbDir := t.TempDir()
-	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("NewDB error = %v", err)
-	}
-	defer db.Close()
-
-	ctx := context.Background()
-	existingPost := &storage.Post{
-		ID:           "existing",
-		DownloadedAt: time.Now(),
-		Hash:         existingHash,
-	}
-	if err := db.SavePost(ctx, existingPost); err != nil {
-		t.Fatalf("SavePost error = %v", err)
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write(sharedContent)
-	}))
-	defer server.Close()
-
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, db)
-
-	items := []Downloadable{{
-		PostID:    "duplicate",
-		Subreddit: "pics",
-		Filename:  "duplicate_1.jpg",
-		URL:       server.URL + "/duplicate.jpg",
-	}}
-
-	hashes, err := downloader.Download(context.Background(), items)
-	if err != nil {
-		t.Fatalf("Download() error = %v", err)
-	}
-
-	if hashes["duplicate"] != "" {
-		t.Errorf("Expected empty hash (skipped), got %s", hashes["duplicate"])
-	}
-
-	newFilePath := filepath.Join(subredditDir, "duplicate_1.jpg")
-	if _, err := os.Stat(newFilePath); err == nil {
-		t.Error("New file should not exist for identical content")
+			if tt.wantExistingFile && existingFilePath != "" {
+				if _, err := os.Stat(existingFilePath); err != nil {
+					t.Errorf("Existing file should remain: %v", err)
+				}
+			}
+		})
 	}
 }
 

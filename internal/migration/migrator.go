@@ -319,13 +319,13 @@ func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo
 func calculateHash(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open %s: %w", filePath, err)
 	}
 	defer file.Close()
 
 	hash := blake3.New()
 	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
+		return "", fmt.Errorf("hashing %s: %w", filePath, err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }

@@ -140,15 +140,15 @@ func NewDB(dbPath string) (*DB, error) {
 	// Migration: Add hash column if not exists (preserve existing data)
 	_, err = conn.Exec(`ALTER TABLE posts ADD COLUMN hash TEXT`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		// Log unexpected error but don't fail - column might already exist
-		// or this might be a permission issue we want to know about
-		fmt.Printf("Warning: failed to add hash column (may already exist): %v\n", err)
+		conn.Close()
+		return nil, fmt.Errorf("failed to add hash column: %w", err)
 	}
 
 	// Create index on hash column for fast lookups
 	_, err = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
 	if err != nil {
-		fmt.Printf("Warning: failed to create hash index: %v\n", err)
+		conn.Close()
+		return nil, fmt.Errorf("failed to create hash index: %w", err)
 	}
 
 	return db, nil

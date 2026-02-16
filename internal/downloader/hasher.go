@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 
@@ -38,7 +39,7 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 func CalculateFileHash(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("open file %s: %w", filePath, err)
 	}
 	defer file.Close()
 
