@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -136,7 +137,8 @@ func main() {
 			return
 		default:
 			if err := runCycle(ctx, db, redditClient, dl, cfg); err != nil {
-				fmt.Fprintf(os.Stderr, "Cycle error: %v\n", err)
+				logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
+				logger.Printf("Cycle error: %v", err)
 			}
 
 			// Sleep for 1 hour
@@ -245,15 +247,21 @@ func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *do
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
 	// Download items
-	if err := dl.Download(ctx, items); err != nil {
+	hashes, err := dl.Download(ctx, items)
+	if err != nil {
+		logger := log.New(os.Stderr, "[downloader] ", log.LstdFlags)
+		logger.Printf("download completed with errors: %v", err)
 		return fmt.Errorf("downloading media: %w", err)
 	}
 
-	// Mark posts as downloaded
+	// Mark posts as downloaded (only those with hashes)
 	for _, post := range newPosts {
-		post.DownloadedAt = time.Now()
-		if err := db.SavePost(ctx, &post); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving post: %v\n", err)
+		if hash, ok := hashes[post.ID]; ok && hash != "" {
+			post.DownloadedAt = time.Now()
+			if err := db.SavePost(ctx, &post); err != nil {
+				logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
+				logger.Printf("Error saving post: %v", err)
+			}
 		}
 	}
 

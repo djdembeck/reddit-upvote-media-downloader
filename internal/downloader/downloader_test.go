@@ -320,7 +320,7 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 		URL:       "https://example.com/abc.jpg",
 	}}
 
-	if err := downloader.Download(context.Background(), items); err != nil {
+	if _, err := downloader.Download(context.Background(), items); err != nil {
 		t.Fatalf("Download() error = %v", err)
 	}
 }
@@ -356,7 +356,7 @@ func TestDownloaderRetries(t *testing.T) {
 		URL:       server.URL + "/file.jpg",
 	}}
 
-	if err := downloader.Download(context.Background(), items); err != nil {
+	if _, err := downloader.Download(context.Background(), items); err != nil {
 		t.Fatalf("Download() error = %v", err)
 	}
 	if calls != 3 {
@@ -394,7 +394,7 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 		{PostID: "ok", Subreddit: "pics", Filename: "ok_1.jpg", URL: server.URL + "/ok.jpg"},
 	}
 
-	if err := downloader.Download(context.Background(), items); err == nil {
+	if _, err := downloader.Download(context.Background(), items); err == nil {
 		t.Fatalf("expected error from Download()")
 	}
 
@@ -446,7 +446,8 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- downloader.Download(context.Background(), items)
+		_, err := downloader.Download(context.Background(), items)
+		done <- err
 	}()
 
 	waitForCondition(t, func() bool {
