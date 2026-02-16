@@ -243,12 +243,16 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 
 		_, err := os.Stat(post.FilePath)
 		if err != nil {
-			fmt.Printf("File missing: %s, resetting for re-download\n", post.FilePath)
-			if err := db.ResetRetry(ctx, post.ID); err != nil {
-				fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
-				continue
+			if os.IsNotExist(err) {
+				fmt.Printf("File missing: %s, resetting for re-download\n", post.FilePath)
+				if err := db.ResetRetry(ctx, post.ID); err != nil {
+					fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
+					continue
+				}
+				missingCount++
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: stat error for %s: %v\n", post.FilePath, err)
 			}
-			missingCount++
 		} else {
 			fmt.Printf("File verified: %s\n", post.FilePath)
 			verifiedCount++

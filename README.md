@@ -213,8 +213,8 @@ cp -r /path/to/bdfr-html/output/* ./data/output/
 cp /path/to/bdfr-html/output/idList.txt ./data/
 ```
 
-2. Start the downloader with `MIGRATE_ON_START=true`
-3. Logs will show: *"Migrated X existing posts from bdfr-html"*
+1. Start the downloader with `MIGRATE_ON_START=true`
+2. Logs will show: *"Migrated X existing posts from bdfr-html"*
 
 ### Full Sync Behavior
 

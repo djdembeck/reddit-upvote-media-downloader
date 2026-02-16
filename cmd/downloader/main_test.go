@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/require"
 	"github.com/user/reddit-media-downloader/internal/config"
 	"github.com/user/reddit-media-downloader/internal/downloader"
 	"github.com/user/reddit-media-downloader/internal/storage"
@@ -28,7 +29,9 @@ func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 	}
 
 	cleanup := func() {
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Fatalf("closing db: %v", err)
+		}
 	}
 
 	return db, tempDir, cleanup
@@ -52,18 +55,13 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 		LastError:    "previous error",
 	}
 
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
-	if _, err := os.Stat(nonExistentFile); !os.IsNotExist(err) {
-		t.Fatal("Expected file to not exist")
-	}
+	_, err := os.Stat(nonExistentFile)
+	require.True(t, os.IsNotExist(err), "Expected file to not exist")
 
 	posts, err := db.GetAllPosts(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get all posts: %v", err)
-	}
+	require.NoError(t, err, "Failed to get all posts")
 
 	var missingCount int
 	for _, p := range posts {
@@ -71,36 +69,24 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 			continue
 		}
 
-		_, err := os.Stat(p.FilePath)
-		if err != nil {
-			if err := db.ResetRetry(ctx, p.ID); err != nil {
-				t.Errorf("Error resetting retry for %s: %v", p.ID, err)
+		_, statErr := os.Stat(p.FilePath)
+		if statErr != nil {
+			if resetErr := db.ResetRetry(ctx, p.ID); resetErr != nil {
+				t.Errorf("Error resetting retry for %s: %v", p.ID, resetErr)
 				continue
 			}
 			missingCount++
 		}
 	}
 
-	if missingCount != 1 {
-		t.Errorf("Expected 1 missing file, got %d", missingCount)
-	}
+	require.Equal(t, 1, missingCount, "Expected 1 missing file, got %d", missingCount)
 
 	retrieved, err := db.GetPost(ctx, "missing123")
-	if err != nil {
-		t.Fatalf("Failed to get post: %v", err)
-	}
+	require.NoError(t, err, "Failed to get post")
 
-	if retrieved.RetryCount != 0 {
-		t.Errorf("Expected retry count to be reset to 0, got %d", retrieved.RetryCount)
-	}
-
-	if retrieved.LastError != "" {
-		t.Errorf("Expected last_error to be cleared, got %s", retrieved.LastError)
-	}
-
-	if !retrieved.LastAttempt.IsZero() {
-		t.Error("Expected LastAttempt to be zero after reset")
-	}
+	require.Equal(t, 0, retrieved.RetryCount, "Expected retry count to be reset to 0, got %d", retrieved.RetryCount)
+	require.Empty(t, retrieved.LastError, "Expected last_error to be cleared, got %s", retrieved.LastError)
+	require.True(t, retrieved.LastAttempt.IsZero(), "Expected LastAttempt to be zero after reset")
 }
 
 func TestReCheckMode_FileExists(t *testing.T) {

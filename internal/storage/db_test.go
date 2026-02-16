@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestDB(t *testing.T) (*DB, string) {
@@ -433,9 +435,7 @@ func TestMigration_AddsColumns(t *testing.T) {
 
 	// Verify columns exist by querying PRAGMA table_info
 	rows, err := db.conn.QueryContext(ctx, "PRAGMA table_info(posts)")
-	if err != nil {
-		t.Fatalf("Failed to query table info: %v", err)
-	}
+	require.NoError(t, err, "Failed to query table info: %v", err)
 	defer rows.Close()
 
 	columns := make(map[string]bool)
@@ -446,23 +446,17 @@ func TestMigration_AddsColumns(t *testing.T) {
 		var notnull int
 		var dflt_value interface{}
 		var pk int
-		if err := rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk); err != nil {
-			t.Fatalf("Failed to scan table info: %v", err)
-		}
+		require.NoError(t, rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk), "Failed to scan table info: %v", err)
 		columns[name] = true
 	}
 
 	// Check iterator error after loop
-	if err := rows.Err(); err != nil {
-		t.Fatalf("table info iteration error: %v", err)
-	}
+	require.NoError(t, rows.Err(), "table info iteration error: %v", err)
 
 	// Check that new columns exist
 	requiredColumns := []string{"retry_count", "last_error", "last_attempt"}
 	for _, col := range requiredColumns {
-		if !columns[col] {
-			t.Errorf("Expected column %s to exist after migration", col)
-		}
+		require.Truef(t, columns[col], "Expected column %s to exist after migration", col)
 	}
 }
 
@@ -523,11 +517,7 @@ func TestMigration_PreservesExistingData(t *testing.T) {
 }
 
 func TestMigration_ExistingDatabase(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "reddit-media-downloader-migration-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	dbPath := filepath.Join(tempDir, "test.db")
 

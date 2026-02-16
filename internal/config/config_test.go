@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadWithEnvVars(t *testing.T) {
@@ -23,34 +25,16 @@ func TestLoadWithEnvVars(t *testing.T) {
 	t.Setenv("MIGRATE_ON_START", "false")
 
 	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() returned error: %v", err)
-	}
+	require.NoError(t, err, "Load() returned error: %v", err)
 
-	if cfg.Reddit.ClientID != "test-client-id" {
-		t.Errorf("Expected ClientID 'test-client-id', got '%s'", cfg.Reddit.ClientID)
-	}
-	if cfg.Reddit.ClientSecret != "test-client-secret" {
-		t.Errorf("Expected ClientSecret 'test-client-secret', got '%s'", cfg.Reddit.ClientSecret)
-	}
-	if cfg.Reddit.Username != "test-user" {
-		t.Errorf("Expected Username 'test-user', got '%s'", cfg.Reddit.Username)
-	}
-	if cfg.Storage.OutputDir != "/tmp/test-output" {
-		t.Errorf("Expected OutputDir '/tmp/test-output', got '%s'", cfg.Storage.OutputDir)
-	}
-	if cfg.Download.Concurrency != 5 {
-		t.Errorf("Expected Concurrency 5, got %d", cfg.Download.Concurrency)
-	}
-	if cfg.Download.FetchLimit != 50 {
-		t.Errorf("Expected FetchLimit 50, got %d", cfg.Download.FetchLimit)
-	}
-	if cfg.Log.Level != "debug" {
-		t.Errorf("Expected Log.Level 'debug', got '%s'", cfg.Log.Level)
-	}
-	if cfg.Migrate.OnStart != false {
-		t.Errorf("Expected Migrate.OnStart false, got %v", cfg.Migrate.OnStart)
-	}
+	require.Equal(t, "test-client-id", cfg.Reddit.ClientID, "Expected ClientID 'test-client-id', got '%s'", cfg.Reddit.ClientID)
+	require.Equal(t, "test-client-secret", cfg.Reddit.ClientSecret, "Expected ClientSecret 'test-client-secret', got '%s'", cfg.Reddit.ClientSecret)
+	require.Equal(t, "test-user", cfg.Reddit.Username, "Expected Username 'test-user', got '%s'", cfg.Reddit.Username)
+	require.Equal(t, "/tmp/test-output", cfg.Storage.OutputDir, "Expected OutputDir '/tmp/test-output', got '%s'", cfg.Storage.OutputDir)
+	require.Equal(t, 5, cfg.Download.Concurrency, "Expected Concurrency 5, got %d", cfg.Download.Concurrency)
+	require.Equal(t, 50, cfg.Download.FetchLimit, "Expected FetchLimit 50, got %d", cfg.Download.FetchLimit)
+	require.Equal(t, "debug", cfg.Log.Level, "Expected Log.Level 'debug', got '%s'", cfg.Log.Level)
+	require.False(t, cfg.Migrate.OnStart, "Expected Migrate.OnStart false, got %v", cfg.Migrate.OnStart)
 }
 
 func TestLoadWithDefaults(t *testing.T) {

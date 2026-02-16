@@ -71,16 +71,18 @@ type SmartPollingConfig struct {
 
 // Flag variables for CLI parsing
 var (
-	flagReCheck        bool
-	flagRetryThreshold int
-	flagClientID       string
-	flagClientSecret   string
-	flagUsername       string
-	flagConcurrency    int
-	flagFetchLimit     int
-	flagBackoffBase    time.Duration
-	flagBackoffMax     time.Duration
-	flagSet            bool
+	flagReCheck           bool
+	flagRetryThreshold    int
+	flagClientID          string
+	flagClientSecret      string
+	flagUsername          string
+	flagConcurrency       int
+	flagFetchLimit        int
+	flagBackoffBase       time.Duration
+	flagBackoffMax        time.Duration
+	flagSet               bool
+	flagSetReCheck        bool
+	flagSetRetryThreshold bool
 )
 
 func init() {
@@ -102,6 +104,12 @@ func flagWasSet() bool {
 	// We use flag.CommandLine.Lookup to check if flags were explicitly set
 	flag.CommandLine.Visit(func(f *flag.Flag) {
 		flagSet = true
+		if f.Name == "re-check" {
+			flagSetReCheck = true
+		}
+		if f.Name == "retry-threshold" {
+			flagSetRetryThreshold = true
+		}
 	})
 	return flagSet
 }
@@ -173,8 +181,10 @@ func Load() (*Config, error) {
 		if flagBackoffMax > 0 {
 			cfg.Backoff.Max = flagBackoffMax
 		}
-		cfg.SmartPolling.ReCheck = flagReCheck
-		if flagRetryThreshold > 0 {
+		if flagSetReCheck {
+			cfg.SmartPolling.ReCheck = flagReCheck
+		}
+		if flagSetRetryThreshold {
 			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
 		}
 	}
