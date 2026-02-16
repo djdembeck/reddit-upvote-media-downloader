@@ -1142,12 +1142,14 @@ func TestGetPostsToRetry_Mixed(t *testing.T) {
 	}{
 		// Never attempted - should return
 		{"mixed1", 0, 0, true},
-		// Recently attempted (1s ago, backoff is 2s) - should not return
-		{"mixed2", 1, -1 * time.Second, false},
+		// Recently attempted (1s ago, backoff is 2s) - waiting in backoff, should not return yet
+		{"mixed2", 1, -500 * time.Millisecond, false},
+		// Just outside backoff window (2s ago, backoff is 2s) - should return
+		{"mixed3", 1, -2 * time.Second, true},
 		// Old attempt (120s ago, backoff is 2s) - should return
-		{"mixed3", 1, -120 * time.Second, true},
+		{"mixed4", 1, -120 * time.Second, true},
 		// Exceeds threshold - should not return
-		{"mixed4", 5, -300 * time.Second, false},
+		{"mixed5", 5, -300 * time.Second, false},
 	}
 
 	for _, tc := range testCases {

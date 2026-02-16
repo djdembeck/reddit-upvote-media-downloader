@@ -258,10 +258,15 @@ func TestRetryThreshold(t *testing.T) {
 		retryCount  int
 		shouldSkip  bool
 		shouldRetry bool
+		waitAfter   time.Duration // Wait after IncrementRetry to pass backoff
 	}{
-		{"below_threshold", 2, false, true},
-		{"at_threshold", 3, true, false},
-		{"exceeds_threshold", 5, true, false},
+		// With backoffBase=1s, retryCount=2 gives backoffDelay=4s
+		// After immediately calling CheckPostStatus, the post should be in backoff window
+		{"below_threshold_in_backoff", 2, true, false, 0},
+		// Wait 5s to pass the 4s backoff window
+		{"below_threshold_after_backoff", 2, false, true, 5 * time.Second},
+		{"at_threshold", 3, true, false, 0},
+		{"exceeds_threshold", 5, true, false, 0},
 	}
 
 	for _, tc := range testCases {
@@ -282,6 +287,11 @@ func TestRetryThreshold(t *testing.T) {
 				if err := db.IncrementRetry(ctx, postID, "test error"); err != nil {
 					t.Fatalf("Failed to increment retry: %v", err)
 				}
+			}
+
+			// Wait if needed to pass through backoff window
+			if tc.waitAfter > 0 {
+				time.Sleep(tc.waitAfter)
 			}
 
 			status, err := db.CheckPostStatus(ctx, postID, threshold, time.Second, time.Minute)
