@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/user/reddit-media-downloader/internal/reddit"
+	"github.com/user/reddit-media-downloader/internal/storage"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -40,9 +41,10 @@ type Downloader struct {
 	config    Config
 	extractor *Extractor
 	logger    *log.Logger
+	db        *storage.DB
 }
 
-func NewDownloader(config Config) *Downloader {
+func NewDownloader(config Config, db *storage.DB) *Downloader {
 	config = applyDefaults(config)
 
 	if config.HTTPClient == nil {
@@ -60,6 +62,7 @@ func NewDownloader(config Config) *Downloader {
 		config:    config,
 		extractor: NewExtractor(config.HTTPClient, config.UserAgent),
 		logger:    logger,
+		db:        db,
 	}
 }
 
@@ -89,17 +92,18 @@ func (d *Downloader) Extract(ctx context.Context, posts []reddit.RedditPost) ([]
 }
 
 func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[string]string, error) {
+	hashes := make(map[string]string)
+
 	if len(items) == 0 {
-		return make(map[string]string), nil
+		return hashes, nil
 	}
 	if err := os.MkdirAll(d.config.OutputDir, 0755); err != nil {
-		return nil, fmt.Errorf("create output directory: %w", err)
+		return hashes, fmt.Errorf("create output directory: %w", err)
 	}
 
 	group := &errgroup.Group{}
 	group.SetLimit(d.config.Concurrency)
 
-	hashes := make(map[string]string)
 	var mu sync.Mutex
 	var errs []error
 
@@ -109,7 +113,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			hash, err := d.downloadItemWithHash(ctx, item)
+			hash, err := d.downloadItem(ctx, item)
 			if err != nil {
 				d.logger.Printf("download failed for post %s (%s): %v", item.PostID, item.URL, err)
 				mu.Lock()
@@ -117,9 +121,11 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 				mu.Unlock()
 				return err
 			}
-			mu.Lock()
-			hashes[item.PostID] = hash
-			mu.Unlock()
+			if hash != "" {
+				mu.Lock()
+				hashes[item.PostID] = hash
+				mu.Unlock()
+			}
 			return nil
 		})
 	}
@@ -135,18 +141,13 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	return hashes, nil
 }
 
-func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.RedditPost) ([]Downloadable, error) {
+func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.RedditPost) ([]Downloadable, map[string]string, error) {
 	items, extractErr := d.Extract(ctx, posts)
-	_, downloadErr := d.Download(ctx, items)
-	return items, combineErrors(extractErr, downloadErr)
+	hashes, downloadErr := d.Download(ctx, items)
+	return items, hashes, combineErrors(extractErr, downloadErr)
 }
 
-func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) error {
-	_, err := d.downloadItemWithHash(ctx, item)
-	return err
-}
-
-func (d *Downloader) downloadItemWithHash(ctx context.Context, item Downloadable) (string, error) {
+func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (string, error) {
 	if strings.TrimSpace(item.URL) == "" {
 		return "", errors.New("download URL is empty")
 	}
@@ -158,7 +159,7 @@ func (d *Downloader) downloadItemWithHash(ctx context.Context, item Downloadable
 	if filename == "" {
 		ext, _, err := extensionAndType(item.URL, "")
 		if err != nil {
-			return "", fmt.Errorf("detecting extension for %s: %w", item.URL, err)
+			return "", err
 		}
 		filename = fmt.Sprintf("untitled_%s%s", item.PostID, ext)
 	}
@@ -199,10 +200,27 @@ func (d *Downloader) downloadItemWithHash(ctx context.Context, item Downloadable
 
 		err := d.downloadOnce(ctx, item.URL, filePath)
 		if err == nil {
-			hash, err := CalculateFileHash(filePath)
-			if err != nil {
-				d.logger.Printf("failed to hash downloaded file %s: %v", filePath, err)
+			// Download succeeded, now calculate hash and check for duplicates
+			hash, hashErr := CalculateFileHash(filePath)
+			if hashErr != nil {
+				d.logger.Printf("error calculating hash for %s: %v", filePath, hashErr)
+				return "", fmt.Errorf("calculate hash: %w", hashErr)
 			}
+
+			// Check if hash already exists in database
+			if d.db != nil {
+				exists, dbErr := d.db.HashExists(ctx, hash)
+				if dbErr != nil {
+					d.logger.Printf("error checking hash in database: %v", dbErr)
+					return "", fmt.Errorf("check hash exists: %w", dbErr)
+				}
+				if exists {
+					d.logger.Printf("skip duplicate hash %s for post %s", hash, item.PostID)
+					os.Remove(filePath)
+					return "", nil
+				}
+			}
+
 			return hash, nil
 		}
 		lastErr = err
@@ -215,7 +233,6 @@ func (d *Downloader) downloadItemWithHash(ctx context.Context, item Downloadable
 
 	return "", fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
-
 func (d *Downloader) downloadOnce(ctx context.Context, url, filePath string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()

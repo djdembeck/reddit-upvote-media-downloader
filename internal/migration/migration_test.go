@@ -2,9 +2,11 @@ package migration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestExtractPostID(t *testing.T) {
@@ -341,5 +343,447 @@ func TestRollbackMissingFile(t *testing.T) {
 
 	if rollbackLog.ErrorCount != 1 {
 		t.Errorf("ErrorCount = %d, want 1", rollbackLog.ErrorCount)
+	}
+}
+
+func TestDuplicateHandling(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	// Create two files with identical content (duplicates)
+	content := []byte("identical content")
+	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
+
+	if err := os.WriteFile(file1, content, 0644); err != nil {
+		t.Fatalf("Failed to write file1: %v", err)
+	}
+	// Add small delay to ensure different mod times
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(file2, content, 0644); err != nil {
+		t.Fatalf("Failed to write file2: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// First file should be moved
+	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
+	if _, err := os.Stat(destFile1); err != nil {
+		t.Errorf("First file should be moved: %v", err)
+	}
+
+	// Second file should be skipped as duplicate
+	destFile2 := filepath.Join(destDir, "pics", "Post2_def456.jpg")
+	if _, err := os.Stat(destFile2); !os.IsNotExist(err) {
+		t.Errorf("Duplicate file should not be moved: %v", err)
+	}
+
+	// Source file2 should still exist
+	if _, err := os.Stat(file2); err != nil {
+		t.Errorf("Duplicate source file should remain: %v", err)
+	}
+
+	// Check migration log
+	if migrator.Log.MovedCount != 1 {
+		t.Errorf("MovedCount = %d, want 1", migrator.Log.MovedCount)
+	}
+	if migrator.Log.SkippedCount != 1 {
+		t.Errorf("SkippedCount = %d, want 1", migrator.Log.SkippedCount)
+	}
+
+	// Check that skipped reason mentions duplicate
+	foundDuplicate := false
+	for _, op := range migrator.Log.Operations {
+		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+			foundDuplicate = true
+			break
+		}
+	}
+	if !foundDuplicate {
+		t.Error("Should have logged a duplicate skip")
+	}
+}
+
+func TestIdempotentReRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	}
+
+	// First run
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator1.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrator1.SaveLog(logPath); err != nil {
+		t.Fatalf("Failed to save log: %v", err)
+	}
+
+	// Second run with existing log - source file is gone, so it should skip
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator2.LoadExistingLog(logPath); err != nil {
+		t.Fatalf("Failed to load existing log: %v", err)
+	}
+	if err := migrator2.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run should have no operations since source file is gone
+	if migrator2.Log.TotalFiles != 0 {
+		t.Errorf("Second run should have no files to process, TotalFiles = %d", migrator2.Log.TotalFiles)
+	}
+}
+
+func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	// Create two identical files
+	content := []byte("identical content")
+	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
+
+	if err := os.WriteFile(file1, content, 0644); err != nil {
+		t.Fatalf("Failed to write file1: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(file2, content, 0644); err != nil {
+		t.Fatalf("Failed to write file2: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
+	}
+
+	// First run - should move file1, skip file2 as duplicate
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator1.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrator1.SaveLog(logPath); err != nil {
+		t.Fatalf("Failed to save log: %v", err)
+	}
+
+	// Verify first run results
+	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
+	if _, err := os.Stat(destFile1); err != nil {
+		t.Fatalf("First file should be moved: %v", err)
+	}
+
+	// file2 should still exist as duplicate
+	if _, err := os.Stat(file2); err != nil {
+		t.Errorf("Duplicate source file should remain: %v", err)
+	}
+
+	// Second run - should skip file2 because hash is already in log
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator2.LoadExistingLog(logPath); err != nil {
+		t.Fatalf("Failed to load existing log: %v", err)
+	}
+	if err := migrator2.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run should skip file2 as duplicate (hash already in log)
+	if migrator2.Log.SkippedCount != 1 {
+		t.Errorf("Second run should skip duplicate, SkippedCount = %d", migrator2.Log.SkippedCount)
+	}
+
+	// Verify skipped reason mentions duplicate
+	foundDuplicate := false
+	for _, op := range migrator2.Log.Operations {
+		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+			foundDuplicate = true
+			break
+		}
+	}
+	if !foundDuplicate {
+		t.Error("Second run should log duplicate skip")
+	}
+}
+
+func TestMigration_SortsByModTime(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	// Create files with different modification times
+	// Oldest file first
+	fileOldest := filepath.Join(sourceDir, "Oldest_abc123.jpg")
+	fileMiddle := filepath.Join(sourceDir, "Middle_def456.jpg")
+	fileNewest := filepath.Join(sourceDir, "Newest_ghi789.jpg")
+
+	// Write in order with small delays to ensure different mod times
+	if err := os.WriteFile(fileOldest, []byte("oldest content"), 0644); err != nil {
+		t.Fatalf("Failed to write fileOldest: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := os.WriteFile(fileMiddle, []byte("middle content"), 0644); err != nil {
+		t.Fatalf("Failed to write fileMiddle: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	if err := os.WriteFile(fileNewest, []byte("newest content"), 0644); err != nil {
+		t.Fatalf("Failed to write fileNewest: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
+		"ghi789": {PostID: "ghi789", Subreddit: "pics", Username: "user3", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// All files should be moved
+	if migrator.Log.MovedCount != 3 {
+		t.Errorf("Expected 3 moved files, got %d", migrator.Log.MovedCount)
+	}
+
+	// Verify all destination files exist
+	for _, postID := range []string{"abc123", "def456", "ghi789"} {
+		destFile := filepath.Join(destDir, "pics", fmt.Sprintf("%s_%s.jpg", map[string]string{
+			"abc123": "Oldest",
+			"def456": "Middle",
+			"ghi789": "Newest",
+		}[postID], postID))
+		if _, err := os.Stat(destFile); err != nil {
+			t.Errorf("Dest file should exist for %s: %v", postID, err)
+		}
+	}
+
+	// Verify operations are in order of mod time (oldest first)
+	var opTimestamps []time.Time
+	for _, op := range migrator.Log.Operations {
+		if op.Status == "moved" {
+			opTimestamps = append(opTimestamps, op.Timestamp)
+		}
+	}
+
+	// Operations should be in chronological order (oldest file processed first)
+	for i := 1; i < len(opTimestamps); i++ {
+		if opTimestamps[i].Before(opTimestamps[i-1]) {
+			t.Error("Operations should be in order of file mod time (oldest first)")
+		}
+	}
+}
+
+func TestMigration_IdempotentReRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	}
+
+	// First run
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator1.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrator1.SaveLog(logPath); err != nil {
+		t.Fatalf("Failed to save log: %v", err)
+	}
+
+	// Verify first run moved the file
+	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
+	if _, err := os.Stat(destFile); err != nil {
+		t.Fatalf("File should be moved on first run: %v", err)
+	}
+
+	// Source file should be gone
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Error("Source file should be removed after move")
+	}
+
+	// Second run with existing log
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator2.LoadExistingLog(logPath); err != nil {
+		t.Fatalf("Failed to load existing log: %v", err)
+	}
+	if err := migrator2.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run should have no operations (source file gone)
+	if migrator2.Log.TotalFiles != 0 {
+		t.Errorf("Second run should have no files to process, TotalFiles = %d", migrator2.Log.TotalFiles)
+	}
+
+	// No new operations should be recorded
+	if len(migrator2.Log.Operations) != 0 {
+		t.Errorf("Second run should have no operations, got %d", len(migrator2.Log.Operations))
+	}
+}
+
+func TestMigration_HashLogging(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
+	content := []byte("content for hashing")
+	if err := os.WriteFile(testFile, content, 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify hash was recorded in log
+	if len(migrator.Log.Operations) != 1 {
+		t.Fatalf("Expected 1 operation, got %d", len(migrator.Log.Operations))
+	}
+
+	op := migrator.Log.Operations[0]
+	if op.Status != "moved" {
+		t.Errorf("Expected status 'moved', got '%s'", op.Status)
+	}
+
+	if op.Hash == "" {
+		t.Error("Hash should be recorded in migration log")
+	}
+
+	// Verify hash is valid hex (64 characters for BLAKE3-256)
+	if len(op.Hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(op.Hash))
+	}
+
+	for _, c := range op.Hash {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			t.Errorf("Hash contains invalid character: %c", c)
+		}
+	}
+}
+
+func TestMigration_DuplicateHashDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	// Create two files with identical content
+	identicalContent := []byte("same content in both files")
+	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
+
+	if err := os.WriteFile(file1, identicalContent, 0644); err != nil {
+		t.Fatalf("Failed to write file1: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(file2, identicalContent, 0644); err != nil {
+		t.Fatalf("Failed to write file2: %v", err)
+	}
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// First file should be moved
+	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
+	if _, err := os.Stat(destFile1); err != nil {
+		t.Errorf("First file should be moved: %v", err)
+	}
+
+	// Second file should be skipped as duplicate
+	destFile2 := filepath.Join(destDir, "pics", "Post2_def456.jpg")
+	if _, err := os.Stat(destFile2); !os.IsNotExist(err) {
+		t.Errorf("Duplicate file should not be moved: %v", err)
+	}
+
+	// Source file2 should remain
+	if _, err := os.Stat(file2); err != nil {
+		t.Errorf("Duplicate source file should remain: %v", err)
+	}
+
+	// Verify counts
+	if migrator.Log.MovedCount != 1 {
+		t.Errorf("Expected 1 moved, got %d", migrator.Log.MovedCount)
+	}
+	if migrator.Log.SkippedCount != 1 {
+		t.Errorf("Expected 1 skipped, got %d", migrator.Log.SkippedCount)
+	}
+
+	// Verify skipped reason mentions duplicate hash
+	foundDuplicateSkip := false
+	for _, op := range migrator.Log.Operations {
+		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+			foundDuplicateSkip = true
+			break
+		}
+	}
+	if !foundDuplicateSkip {
+		t.Error("Should have logged duplicate hash skip")
 	}
 }

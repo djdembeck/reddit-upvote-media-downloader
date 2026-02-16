@@ -7,6 +7,7 @@ type PostInfo struct {
 	Subreddit  string
 	Username   string
 	IsUserPost bool
+	Hash       string // Optional: pre-computed hash for deduplication
 }
 
 type MigrationRecord struct {
@@ -20,6 +21,7 @@ type MigrationRecord struct {
 	Error      string    `json:"error,omitempty"`
 	Timestamp  time.Time `json:"timestamp"`
 	FileSize   int64     `json:"file_size"`
+	Hash       string    `json:"hash,omitempty"`
 }
 
 type MigrationLog struct {

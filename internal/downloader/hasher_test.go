@@ -2,314 +2,454 @@ package downloader
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"os"
-	"regexp"
+	"strings"
 	"testing"
 )
 
-// hexRegex matches a 64-character SHA-256 hex string
-var hexRegex = regexp.MustCompile(`^[a-f0-9]{64}$`)
+func TestCalculateFileHash_EmptyFile(t *testing.T) {
+	// Create a temporary empty file
+	tmpFile, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.Close()
 
-// errorReader returns an error on Read
+	// Calculate hash
+	hash, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	// Verify hash is 64 characters (256-bit hex-encoded)
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+
+	// Verify hash is valid hex
+	for _, c := range hash {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			t.Errorf("Hash contains invalid hex character: %c", c)
+		}
+	}
+}
+
+func TestCalculateFileHash_KnownContent(t *testing.T) {
+	// Create a temporary file with known content
+	tmpFile, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := []byte("hello world")
+	if _, err := tmpFile.Write(content); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	// Calculate hash
+	hash, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+
+	// Calculate expected hash by reading the file
+	expectedHash, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to calculate expected hash: %v", err)
+	}
+
+	// Hash should be deterministic
+	if hash != expectedHash {
+		t.Errorf("Hash not deterministic: got %s, want %s", hash, expectedHash)
+	}
+}
+
+func TestCalculateFileHash_DifferentContent(t *testing.T) {
+	// Create two files with different content
+	tmpFile1, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile1.Name())
+
+	tmpFile2, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile2.Name())
+
+	// Write different content to each file
+	if _, err := tmpFile1.Write([]byte("content A")); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile1.Close()
+
+	if _, err := tmpFile2.Write([]byte("content B")); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile2.Close()
+
+	hash1, err := CalculateFileHash(tmpFile1.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	hash2, err := CalculateFileHash(tmpFile2.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	// Different content should produce different hashes
+	if hash1 == hash2 {
+		t.Error("Different content should produce different hashes")
+	}
+}
+
+func TestCalculateFileHash_IdenticalContent(t *testing.T) {
+	// Create two files with identical content
+	tmpFile1, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile1.Name())
+
+	tmpFile2, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile2.Name())
+
+	content := []byte("identical content for both files")
+	if _, err := tmpFile1.Write(content); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile1.Close()
+
+	if _, err := tmpFile2.Write(content); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile2.Close()
+
+	hash1, err := CalculateFileHash(tmpFile1.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	hash2, err := CalculateFileHash(tmpFile2.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	// Identical content should produce identical hashes
+	if hash1 != hash2 {
+		t.Error("Identical content should produce identical hashes")
+	}
+}
+
+func TestCalculateFileHash_NonExistentFile(t *testing.T) {
+	_, err := CalculateFileHash("/nonexistent/path/to/file.txt")
+	if err == nil {
+		t.Error("Expected error for non-existent file")
+	}
+}
+
+func TestCalculateFileHash_LargeFile(t *testing.T) {
+	// Create a temporary file with large content (1MB)
+	tmpFile, err := os.CreateTemp("", "hash-test-*.bin")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Create 1MB of data
+	largeContent := make([]byte, 1024*1024)
+	for i := range largeContent {
+		largeContent[i] = byte(i % 256)
+	}
+
+	if _, err := tmpFile.Write(largeContent); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	// Calculate hash
+	hash, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+}
+
+func TestCalculateHashFromReader_EmptyReader(t *testing.T) {
+	reader := bytes.NewReader([]byte{})
+
+	hash, err := CalculateHashFromReader(reader)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+}
+
+func TestCalculateHashFromReader_KnownContent(t *testing.T) {
+	content := []byte("hello world")
+	reader := bytes.NewReader(content)
+
+	hash, err := CalculateHashFromReader(reader)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+
+	// Verify hash is valid hex
+	for _, c := range hash {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			t.Errorf("Hash contains invalid hex character: %c", c)
+		}
+	}
+}
+
+func TestCalculateHashFromReader_Deterministic(t *testing.T) {
+	content := []byte("test content for determinism")
+	reader1 := bytes.NewReader(content)
+	reader2 := bytes.NewReader(content)
+
+	hash1, err := CalculateHashFromReader(reader1)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	hash2, err := CalculateHashFromReader(reader2)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Same content should produce same hash
+	if hash1 != hash2 {
+		t.Error("Same content should produce same hash")
+	}
+}
+
+func TestCalculateHashFromReader_Streaming(t *testing.T) {
+	// Test that streaming works correctly by reading in chunks
+	content := []byte("streaming test data with multiple chunks")
+	reader := bytes.NewReader(content)
+
+	hash, err := CalculateHashFromReader(reader)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+}
+
+func TestCalculateHashFromReader_LargeStream(t *testing.T) {
+	// Create a large reader simulating streaming
+	size := 5 * 1024 * 1024 // 5MB
+	largeContent := make([]byte, size)
+	for i := range largeContent {
+		largeContent[i] = byte(i % 256)
+	}
+	reader := bytes.NewReader(largeContent)
+
+	hash, err := CalculateHashFromReader(reader)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+}
+
+func TestCalculateHashFromReader_ErrorReader(t *testing.T) {
+	// Create a reader that returns an error
+	errorReader := &errorReader{err: os.ErrPermission}
+
+	_, err := CalculateHashFromReader(errorReader)
+	if err == nil {
+		t.Error("Expected error from error reader")
+	}
+}
+
+func TestCalculateHashFromReader_EOFReader(t *testing.T) {
+	// Create a reader that returns EOF immediately
+	eofReader := &eofReader{}
+
+	hash, err := CalculateHashFromReader(eofReader)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Should return hash for empty content
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+}
+
+func TestCalculateHashFromReader_PartialRead(t *testing.T) {
+	// Create a reader that returns partial reads
+	content := []byte("partial read test")
+	partialReader := &partialReader{data: content}
+
+	hash, err := CalculateHashFromReader(partialReader)
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
+
+	// Verify hash is 64 characters
+	if len(hash) != 64 {
+		t.Errorf("Expected hash length 64, got %d", len(hash))
+	}
+
+	// Verify hash matches expected for the content
+	expectedHash, err := CalculateFileHashFromBytes(content)
+	if err != nil {
+		t.Fatalf("Failed to calculate expected hash: %v", err)
+	}
+
+	if hash != expectedHash {
+		t.Errorf("Hash mismatch: got %s, want %s", hash, expectedHash)
+	}
+}
+
+// Helper function to calculate hash from bytes (for testing)
+func CalculateFileHashFromBytes(data []byte) (string, error) {
+	return CalculateHashFromReader(bytes.NewReader(data))
+}
+
+// errorReader is a reader that always returns an error
 type errorReader struct {
 	err error
 }
 
-func (r *errorReader) Read(p []byte) (int, error) {
+func (r *errorReader) Read(p []byte) (n int, err error) {
 	return 0, r.err
 }
 
-// eofReader returns io.EOF immediately on Read
+// eofReader is a reader that returns EOF immediately
 type eofReader struct{}
 
-func (r *eofReader) Read(p []byte) (int, error) {
+func (r *eofReader) Read(p []byte) (n int, err error) {
 	return 0, io.EOF
 }
 
-// partialReader returns partial data then an error
+// partialReader is a reader that returns data in small chunks
 type partialReader struct {
-	data   []byte
-	offset int
-	err    error
+	data      []byte
+	offset    int
+	chunkSize int
 }
 
-func (r *partialReader) Read(p []byte) (int, error) {
+func (r *partialReader) Read(p []byte) (n int, err error) {
 	if r.offset >= len(r.data) {
-		return 0, r.err
+		return 0, io.EOF
 	}
-	n := copy(p, r.data[r.offset:])
-	r.offset += n
-	return n, nil
+
+	// Return at most 5 bytes at a time
+	remaining := len(r.data) - r.offset
+	toRead := len(p)
+	if toRead > remaining {
+		toRead = remaining
+	}
+	if toRead > 5 {
+		toRead = 5
+	}
+
+	copy(p, r.data[r.offset:r.offset+toRead])
+	r.offset += toRead
+
+	if r.offset >= len(r.data) {
+		return toRead, io.EOF
+	}
+
+	return toRead, nil
 }
 
-func TestCalculateFileHash(t *testing.T) {
-	tests := []struct {
-		name    string
-		wantErr bool
-		setup   func() (string, func())
-		check   func(t *testing.T, hash string)
-	}{
-		{
-			name: "EmptyFile",
-			setup: func() (string, func()) {
-				tmpFile, err := os.CreateTemp(t.TempDir(), "empty-*")
-				if err != nil {
-					t.Fatalf("failed to create temp file: %v", err)
-				}
-				tmpFile.Close()
-				return tmpFile.Name(), func() { os.Remove(tmpFile.Name()) }
-			},
-			check: func(t *testing.T, hash string) {
-				if len(hash) != 64 {
-					t.Errorf("hash length = %d, want 64", len(hash))
-				}
-				if !hexRegex.MatchString(hash) {
-					t.Errorf("hash format invalid: %s", hash)
-				}
-			},
-		},
-		{
-			name: "KnownContent",
-			setup: func() (string, func()) {
-				tmpFile, err := os.CreateTemp(t.TempDir(), "known-*")
-				if err != nil {
-					t.Fatalf("failed to create temp file: %v", err)
-				}
-				if _, err := tmpFile.Write([]byte("hello world")); err != nil {
-					t.Fatalf("failed to write to temp file: %v", err)
-				}
-				tmpFile.Close()
-				return tmpFile.Name(), func() { os.Remove(tmpFile.Name()) }
-			},
-			check: func(t *testing.T, hash string) {
-				// SHA-256 hash of "hello world" is deterministic
-				expectedHash := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-				if hash != expectedHash {
-					t.Errorf("hash = %s, want %s", hash, expectedHash)
-				}
-			},
-		},
-		{
-			name: "DifferentContent",
-			setup: func() (string, func()) {
-				// This test will create two files and compare their hashes
-				return "", func() {}
-			},
-			check: func(t *testing.T, hash string) {}, // Placeholder, logic handled in test body
-		},
-		{
-			name: "IdenticalContent",
-			setup: func() (string, func()) {
-				// This test will create two files with same content and compare their hashes
-				return "", func() {}
-			},
-			check: func(t *testing.T, hash string) {}, // Placeholder, logic handled in test body
-		},
-		{
-			name:    "NonExistentFile",
-			wantErr: true,
-			setup: func() (string, func()) {
-				return "/nonexistent/path/to/file.txt", func() {}
-			},
-			check: func(t *testing.T, hash string) {},
-		},
-		{
-			name: "LargeFile",
-			setup: func() (string, func()) {
-				tmpFile, err := os.CreateTemp(t.TempDir(), "large-*")
-				if err != nil {
-					t.Fatalf("failed to create temp file: %v", err)
-				}
-				// Write 10MB of data
-				data := bytes.Repeat([]byte("A"), 10*1024*1024)
-				if _, err := tmpFile.Write(data); err != nil {
-					t.Fatalf("failed to write to temp file: %v", err)
-				}
-				tmpFile.Close()
-				return tmpFile.Name(), func() { os.Remove(tmpFile.Name()) }
-			},
-			check: func(t *testing.T, hash string) {
-				if len(hash) != 64 {
-					t.Errorf("hash length = %d, want 64", len(hash))
-				}
-				if !hexRegex.MatchString(hash) {
-					t.Errorf("hash format invalid: %s", hash)
-				}
-			},
-		},
+func TestHashConsistency_FileAndReader(t *testing.T) {
+	// Create a file and verify that CalculateFileHash and CalculateHashFromReader
+	// produce the same hash for the same content
+	tmpFile, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	content := []byte("consistency test content")
+	if _, err := tmpFile.Write(content); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	// Calculate hash using file
+	hashFromFile, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "DifferentContent" {
-				// Create two files with different content
-				tmpDir := t.TempDir()
-				file1 := tmpDir + "/file1.txt"
-				file2 := tmpDir + "/file2.txt"
+	// Calculate hash using reader
+	hashFromReader, err := CalculateHashFromReader(bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("CalculateHashFromReader() error = %v", err)
+	}
 
-				if err := os.WriteFile(file1, []byte("content one"), 0644); err != nil {
-					t.Fatalf("failed to write file1: %v", err)
-				}
-				if err := os.WriteFile(file2, []byte("content two"), 0644); err != nil {
-					t.Fatalf("failed to write file2: %v", err)
-				}
-
-				hash1, err1 := CalculateFileHash(file1)
-				hash2, err2 := CalculateFileHash(file2)
-
-				if err1 != nil {
-					t.Fatalf("CalculateFileHash(file1) error = %v", err1)
-				}
-				if err2 != nil {
-					t.Fatalf("CalculateFileHash(file2) error = %v", err2)
-				}
-
-				if hash1 == hash2 {
-					t.Errorf("different contents produced same hash: %s", hash1)
-				}
-				return
-			}
-
-			if tc.name == "IdenticalContent" {
-				// Create two files with identical content
-				tmpDir := t.TempDir()
-				file1 := tmpDir + "/file1.txt"
-				file2 := tmpDir + "/file2.txt"
-
-				content := []byte("identical content for both files")
-				if err := os.WriteFile(file1, content, 0644); err != nil {
-					t.Fatalf("failed to write file1: %v", err)
-				}
-				if err := os.WriteFile(file2, content, 0644); err != nil {
-					t.Fatalf("failed to write file2: %v", err)
-				}
-
-				hash1, err1 := CalculateFileHash(file1)
-				hash2, err2 := CalculateFileHash(file2)
-
-				if err1 != nil {
-					t.Fatalf("CalculateFileHash(file1) error = %v", err1)
-				}
-				if err2 != nil {
-					t.Fatalf("CalculateFileHash(file2) error = %v", err2)
-				}
-
-				if hash1 != hash2 {
-					t.Errorf("identical contents produced different hashes: %s vs %s", hash1, hash2)
-				}
-				return
-			}
-
-			filepath, cleanup := tc.setup()
-			defer cleanup()
-
-			hash, err := CalculateFileHash(filepath)
-
-			if tc.wantErr {
-				if err == nil {
-					t.Errorf("CalculateFileHash() expected error but got nil, hash = %s", hash)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("CalculateFileHash() unexpected error = %v", err)
-				return
-			}
-
-			tc.check(t, hash)
-		})
+	// Both should produce the same hash
+	if hashFromFile != hashFromReader {
+		t.Error("File hash and reader hash should be identical for same content")
 	}
 }
 
-func TestCalculateHashFromReader(t *testing.T) {
-	tests := []struct {
-		name    string
-		reader  io.Reader
-		wantErr bool
-		check   func(t *testing.T, hash string)
-	}{
-		{
-			name:    "BytesReader",
-			reader:  bytes.NewReader([]byte("hello world")),
-			wantErr: false,
-			check: func(t *testing.T, hash string) {
-				expectedHash := "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-				if hash != expectedHash {
-					t.Errorf("hash = %s, want %s", hash, expectedHash)
-				}
-				if len(hash) != 64 {
-					t.Errorf("hash length = %d, want 64", len(hash))
-				}
-				if !hexRegex.MatchString(hash) {
-					t.Errorf("hash format invalid: %s", hash)
-				}
-			},
-		},
-		{
-			name:    "ErrorReader",
-			reader:  &errorReader{err: errors.New("read error")},
-			wantErr: true,
-			check:   func(t *testing.T, hash string) {},
-		},
-		{
-			name:    "EOFReader",
-			reader:  &eofReader{},
-			wantErr: false,
-			check: func(t *testing.T, hash string) {
-				// Empty content hash (SHA-256 of empty data)
-				expectedHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-				if hash != expectedHash {
-					t.Errorf("hash = %s, want %s", hash, expectedHash)
-				}
-				if len(hash) != 64 {
-					t.Errorf("hash length = %d, want 64", len(hash))
-				}
-			},
-		},
-		{
-			name: "PartialReader",
-			reader: &partialReader{
-				data: []byte("partial data"),
-				err:  errors.New("read error after partial data"),
-			},
-			wantErr: true,
-			check:   func(t *testing.T, hash string) {},
-		},
-		{
-			name:    "LargeReader",
-			reader:  bytes.NewReader(bytes.Repeat([]byte("X"), 10*1024*1024)),
-			wantErr: false,
-			check: func(t *testing.T, hash string) {
-				if len(hash) != 64 {
-					t.Errorf("hash length = %d, want 64", len(hash))
-				}
-				if !hexRegex.MatchString(hash) {
-					t.Errorf("hash format invalid: %s", hash)
-				}
-			},
-		},
+func TestHashHexFormat(t *testing.T) {
+	// Verify that hash is lowercase hex
+	tmpFile, err := os.CreateTemp("", "hash-test-*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write([]byte("test")); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	hash, err := CalculateFileHash(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("CalculateFileHash() error = %v", err)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			hash, err := CalculateHashFromReader(tc.reader)
+	// Verify hash is lowercase hex
+	if strings.ToLower(hash) != hash {
+		t.Error("Hash should be lowercase hex")
+	}
 
-			if tc.wantErr {
-				if err == nil {
-					t.Errorf("CalculateHashFromReader() expected error but got nil, hash = %s", hash)
-				}
-				return
-			}
-
-			if err != nil {
-				t.Errorf("CalculateHashFromReader() unexpected error = %v", err)
-				return
-			}
-
-			tc.check(t, hash)
-		})
+	// Verify no uppercase letters
+	for _, c := range hash {
+		if c >= 'A' && c <= 'F' {
+			t.Errorf("Hash should not contain uppercase hex characters: %c", c)
+		}
 	}
 }

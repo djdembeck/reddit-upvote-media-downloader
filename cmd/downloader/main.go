@@ -134,7 +134,7 @@ func main() {
 		OutputDir:   cfg.Storage.OutputDir,
 		Concurrency: cfg.Download.Concurrency,
 	}
-	dl := downloader.NewDownloader(downloaderConfig)
+	dl := downloader.NewDownloader(downloaderConfig, db)
 
 	// Main loop
 	for {
@@ -344,12 +344,24 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	// Download items
+	// Download items and get hashes
 	hashes, err := dl.Download(ctx, items)
 	downloadErr := err
 	if err != nil {
 		logger := log.New(os.Stderr, "[downloader] ", log.LstdFlags)
 		logger.Printf("download completed with errors: %v", err)
+	}
+
+	// Mark posts as downloaded with hash
+	for _, post := range newPosts {
+		post.DownloadedAt = time.Now()
+		if hash, ok := hashes[post.ID]; ok {
+			post.Hash = hash
+		}
+		if err := db.SavePost(ctx, &post); err != nil {
+			logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
+			logger.Printf("Error saving post: %v", err)
+		}
 	}
 
 	// Mark posts as downloaded (only those with hashes)

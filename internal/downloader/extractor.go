@@ -43,6 +43,7 @@ type Downloadable struct {
 	Filename  string
 	MediaType string
 	Subreddit string
+	Hash      string
 }
 
 type Extractor struct {

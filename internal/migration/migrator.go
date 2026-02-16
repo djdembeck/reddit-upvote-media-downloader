@@ -1,12 +1,16 @@
 package migration
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
+
+	"github.com/zeebo/blake3"
 )
 
 type Migrator struct {
@@ -15,10 +19,18 @@ type Migrator struct {
 	PostMap   map[string]PostInfo
 	DryRun    bool
 	Log       *MigrationLog
+	// Hash tracking for duplicate detection
+	seenHashes map[string]FileHashInfo
+}
+
+type FileHashInfo struct {
+	PostID     string
+	SourcePath string
+	Timestamp  time.Time
 }
 
 func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool) *Migrator {
-	return &Migrator{
+	m := &Migrator{
 		SourceDir: sourceDir,
 		DestDir:   destDir,
 		PostMap:   postMap,
@@ -30,7 +42,37 @@ func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun 
 			DestDir:    destDir,
 			Operations: []MigrationRecord{},
 		},
+		seenHashes: make(map[string]FileHashInfo),
 	}
+	return m
+}
+
+// LoadExistingLog populates seenHashes from an existing migration log for idempotent re-runs
+func (m *Migrator) LoadExistingLog(logPath string) error {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No existing log, first run
+		}
+		return fmt.Errorf("read existing log: %w", err)
+	}
+
+	var existingLog MigrationLog
+	if err := json.Unmarshal(data, &existingLog); err != nil {
+		return fmt.Errorf("parse existing log: %w", err)
+	}
+
+	for _, op := range existingLog.Operations {
+		if op.Hash != "" && op.Status == "moved" {
+			m.seenHashes[op.Hash] = FileHashInfo{
+				PostID:     op.PostID,
+				SourcePath: op.SourcePath,
+				Timestamp:  op.Timestamp,
+			}
+		}
+	}
+
+	return nil
 }
 
 func (m *Migrator) Execute() error {
@@ -39,11 +81,34 @@ func (m *Migrator) Execute() error {
 		return fmt.Errorf("read source directory: %w", err)
 	}
 
+	// Collect file info for sorting by modification time
+	type fileEntry struct {
+		name    string
+		modTime time.Time
+	}
+	var files []fileEntry
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		m.processFile(entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			m.recordError(entry.Name(), "", "stat_file", err)
+			continue
+		}
+		files = append(files, fileEntry{
+			name:    entry.Name(),
+			modTime: info.ModTime(),
+		})
+	}
+
+	// Sort by modification time (oldest first)
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].modTime.Before(files[j].modTime)
+	})
+
+	for _, f := range files {
+		m.processFile(f.name)
 	}
 	return nil
 }
@@ -69,21 +134,34 @@ func (m *Migrator) processFile(filename string) {
 	destPath := m.buildDestPath(filename, postInfo)
 	sourcePath := filepath.Join(m.SourceDir, filename)
 
-	// Check if destination exists
-	if _, err := os.Stat(destPath); err == nil {
-		m.recordSkipped(filename, postID, "destination already exists")
-		return
-	}
-
-	// Get file size
+	// Get file info
 	fileInfo, err := os.Stat(sourcePath)
 	if err != nil {
 		m.recordError(filename, postID, "stat_file", err)
 		return
 	}
 
+	// Calculate hash for duplicate detection
+	fileHash, err := calculateHash(sourcePath)
+	if err != nil {
+		m.recordError(filename, postID, "calculate_hash", err)
+		return
+	}
+
+	// Check if hash already seen (duplicate detection) - includes idempotent re-run check
+	if existingInfo, hashSeen := m.seenHashes[fileHash]; hashSeen {
+		m.recordSkipped(filename, postID, fmt.Sprintf("duplicate hash (first seen: %s)", existingInfo.SourcePath))
+		return
+	}
+
+	// Check if destination exists
+	if _, err := os.Stat(destPath); err == nil {
+		m.recordSkipped(filename, postID, "destination already exists")
+		return
+	}
+
 	if m.DryRun {
-		m.recordDryRun(filename, postID, destPath, postInfo, fileInfo.Size())
+		m.recordDryRun(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash)
 		return
 	}
 
@@ -93,7 +171,14 @@ func (m *Migrator) processFile(filename string) {
 		return
 	}
 
-	m.recordSuccess(filename, postID, destPath, postInfo, fileInfo.Size())
+	// Record hash as seen
+	m.seenHashes[fileHash] = FileHashInfo{
+		PostID:     postID,
+		SourcePath: sourcePath,
+		Timestamp:  time.Now(),
+	}
+
+	m.recordSuccess(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash)
 }
 
 func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
@@ -177,7 +262,7 @@ func (m *Migrator) SaveLog(logPath string) error {
 }
 
 // Recording methods
-func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInfo, size int64) {
+func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInfo, size int64, hash string) {
 	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
@@ -188,6 +273,7 @@ func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInf
 		Status:     "moved",
 		Timestamp:  time.Now(),
 		FileSize:   size,
+		Hash:       hash,
 	})
 	m.Log.MovedCount++
 }
@@ -214,7 +300,7 @@ func (m *Migrator) recordError(filename, postID, operation string, err error) {
 	m.Log.ErrorCount++
 }
 
-func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64) {
+func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64, hash string) {
 	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
@@ -225,5 +311,21 @@ func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo
 		Status:     "dry_run",
 		Timestamp:  time.Now(),
 		FileSize:   size,
+		Hash:       hash,
 	})
+}
+
+// calculateHash computes BLAKE3 hash of a file
+func calculateHash(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hash := blake3.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
