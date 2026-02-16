@@ -149,10 +149,11 @@ func (db *DB) Close() error {
 }
 
 // SavePost saves a post to the database. If the post already exists, it updates the record.
+// Also saves retry-related fields: retry_count, last_error, last_attempt.
 func (db *DB) SavePost(ctx context.Context, post *Post) error {
 	query := `
-		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			subreddit = excluded.subreddit,
@@ -163,8 +164,23 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 			downloaded_at = excluded.downloaded_at,
 			media_type = excluded.media_type,
 			file_path = excluded.file_path,
-			source = excluded.source
+			source = excluded.source,
+			retry_count = excluded.retry_count,
+			last_error = excluded.last_error,
+			last_attempt = excluded.last_attempt
 	`
+
+	var lastError sql.NullString
+	if post.LastError != "" {
+		lastError.Valid = true
+		lastError.String = post.LastError
+	}
+
+	var lastAttempt sql.NullInt64
+	if !post.LastAttempt.IsZero() {
+		lastAttempt.Valid = true
+		lastAttempt.Int64 = post.LastAttempt.Unix()
+	}
 
 	_, err := db.conn.ExecContext(ctx, query,
 		post.ID,
@@ -178,6 +194,9 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 		post.MediaType,
 		post.FilePath,
 		post.Source,
+		post.RetryCount,
+		lastError,
+		lastAttempt,
 	)
 
 	if err != nil {
