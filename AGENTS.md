@@ -369,5 +369,5 @@ docker build --check .
 ## References
 
 - [README.md](README.md) - Project overview and features
-- GitHub: https://github.com/djdembeck/reddit-media-downloader
+- GitHub: https://github.com/yourusername/reddit-media-downloader
 - Reddit OAuth Documentation: https://www.reddit.com/prefs/apps
