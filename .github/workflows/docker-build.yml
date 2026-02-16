@@ -19,6 +19,13 @@ jobs:
       packages: write
 
     steps:
+      - name: Debug Docker
+        if: github.event_name != 'pull_request'
+        run: |
+          docker --version
+          docker buildx version
+          docker info
+          
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -43,9 +50,10 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=sha-,format=short
 
       - name: Build Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
