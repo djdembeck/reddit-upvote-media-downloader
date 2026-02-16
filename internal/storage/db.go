@@ -345,8 +345,8 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 		status.FilePath = filePath.String
 	}
 
-	// Check 1: Retry count exceeds threshold (permanent skip)
-	if threshold > 0 && status.RetryCount > threshold {
+	// Check 1: Retry count meets or exceeds threshold (permanent skip)
+	if threshold > 0 && status.RetryCount >= threshold {
 		status.ShouldSkip = true
 		status.RetryEligible = false
 		return status, nil
@@ -362,8 +362,13 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 			status.RetryEligible = false
 			return status, nil
 		}
-		// File doesn't exist - could be eligible for retry, continue to check backoff
-		status.FileExists = false
+		if os.IsNotExist(err) {
+			// File doesn't exist - could be eligible for retry, continue to check backoff
+			status.FileExists = false
+		} else {
+			// Other stat error - wrap and return
+			return nil, fmt.Errorf("stat %s: %w", status.FilePath, err)
+		}
 	} else {
 		// No file_path set - for backward compatibility:
 		// If never attempted (retry_count == 0), treat as downloaded (legacy behavior)
@@ -379,8 +384,8 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 	// Check 3: Backoff window (only if retry history exists)
 	// If last_attempt is set and backoff parameters are provided, check if within backoff
 	if !status.LastAttempt.IsZero() && backoffBase > 0 && status.RetryCount > 0 {
-		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
+		// Calculate backoff delay: min(backoffBase * 2^(retryCount-1), backoffMax)
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount-1)))
 		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
@@ -819,16 +824,33 @@ func (db *DB) GetRetryCount(ctx context.Context, postID string) (int, error) {
 
 // GetPostsToRetry returns post IDs that are eligible for retry based on backoff settings.
 // It considers posts where:
-// - retry_count < threshold (not permanently skipped)
+// - retry_count < threshold (not permanently skipped) (threshold <= 0 ignores this)
 // - Either retry_count == 0 (never tried) OR enough time has passed since last_attempt
-// backoffDelay = min(backoffBase * 2^retry_count, backoffMax)
+// backoffDelay = min(backoffBase * 2^(retry_count-1), backoffMax)
+// backoffMax of 0 means no cap
 func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.Duration, threshold int) ([]string, error) {
-	query := `
-		SELECT id, retry_count, last_attempt FROM posts
-		WHERE retry_count < ?
-	`
+	// Validate inputs
+	if backoffBase <= 0 {
+		return nil, fmt.Errorf("backoffBase must be greater than 0, got %v", backoffBase)
+	}
+	if backoffMax < 0 {
+		return nil, fmt.Errorf("backoffMax must be greater than or equal to 0, got %v", backoffMax)
+	}
+	if backoffMax > 0 && backoffMax < backoffBase {
+		return nil, fmt.Errorf("backoffMax (%v) must be greater than or equal to backoffBase (%v)", backoffMax, backoffBase)
+	}
 
-	rows, err := db.conn.QueryContext(ctx, query, threshold)
+	// Build query - only apply threshold filter if threshold > 0
+	var rows *sql.Rows
+	var err error
+	if threshold > 0 {
+		query := `SELECT id, retry_count, last_attempt FROM posts WHERE retry_count < ?`
+		rows, err = db.conn.QueryContext(ctx, query, threshold)
+	} else {
+		// threshold <= 0 means no cap, omit the WHERE clause
+		query := `SELECT id, retry_count, last_attempt FROM posts`
+		rows, err = db.conn.QueryContext(ctx, query)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posts to retry: %w", err)
 	}
@@ -857,9 +879,9 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 			continue
 		}
 
-		// Calculate backoff delay: min(backoffBase * 2^retry_count, backoffMax)
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(retryCount)))
-		if backoffDelay > backoffMax {
+		// Calculate backoff delay: min(backoffBase * 2^(retry_count-1), backoffMax)
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(retryCount-1)))
+		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
 

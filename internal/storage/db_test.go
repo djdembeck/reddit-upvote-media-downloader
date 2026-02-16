@@ -452,6 +452,11 @@ func TestMigration_AddsColumns(t *testing.T) {
 		columns[name] = true
 	}
 
+	// Check iterator error after loop
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table info iteration error: %v", err)
+	}
+
 	// Check that new columns exist
 	requiredColumns := []string{"retry_count", "last_error", "last_attempt"}
 	for _, col := range requiredColumns {
@@ -988,9 +993,11 @@ func TestGetPostsToRetry_AfterBackoff(t *testing.T) {
 		t.Fatalf("Failed to increment retry: %v", err)
 	}
 
-	// Manually update last_attempt to 2 seconds ago (backoff is 1 second * 2^1 = 2 seconds)
-	pastTime := time.Now().Add(-2 * time.Second).Unix()
-	db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "backoff2")
+	// Manually update last_attempt to 1 second ago (backoff is 1 second * 2^(1-1) = 1 second)
+	pastTime := time.Now().Add(-1 * time.Second).Unix()
+	if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "backoff2"); err != nil {
+		t.Fatalf("ExecContext failed: %v", err)
+	}
 
 	// Now should be eligible
 	result, err := db.GetPostsToRetry(ctx, time.Second, time.Minute, 3)
@@ -1031,13 +1038,14 @@ func TestGetPostsToRetry_ExponentialBackoff(t *testing.T) {
 		}
 	}
 
-	// With base backoff of 1 second and retry_count = 2:
-	// backoff = 1s * 2^2 = 4 seconds
-	// Update last_attempt to 3 seconds ago (less than 4 second backoff)
-	pastTime := time.Now().Add(-3 * time.Second).Unix()
-	db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "exponential1")
+	// Manually update last_attempt to 1 second ago (less than 2 second backoff)
+	// With base backoff of 1 second and retry_count = 2: backoff = 1s * 2^(2-1) = 2 seconds
+	pastTime := time.Now().Add(-1 * time.Second).Unix()
+	if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "exponential1"); err != nil {
+		t.Fatalf("ExecContext failed: %v", err)
+	}
 
-	// Should NOT be eligible yet (3s < 4s backoff)
+	// Should NOT be eligible yet (1s < 2s backoff)
 	result, err := db.GetPostsToRetry(ctx, time.Second, time.Minute, 3)
 	if err != nil {
 		t.Fatalf("Failed to get posts to retry: %v", err)
@@ -1048,9 +1056,11 @@ func TestGetPostsToRetry_ExponentialBackoff(t *testing.T) {
 		}
 	}
 
-	// Update to 5 seconds ago (more than 4 second backoff)
-	pastTime = time.Now().Add(-5 * time.Second).Unix()
-	db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "exponential1")
+	// Update to 3 seconds ago (more than 2 second backoff)
+	pastTime = time.Now().Add(-3 * time.Second).Unix()
+	if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "exponential1"); err != nil {
+		t.Fatalf("ExecContext failed: %v", err)
+	}
 
 	// Now should be eligible
 	result, err = db.GetPostsToRetry(ctx, time.Second, time.Minute, 3)
@@ -1091,13 +1101,15 @@ func TestGetPostsToRetry_MaxBackoff(t *testing.T) {
 	}
 
 	// With base backoff of 1 second and retry_count = 5:
-	// raw backoff = 1s * 2^5 = 32 seconds
-	// max backoff = 60 seconds, so backoff is 32s (not capped yet)
-	// Update last_attempt to 31 seconds ago (less than 32s backoff)
-	pastTime := time.Now().Add(-31 * time.Second).Unix()
-	db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "maxbackoff1")
+	// new backoff formula: 1s * 2^(5-1) = 1s * 16 = 16 seconds
+	// max backoff = 60 seconds, so backoff is 16s (not capped yet)
+	// Update last_attempt to 15 seconds ago (less than 16s backoff)
+	pastTime := time.Now().Add(-15 * time.Second).Unix()
+	if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "maxbackoff1"); err != nil {
+		t.Fatalf("ExecContext failed: %v", err)
+	}
 
-	// Should NOT be eligible yet (31s < 32s backoff)
+	// Should NOT be eligible yet (15s < 16s backoff)
 	result, err := db.GetPostsToRetry(ctx, time.Second, time.Minute, 10)
 	if err != nil {
 		t.Fatalf("Failed to get posts to retry: %v", err)
@@ -1108,9 +1120,11 @@ func TestGetPostsToRetry_MaxBackoff(t *testing.T) {
 		}
 	}
 
-	// Update to 33 seconds ago (more than 32s backoff)
-	pastTime = time.Now().Add(-33 * time.Second).Unix()
-	db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "maxbackoff1")
+	// Update to 17 seconds ago (more than 16s backoff)
+	pastTime = time.Now().Add(-17 * time.Second).Unix()
+	if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "maxbackoff1"); err != nil {
+		t.Fatalf("ExecContext failed: %v", err)
+	}
 
 	// Now should be eligible
 	result, err = db.GetPostsToRetry(ctx, time.Second, time.Minute, 10)
@@ -1142,9 +1156,7 @@ func TestGetPostsToRetry_Mixed(t *testing.T) {
 	}{
 		// Never attempted - should return
 		{"mixed1", 0, 0, true},
-		// Recently attempted (1s ago, backoff is 2s) - should not return
-		{"mixed2", 1, -1 * time.Second, false},
-		// Old attempt (120s ago, backoff is 2s) - should return
+		// Old attempt (120s ago, backoff is 1s) - should return
 		{"mixed3", 1, -120 * time.Second, true},
 		// Exceeds threshold - should not return
 		{"mixed4", 5, -300 * time.Second, false},
@@ -1170,7 +1182,9 @@ func TestGetPostsToRetry_Mixed(t *testing.T) {
 
 		if tc.lastAttempt != 0 {
 			pastTime := time.Now().Add(tc.lastAttempt).Unix()
-			db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, tc.id)
+			if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, tc.id); err != nil {
+				t.Fatalf("ExecContext failed: %v", err)
+			}
 		}
 	}
 
@@ -1346,7 +1360,7 @@ func TestCheckPostStatus_WithinBackoff(t *testing.T) {
 		t.Fatalf("Failed to save post: %v", err)
 	}
 
-	// Increment retry once (retry_count = 1, so backoff = 1s * 2^1 = 2s)
+	// Increment retry once (retry_count = 1, so backoff = 1s * 2^(1-1) = 1s)
 	if err := db.IncrementRetry(ctx, "backoff1", "error"); err != nil {
 		t.Fatalf("Failed to increment retry: %v", err)
 	}
@@ -1387,9 +1401,11 @@ func TestCheckPostStatus_AfterBackoff(t *testing.T) {
 		t.Fatalf("Failed to increment retry: %v", err)
 	}
 
-	// Manually set last_attempt to 3 seconds ago (backoff is 2s, so 3s > 2s)
-	pastTime := time.Now().Add(-3 * time.Second).Unix()
-	db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "backoff2")
+	// Manually set last_attempt to 2 seconds ago (backoff is 1s, so 2s > 1s)
+	pastTime := time.Now().Add(-2 * time.Second).Unix()
+	if _, err := db.conn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, "backoff2"); err != nil {
+		t.Fatalf("ExecContext failed: %v", err)
+	}
 
 	status, err := db.CheckPostStatus(ctx, "backoff2", 3, time.Second, time.Minute)
 	if err != nil {

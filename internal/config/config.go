@@ -63,28 +63,6 @@ type BackoffConfig struct {
 	Max  time.Duration
 }
 
-// CalculateBackoffDelay calculates exponential backoff delay for retries
-// Formula: baseDelay * (2^retryCount), capped at maxDelay
-// Edge cases: negative retryCount returns 0, zero base returns 0
-func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
-	// Handle edge cases
-	if retryCount < 0 {
-		return 0
-	}
-	if base <= 0 {
-		return 0
-	}
-
-	// Calculate delay using bit shift for efficiency: base * 2^retryCount
-	delay := base * time.Duration(1<<uint(retryCount))
-
-	// Cap at max delay
-	if delay > max {
-		return max
-	}
-	return delay
-}
-
 // SmartPollingConfig holds smart polling settings for re-checking posts
 type SmartPollingConfig struct {
 	ReCheck        bool

@@ -177,7 +177,6 @@ When enabled, the downloader will:
 3. Re-download any files that are missing from disk but recorded in the database
 4. Useful for recovering from partial downloads, disk corruption, or accidental file deletion
 
-Example:
 ```bash
 ./reddit-downloader --re-check
 ```
@@ -194,7 +193,6 @@ When a download fails, the application uses exponential backoff before retrying:
 
 After `RETRY_THRESHOLD` failures (default: 3), the post is permanently skipped and marked as failed in the database.
 
-Example with custom backoff:
 ```bash
 ./reddit-downloader --backoff-base=10s --backoff-max=120s --retry-threshold=5
 ```
@@ -209,10 +207,12 @@ The downloader automatically migrates existing bdfr-html data on first run:
 
 **To migrate:**
 1. Copy your existing bdfr-html output to the new data directory:
-   ```bash
-   cp -r /path/to/bdfr-html/output/* ./data/output/
-   cp /path/to/bdfr-html/output/idList.txt ./data/
-   ```
+
+```bash
+cp -r /path/to/bdfr-html/output/* ./data/output/
+cp /path/to/bdfr-html/output/idList.txt ./data/
+```
+
 2. Start the downloader with `MIGRATE_ON_START=true`
 3. Logs will show: *"Migrated X existing posts from bdfr-html"*
 
@@ -225,7 +225,6 @@ When `FULL_SYNC_ONCE=true` (default), the first run after migration behaves as f
 
 This ensures your local database is fully synchronized with Reddit after migration, while avoiding redundant API calls on future runs.
 
-To change this behavior:
 ```bash
 # Disable full sync (only fetch new posts after migration)
 FULL_SYNC_ONCE=false
@@ -247,18 +246,21 @@ If your media is organized in a flat directory structure and you want to reorgan
 
 
 ### Build the migration tool
+
 ```bash
 go build -o migrate cmd/migrate/main.go
 ```
 
 
 ### Dry-run (preview changes)
+
 ```bash
 ./migrate --source /path/to/media --dest ./output --index /path/to/index.html --dry-run
 ```
 
 
 ### Execute migration
+
 ```bash
 ./migrate --source /path/to/media --dest ./output --index /path/to/index.html
 ```
@@ -277,6 +279,7 @@ output/
 
 
 ### Rollback (if needed)
+
 ```bash
 ./migrate --rollback --log-file ./output/.migration_log.json
 ```
