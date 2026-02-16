@@ -344,15 +344,10 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	// Download items and get hashes
+	// Download items and get hashes (may return partial hashes + error)
 	hashes, err := dl.Download(ctx, items)
-	downloadErr := err
-	if err != nil {
-		logger := log.New(os.Stderr, "[downloader] ", log.LstdFlags)
-		logger.Printf("download completed with errors: %v", err)
-	}
 
-	// Mark posts as downloaded with hash
+	// Save posts with whatever hashes we have (preserves partial results on error)
 	for _, post := range newPosts {
 		post.DownloadedAt = time.Now()
 		if hash, ok := hashes[post.ID]; ok {
@@ -364,30 +359,3 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 		}
 	}
 
-	// Mark posts as downloaded (only those with hashes)
-	for _, post := range newPosts {
-		if hash, ok := hashes[post.ID]; ok && hash != "" {
-			post.DownloadedAt = time.Now()
-			if err := db.SavePost(ctx, &post); err != nil {
-				logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
-				logger.Printf("Error saving post: %v", err)
-			}
-		}
-	}
-
-	// Mark full sync as completed if it was pending
-	if isFullSync {
-		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
-		} else {
-			fmt.Println("Full sync completed, switching to incremental mode")
-		}
-	}
-
-	if downloadErr != nil {
-		return fmt.Errorf("downloading media: %w", downloadErr)
-	}
-
-	fmt.Printf("Cycle complete: downloaded %d items\n", len(items))
-	return nil
-}

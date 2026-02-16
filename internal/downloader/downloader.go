@@ -204,10 +204,14 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			hash, hashErr := CalculateFileHash(filePath)
 			if hashErr != nil {
 				d.logger.Printf("error calculating hash for %s: %v", filePath, hashErr)
+				os.Remove(filePath) // Clean up orphaned file
 				return "", fmt.Errorf("calculate hash: %w", hashErr)
 			}
 
-			// Check if hash already exists in database
+			// Check if hash already exists in database.
+			// Note: There's a small race window where concurrent downloads of the same
+			// content could both pass this check before either saves to the database.
+			// This is acceptable for a media downloader given the low probability.
 			if d.db != nil {
 				exists, dbErr := d.db.HashExists(ctx, hash)
 				if dbErr != nil {
