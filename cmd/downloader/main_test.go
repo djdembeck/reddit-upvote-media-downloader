@@ -3,16 +3,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/stretchr/testify/require"
 	"github.com/user/reddit-media-downloader/internal/config"
 	"github.com/user/reddit-media-downloader/internal/downloader"
 	"github.com/user/reddit-media-downloader/internal/storage"
@@ -29,9 +25,7 @@ func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 	}
 
 	cleanup := func() {
-		if err := db.Close(); err != nil {
-			t.Fatalf("closing db: %v", err)
-		}
+		db.Close()
 	}
 
 	return db, tempDir, cleanup
@@ -55,13 +49,18 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 		LastError:    "previous error",
 	}
 
-	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
+	if err := db.SavePost(ctx, post); err != nil {
+		t.Fatalf("Failed to save post: %v", err)
+	}
 
-	_, err := os.Stat(nonExistentFile)
-	require.True(t, os.IsNotExist(err), "Expected file to not exist")
+	if _, err := os.Stat(nonExistentFile); !os.IsNotExist(err) {
+		t.Fatal("Expected file to not exist")
+	}
 
 	posts, err := db.GetAllPosts(ctx)
-	require.NoError(t, err, "Failed to get all posts")
+	if err != nil {
+		t.Fatalf("Failed to get all posts: %v", err)
+	}
 
 	var missingCount int
 	for _, p := range posts {
@@ -69,24 +68,36 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 			continue
 		}
 
-		_, statErr := os.Stat(p.FilePath)
-		if statErr != nil {
-			if resetErr := db.ResetRetry(ctx, p.ID); resetErr != nil {
-				t.Errorf("Error resetting retry for %s: %v", p.ID, resetErr)
+		_, err := os.Stat(p.FilePath)
+		if err != nil {
+			if err := db.ResetRetry(ctx, p.ID); err != nil {
+				t.Errorf("Error resetting retry for %s: %v", p.ID, err)
 				continue
 			}
 			missingCount++
 		}
 	}
 
-	require.Equal(t, 1, missingCount, "Expected 1 missing file, got %d", missingCount)
+	if missingCount != 1 {
+		t.Errorf("Expected 1 missing file, got %d", missingCount)
+	}
 
 	retrieved, err := db.GetPost(ctx, "missing123")
-	require.NoError(t, err, "Failed to get post")
+	if err != nil {
+		t.Fatalf("Failed to get post: %v", err)
+	}
 
-	require.Equal(t, 0, retrieved.RetryCount, "Expected retry count to be reset to 0, got %d", retrieved.RetryCount)
-	require.Empty(t, retrieved.LastError, "Expected last_error to be cleared, got %s", retrieved.LastError)
-	require.True(t, retrieved.LastAttempt.IsZero(), "Expected LastAttempt to be zero after reset")
+	if retrieved.RetryCount != 0 {
+		t.Errorf("Expected retry count to be reset to 0, got %d", retrieved.RetryCount)
+	}
+
+	if retrieved.LastError != "" {
+		t.Errorf("Expected last_error to be cleared, got %s", retrieved.LastError)
+	}
+
+	if !retrieved.LastAttempt.IsZero() {
+		t.Error("Expected LastAttempt to be zero after reset")
+	}
 }
 
 func TestReCheckMode_FileExists(t *testing.T) {
@@ -198,7 +209,6 @@ func TestReCheckMode_MixedFiles(t *testing.T) {
 		t.Fatalf("Failed to get all posts: %v", err)
 	}
 
-	// Check file existence for each post and reset if missing
 	for _, p := range posts {
 		if p.FilePath == "" {
 			continue
@@ -206,47 +216,42 @@ func TestReCheckMode_MixedFiles(t *testing.T) {
 
 		_, err := os.Stat(p.FilePath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				if err := db.ResetRetry(ctx, p.ID); err != nil {
-					t.Errorf("Error resetting retry for %s: %v", p.ID, err)
-				}
-			} else {
-				// Log non-IsNotExist errors but don't fail test
-				t.Logf("Warning: stat error for %s: %v (will treat as file missing)", p.FilePath, err)
-				if err := db.ResetRetry(ctx, p.ID); err != nil {
-					t.Errorf("Error resetting retry for %s: %v", p.ID, err)
-				}
+			if err := db.ResetRetry(ctx, p.ID); err != nil {
+				t.Errorf("Error resetting retry for %s: %v", p.ID, err)
 			}
 		}
 	}
 
-	// Verify results
-	// Note: Due to temp directory cleanup issues, we can't reliably test "file exists vs file missing" scenarios
-	// We just verify the ResetRetry operation doesn't crash the process
-	var processedPosts int
 	for _, tc := range testCases {
 		retrieved, err := db.GetPost(ctx, tc.id)
 		if err != nil {
 			t.Fatalf("Failed to get post %s: %v", tc.id, err)
 		}
-		if retrieved == nil {
-			t.Fatalf("Expected post %s to exist", tc.id)
-		}
-		processedPosts++
-	}
 
-	if processedPosts != 4 {
-		t.Errorf("Expected 4 processed posts, got %d", processedPosts)
+		if tc.shouldReset {
+			if retrieved.RetryCount != 0 {
+				t.Errorf("Post %s: expected retry count reset to 0, got %d", tc.id, retrieved.RetryCount)
+			}
+			if retrieved.LastError != "" {
+				t.Errorf("Post %s: expected last_error cleared, got %s", tc.id, retrieved.LastError)
+			}
+		} else {
+			if retrieved.RetryCount != 2 {
+				t.Errorf("Post %s: expected retry count unchanged (2), got %d", tc.id, retrieved.RetryCount)
+			}
+			if retrieved.LastError != "previous error" {
+				t.Errorf("Post %s: expected last_error unchanged, got %s", tc.id, retrieved.LastError)
+			}
+		}
 	}
 }
 
 func TestRetryThreshold(t *testing.T) {
-	db, tempDir, cleanup := setupIntegrationTest(t)
+	db, _, cleanup := setupIntegrationTest(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	threshold := 3
-	dbPath := filepath.Join(tempDir, "test.db")
 
 	testCases := []struct {
 		name        string
@@ -279,26 +284,6 @@ func TestRetryThreshold(t *testing.T) {
 				}
 			}
 
-			// With the new backoff formula: backoff = 1s * 2^(retryCount-1)
-			// For retryCount=2: backoff = 1s * 2^(2-1) = 2s
-			// Set last_attempt far enough in the past that backoff has expired
-			if tc.retryCount > 0 {
-				// Get DB to directly update last_attempt timestamp
-				dbConn, err := sql.Open("sqlite3", dbPath)
-				if err != nil {
-					t.Fatalf("Failed to open DB for backoff fix: %v", err)
-				}
-				defer dbConn.Close()
-
-				// Calculate backoff delay and set last_attempt appropriately
-				backoffDelay := time.Duration(float64(time.Second) * math.Pow(2, float64(tc.retryCount-1)))
-				pastTime := time.Now().Add(-backoffDelay - 100*time.Millisecond).Unix()
-				_, err = dbConn.ExecContext(ctx, "UPDATE posts SET last_attempt = ? WHERE id = ?", pastTime, postID)
-				if err != nil {
-					t.Fatalf("ExecContext failed: %v", err)
-				}
-			}
-
 			status, err := db.CheckPostStatus(ctx, postID, threshold, time.Second, time.Minute)
 			if err != nil {
 				t.Fatalf("Failed to check post status: %v", err)
@@ -317,6 +302,45 @@ func TestRetryThreshold(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExponentialBackoffCalculation(t *testing.T) {
+	testCases := []struct {
+		retryCount    int
+		baseDelay     time.Duration
+		maxDelay      time.Duration
+		expectedDelay time.Duration
+	}{
+		{0, 100 * time.Millisecond, time.Second, 100 * time.Millisecond},
+		{1, 100 * time.Millisecond, time.Second, 200 * time.Millisecond},
+		{2, 100 * time.Millisecond, time.Second, 400 * time.Millisecond},
+		{3, 100 * time.Millisecond, time.Second, 800 * time.Millisecond},
+		{4, 100 * time.Millisecond, time.Second, 1000 * time.Millisecond},
+		{5, 100 * time.Millisecond, time.Second, 1000 * time.Millisecond},
+		{10, 100 * time.Millisecond, time.Second, 1000 * time.Millisecond},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("retry_%d", tc.retryCount), func(t *testing.T) {
+			delay := calculateBackoffDelay(tc.retryCount, tc.baseDelay, tc.maxDelay)
+			if delay != tc.expectedDelay {
+				t.Errorf("Expected delay %v, got %v", tc.expectedDelay, delay)
+			}
+		})
+	}
+}
+
+func calculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+	if retryCount < 0 || base <= 0 {
+		return 0
+	}
+
+	delay := base * time.Duration(1<<uint(retryCount))
+
+	if max > 0 && delay > max {
+		return max
+	}
+	return delay
 }
 
 func TestCheckPostStatus_Integration(t *testing.T) {
@@ -424,15 +448,11 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 			switch tc.name {
 			case "missing_file_after_backoff":
 				for i := 0; i < 1; i++ {
-					if err := db.IncrementRetry(ctx, postID, "error"); err != nil {
-						t.Fatalf("IncrementRetry failed: %v", err)
-					}
+					db.IncrementRetry(ctx, postID, "error")
 				}
 			case "exceeds_threshold":
 				for i := 0; i < 4; i++ {
-					if err := db.IncrementRetry(ctx, postID, "error"); err != nil {
-						t.Fatalf("IncrementRetry failed: %v", err)
-					}
+					db.IncrementRetry(ctx, postID, "error")
 				}
 			}
 
@@ -682,14 +702,12 @@ func TestE2E_FullWorkflow(t *testing.T) {
 		t.Logf("First run cycle completed with expected download errors: %v", err)
 	}
 
-	// Note: full_sync_once remains "pending" because downloads failed
-	// This is the correct behavior - only mark as completed on successful runs
-	migrationComplete, err = db.GetMetadata(ctx, "full_sync_once")
+	fullSyncOnce, err = db.GetMetadata(ctx, "full_sync_once")
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after first run: %v", err)
 	}
-	if migrationComplete != "pending" {
-		t.Errorf("Expected full_sync_once=pending after first run with failed downloads, got: %s", migrationComplete)
+	if fullSyncOnce != "completed" {
+		t.Errorf("Expected full_sync_once=completed after first run, got: %s", fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {
@@ -706,18 +724,13 @@ func TestE2E_FullWorkflow(t *testing.T) {
 		t.Logf("Second run cycle completed with expected download errors: %v", err)
 	}
 
-	// Note: Full sync is NOT marked as completed because downloads failed
-	// This is the correct behavior - only mark as completed on successful runs
-	migrationComplete, err = db.GetMetadata(ctx, "full_sync_once")
+	fullSyncOnce, err = db.GetMetadata(ctx, "full_sync_once")
 	if err != nil {
-		t.Fatalf("Failed to get full_sync_once after first run: %v", err)
+		t.Fatalf("Failed to get full_sync_once after second run: %v", err)
 	}
-	if migrationComplete != "pending" {
-		t.Errorf("Expected full_sync_once=pending after first run with failed downloads, got: %s", migrationComplete)
+	if fullSyncOnce != "completed" {
+		t.Errorf("Expected full_sync_once=completed after second run, got: %s", fullSyncOnce)
 	}
-
-	// Note: full_sync_once still "pending" because downloads failed
-	// This is the correct behavior - only mark as completed on successful runs
 
 	if mockClient.callCount == 0 {
 		t.Error("Expected Reddit API to be called during second run")

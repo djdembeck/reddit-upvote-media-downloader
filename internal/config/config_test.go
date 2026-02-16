@@ -6,35 +6,64 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestLoadWithEnvVars(t *testing.T) {
 	// Set environment variables
-	t.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	t.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	t.Setenv("REDDIT_USERNAME", "test-user")
-	t.Setenv("REDDIT_PASSWORD", "test-pass")
-	t.Setenv("OUTPUT_DIR", "/tmp/test-output")
-	t.Setenv("DB_PATH", "/tmp/test.db")
-	t.Setenv("CONCURRENCY", "5")
-	t.Setenv("FETCH_LIMIT", "50")
-	t.Setenv("MAX_RETRIES", "5")
-	t.Setenv("LOG_LEVEL", "debug")
-	t.Setenv("MIGRATE_ON_START", "false")
+	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	os.Setenv("REDDIT_USERNAME", "test-user")
+	os.Setenv("REDDIT_PASSWORD", "test-pass")
+	os.Setenv("OUTPUT_DIR", "/tmp/test-output")
+	os.Setenv("DB_PATH", "/tmp/test.db")
+	os.Setenv("CONCURRENCY", "5")
+	os.Setenv("FETCH_LIMIT", "50")
+	os.Setenv("MAX_RETRIES", "5")
+	os.Setenv("LOG_LEVEL", "debug")
+	os.Setenv("MIGRATE_ON_START", "false")
+	defer func() {
+		os.Unsetenv("REDDIT_CLIENT_ID")
+		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_PASSWORD")
+		os.Unsetenv("OUTPUT_DIR")
+		os.Unsetenv("DB_PATH")
+		os.Unsetenv("CONCURRENCY")
+		os.Unsetenv("FETCH_LIMIT")
+		os.Unsetenv("MAX_RETRIES")
+		os.Unsetenv("LOG_LEVEL")
+		os.Unsetenv("MIGRATE_ON_START")
+	}()
 
 	cfg, err := Load()
-	require.NoError(t, err, "Load() returned error: %v", err)
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
 
-	require.Equal(t, "test-client-id", cfg.Reddit.ClientID, "Expected ClientID 'test-client-id', got '%s'", cfg.Reddit.ClientID)
-	require.Equal(t, "test-client-secret", cfg.Reddit.ClientSecret, "Expected ClientSecret 'test-client-secret', got '%s'", cfg.Reddit.ClientSecret)
-	require.Equal(t, "test-user", cfg.Reddit.Username, "Expected Username 'test-user', got '%s'", cfg.Reddit.Username)
-	require.Equal(t, "/tmp/test-output", cfg.Storage.OutputDir, "Expected OutputDir '/tmp/test-output', got '%s'", cfg.Storage.OutputDir)
-	require.Equal(t, 5, cfg.Download.Concurrency, "Expected Concurrency 5, got %d", cfg.Download.Concurrency)
-	require.Equal(t, 50, cfg.Download.FetchLimit, "Expected FetchLimit 50, got %d", cfg.Download.FetchLimit)
-	require.Equal(t, "debug", cfg.Log.Level, "Expected Log.Level 'debug', got '%s'", cfg.Log.Level)
-	require.False(t, cfg.Migrate.OnStart, "Expected Migrate.OnStart false, got %v", cfg.Migrate.OnStart)
+	if cfg.Reddit.ClientID != "test-client-id" {
+		t.Errorf("Expected ClientID 'test-client-id', got '%s'", cfg.Reddit.ClientID)
+	}
+	if cfg.Reddit.ClientSecret != "test-client-secret" {
+		t.Errorf("Expected ClientSecret 'test-client-secret', got '%s'", cfg.Reddit.ClientSecret)
+	}
+	if cfg.Reddit.Username != "test-user" {
+		t.Errorf("Expected Username 'test-user', got '%s'", cfg.Reddit.Username)
+	}
+	if cfg.Storage.OutputDir != "/tmp/test-output" {
+		t.Errorf("Expected OutputDir '/tmp/test-output', got '%s'", cfg.Storage.OutputDir)
+	}
+	if cfg.Download.Concurrency != 5 {
+		t.Errorf("Expected Concurrency 5, got %d", cfg.Download.Concurrency)
+	}
+	if cfg.Download.FetchLimit != 50 {
+		t.Errorf("Expected FetchLimit 50, got %d", cfg.Download.FetchLimit)
+	}
+	if cfg.Log.Level != "debug" {
+		t.Errorf("Expected Log.Level 'debug', got '%s'", cfg.Log.Level)
+	}
+	if cfg.Migrate.OnStart != false {
+		t.Errorf("Expected Migrate.OnStart false, got %v", cfg.Migrate.OnStart)
+	}
 }
 
 func TestLoadWithDefaults(t *testing.T) {
@@ -327,6 +356,45 @@ func TestGetEnvBool(t *testing.T) {
 			t.Errorf("GetEnvBool('%s') = %v, expected %v", tt.envValue, result, tt.expected)
 		}
 		os.Unsetenv("TEST_BOOL_VAR")
+	}
+}
+
+func TestCalculateBackoffDelay(t *testing.T) {
+	tests := []struct {
+		name       string
+		retryCount int
+		base       time.Duration
+		max        time.Duration
+		expected   time.Duration
+	}{
+		// Basic exponential backoff
+		{"retry 0", 0, 5 * time.Second, 60 * time.Second, 5 * time.Second},
+		{"retry 1", 1, 5 * time.Second, 60 * time.Second, 10 * time.Second},
+		{"retry 2", 2, 5 * time.Second, 60 * time.Second, 20 * time.Second},
+		{"retry 3", 3, 5 * time.Second, 60 * time.Second, 40 * time.Second},
+		// Max cap
+		{"retry 4 capped", 4, 5 * time.Second, 60 * time.Second, 60 * time.Second},
+		{"retry 5 capped", 5, 5 * time.Second, 60 * time.Second, 60 * time.Second},
+		// Edge cases
+		{"negative retry", -1, 5 * time.Second, 60 * time.Second, 0},
+		{"zero base", 3, 0, 60 * time.Second, 0},
+		// Different base/max values
+		{"1s base retry 0", 0, 1 * time.Second, 30 * time.Second, 1 * time.Second},
+		{"1s base retry 1", 1, 1 * time.Second, 30 * time.Second, 2 * time.Second},
+		{"1s base retry 2", 2, 1 * time.Second, 30 * time.Second, 4 * time.Second},
+		{"1s base retry 3", 3, 1 * time.Second, 30 * time.Second, 8 * time.Second},
+		{"1s base retry 4", 4, 1 * time.Second, 30 * time.Second, 16 * time.Second},
+		{"1s base retry 5 capped", 5, 1 * time.Second, 30 * time.Second, 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalculateBackoffDelay(tt.retryCount, tt.base, tt.max)
+			if result != tt.expected {
+				t.Errorf("CalculateBackoffDelay(%d, %v, %v) = %v, expected %v",
+					tt.retryCount, tt.base, tt.max, result, tt.expected)
+			}
+		})
 	}
 }
 

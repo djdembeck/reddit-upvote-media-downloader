@@ -177,6 +177,7 @@ When enabled, the downloader will:
 3. Re-download any files that are missing from disk but recorded in the database
 4. Useful for recovering from partial downloads, disk corruption, or accidental file deletion
 
+Example:
 ```bash
 ./reddit-downloader --re-check
 ```
@@ -193,6 +194,7 @@ When a download fails, the application uses exponential backoff before retrying:
 
 After `RETRY_THRESHOLD` failures (default: 3), the post is permanently skipped and marked as failed in the database.
 
+Example with custom backoff:
 ```bash
 ./reddit-downloader --backoff-base=10s --backoff-max=120s --retry-threshold=5
 ```

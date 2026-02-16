@@ -63,6 +63,28 @@ type BackoffConfig struct {
 	Max  time.Duration
 }
 
+// CalculateBackoffDelay calculates exponential backoff delay for retries
+// Formula: baseDelay * (2^retryCount), capped at maxDelay
+// Edge cases: negative retryCount returns 0, zero base returns 0
+func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+	// Handle edge cases
+	if retryCount < 0 {
+		return 0
+	}
+	if base <= 0 {
+		return 0
+	}
+
+	// Calculate delay using bit shift for efficiency: base * 2^retryCount
+	delay := base * time.Duration(1<<uint(retryCount))
+
+	// Cap at max delay
+	if delay > max {
+		return max
+	}
+	return delay
+}
+
 // SmartPollingConfig holds smart polling settings for re-checking posts
 type SmartPollingConfig struct {
 	ReCheck        bool
@@ -71,18 +93,16 @@ type SmartPollingConfig struct {
 
 // Flag variables for CLI parsing
 var (
-	flagReCheck           bool
-	flagRetryThreshold    int
-	flagClientID          string
-	flagClientSecret      string
-	flagUsername          string
-	flagConcurrency       int
-	flagFetchLimit        int
-	flagBackoffBase       time.Duration
-	flagBackoffMax        time.Duration
-	flagSet               bool
-	flagSetReCheck        bool
-	flagSetRetryThreshold bool
+	flagReCheck        bool
+	flagRetryThreshold int
+	flagClientID       string
+	flagClientSecret   string
+	flagUsername       string
+	flagConcurrency    int
+	flagFetchLimit     int
+	flagBackoffBase    time.Duration
+	flagBackoffMax     time.Duration
+	flagSet            bool
 )
 
 func init() {
@@ -104,12 +124,6 @@ func flagWasSet() bool {
 	// We use flag.CommandLine.Lookup to check if flags were explicitly set
 	flag.CommandLine.Visit(func(f *flag.Flag) {
 		flagSet = true
-		if f.Name == "re-check" {
-			flagSetReCheck = true
-		}
-		if f.Name == "retry-threshold" {
-			flagSetRetryThreshold = true
-		}
 	})
 	return flagSet
 }
@@ -181,10 +195,8 @@ func Load() (*Config, error) {
 		if flagBackoffMax > 0 {
 			cfg.Backoff.Max = flagBackoffMax
 		}
-		if flagSetReCheck {
-			cfg.SmartPolling.ReCheck = flagReCheck
-		}
-		if flagSetRetryThreshold {
+		cfg.SmartPolling.ReCheck = flagReCheck
+		if flagRetryThreshold > 0 {
 			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
 		}
 	}

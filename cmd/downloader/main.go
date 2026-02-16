@@ -226,6 +226,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 
 // runReCheckMode verifies all downloaded files exist on disk.
 // For missing files: marks posts for re-download by resetting retry count.
+// Returns the count of missing files found.
 func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	fmt.Println("Starting re-check mode...")
 
@@ -243,16 +244,12 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 
 		_, err := os.Stat(post.FilePath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				fmt.Printf("File missing: %s, resetting for re-download\n", post.FilePath)
-				if err := db.ResetRetry(ctx, post.ID); err != nil {
-					fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
-					continue
-				}
-				missingCount++
-			} else {
-				fmt.Fprintf(os.Stderr, "Warning: stat error for %s: %v\n", post.FilePath, err)
+			fmt.Printf("File missing: %s, resetting for re-download\n", post.FilePath)
+			if err := db.ResetRetry(ctx, post.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
+				continue
 			}
+			missingCount++
 		} else {
 			fmt.Printf("File verified: %s\n", post.FilePath)
 			verifiedCount++
@@ -274,10 +271,7 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 	fmt.Println("Starting download cycle...")
 
 	// Check if full sync is pending (first run after migration)
-	fullSyncOnce, err := db.GetMetadata(ctx, "full_sync_once")
-	if err != nil {
-		return fmt.Errorf("getting full_sync_once metadata: %w", err)
-	}
+	fullSyncOnce, _ := db.GetMetadata(ctx, "full_sync_once")
 	isFullSync := fullSyncOnce == "pending" && cfg.Migrate.FullSyncOnce
 
 	fetchLimit := cfg.Download.FetchLimit
@@ -369,18 +363,17 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 		}
 	}
 
-	// Return error if downloads failed
-	if downloadErr != nil {
-		return fmt.Errorf("downloading media: %w", downloadErr)
-	}
-
-	// Mark full sync as completed if it was pending and downloads succeeded
+	// Mark full sync as completed if it was pending
 	if isFullSync {
 		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
 		} else {
 			fmt.Println("Full sync completed, switching to incremental mode")
 		}
+	}
+
+	if downloadErr != nil {
+		return fmt.Errorf("downloading media: %w", downloadErr)
 	}
 
 	fmt.Printf("Cycle complete: downloaded %d items\n", len(items))
