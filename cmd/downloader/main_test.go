@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -690,13 +689,12 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
-		Logger:      log.New(io.Discard, "", 0),
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
 	testSlogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	testLoggerWrapper := &slogPrintfWrapper{logger: testSlogLogger}
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger, testLoggerWrapper); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger); err != nil {
 		t.Logf("First run cycle completed with expected download errors: %v", err)
 	}
 
@@ -718,7 +716,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 
 	mockClient.upvoted = append(mockClient.upvoted, createTestPost("post006", "upvoted"))
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger, testLoggerWrapper); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger); err != nil {
 		t.Logf("Second run cycle completed with expected download errors: %v", err)
 	}
 
@@ -878,17 +876,15 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 		},
 	}
 
-	testLogger := log.New(io.Discard, "", 0)
 	localSlogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	localLoggerWrapper := &slogPrintfWrapper{logger: localSlogLogger}
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
-		Logger:      testLogger,
+		Logger:      localSlogLogger,
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, localSlogLogger, localLoggerWrapper); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, localSlogLogger); err != nil {
 		t.Logf("Cycle completed with expected download errors: %v", err)
 	}
 
@@ -912,7 +908,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	mockClient.callCount = 0
 	mockClient.upvoted = append(mockClient.upvoted, createTestPost("newpost001", "upvoted"))
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, localSlogLogger, localLoggerWrapper); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, localSlogLogger); err != nil {
 		t.Logf("Cycle with new post completed with expected errors: %v", err)
 	}
 
@@ -1123,17 +1119,15 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 		},
 	}
 
-	testLogger := log.New(io.Discard, "", 0)
 	testSlogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	testLoggerWrapper := &slogPrintfWrapper{logger: testSlogLogger}
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
-		Logger:      testLogger,
+		Logger:      testSlogLogger,
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger, testLoggerWrapper); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger); err != nil {
 		t.Logf("Cycle completed: %v", err)
 	}
 

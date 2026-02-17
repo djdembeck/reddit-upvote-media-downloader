@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,18 +34,14 @@ type Config struct {
 	BackoffBase time.Duration
 	UserAgent   string
 	HTTPClient  *http.Client
-	Logger      interface {
-		Printf(format string, v ...any)
-	}
+	Logger      *slog.Logger
 }
 
 type Downloader struct {
 	config    Config
 	extractor *Extractor
-	logger    interface {
-		Printf(format string, v ...any)
-	}
-	db *storage.DB
+	logger    *slog.Logger
+	db        *storage.DB
 }
 
 func NewDownloader(config Config, db *storage.DB) *Downloader {
@@ -59,12 +55,12 @@ func NewDownloader(config Config, db *storage.DB) *Downloader {
 
 	logger := config.Logger
 	if logger == nil {
-		logger = log.New(os.Stdout, "", log.LstdFlags)
+		logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 	}
 
 	return &Downloader{
 		config:    config,
-		extractor: NewExtractor(config.HTTPClient, config.UserAgent),
+		extractor: NewExtractorWithLogger(config.HTTPClient, config.UserAgent, logger),
 		logger:    logger,
 		db:        db,
 	}
@@ -81,7 +77,7 @@ func (d *Downloader) Extract(ctx context.Context, posts []reddit.RedditPost) ([]
 
 		extracted, err := d.extractor.Extract(ctx, post)
 		if err != nil {
-			d.logger.Printf("extract failed for post %s: %v", post.ID, err)
+			d.logger.Error("extract failed", "post_id", post.ID, "error", err)
 			errs = append(errs, fmt.Errorf("extract post %s: %w", post.ID, err))
 			continue
 		}
@@ -119,7 +115,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 			}
 			hash, isDuplicate, err := d.downloadItem(ctx, item)
 			if err != nil {
-				d.logger.Printf("download failed for post %s (%s): %v", item.PostID, item.URL, err)
+				d.logger.Error("download failed", "post_id", item.PostID, "url", item.URL, "error", err)
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -183,10 +179,10 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
 	existingFile := findExistingFile(outputDir, item.PostID)
 	if existingFile != "" {
-		d.logger.Printf("skip existing file %s", existingFile)
+		d.logger.Info("skip existing file", "path", existingFile)
 		hash, err := CalculateFileHash(existingFile)
 		if err != nil {
-			d.logger.Printf("failed to hash existing file %s: %v", existingFile, err)
+			d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
 		}
 		return hash, true, nil
 	}
@@ -200,10 +196,10 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		// Re-check for existing file before each attempt
 		existingFile = findExistingFile(outputDir, item.PostID)
 		if existingFile != "" {
-			d.logger.Printf("skip existing file %s", existingFile)
+			d.logger.Info("skip existing file", "path", existingFile)
 			hash, err := CalculateFileHash(existingFile)
 			if err != nil {
-				d.logger.Printf("failed to hash existing file %s: %v", existingFile, err)
+				d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
 			}
 			return hash, true, nil
 		}
@@ -213,9 +209,9 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			// Download succeeded, now calculate hash and check for duplicates
 			hash, hashErr := CalculateFileHash(filePath)
 			if hashErr != nil {
-				d.logger.Printf("error calculating hash for %s: %v", filePath, hashErr)
+				d.logger.Error("error calculating hash", "path", filePath, "error", hashErr)
 				if removeErr := os.Remove(filePath); removeErr != nil {
-					d.logger.Printf("failed to remove file %s: %v", filePath, removeErr)
+					d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
 				}
 				return "", false, fmt.Errorf("calculate hash: %w", hashErr)
 			}
@@ -227,13 +223,13 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			if d.db != nil {
 				exists, dbErr := d.db.HashExists(ctx, hash)
 				if dbErr != nil {
-					d.logger.Printf("error checking hash in database: %v", dbErr)
+					d.logger.Error("error checking hash in database", "error", dbErr)
 					return "", false, fmt.Errorf("check hash exists: %w", dbErr)
 				}
 				if exists {
-					d.logger.Printf("skip duplicate hash %s for post %s", hash, item.PostID)
+					d.logger.Info("skip duplicate hash", "hash", hash, "post_id", item.PostID)
 					if removeErr := os.Remove(filePath); removeErr != nil {
-						d.logger.Printf("failed to remove file %s: %v", filePath, removeErr)
+						d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
 					}
 					return hash, true, nil
 				}

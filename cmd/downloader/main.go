@@ -35,15 +35,6 @@ func parseSlogLevel(levelStr string) slog.Level {
 	}
 }
 
-// slogPrintfWrapper wraps *slog.Logger to provide Printf interface for compatibility
-type slogPrintfWrapper struct {
-	logger *slog.Logger
-}
-
-func (w *slogPrintfWrapper) Printf(format string, v ...any) {
-	w.logger.Info(fmt.Sprintf(format, v...))
-}
-
 // memoryTokenStore implements reddit.TokenStore with in-memory storage
 type memoryTokenStore struct {
 	token *oauth2.Token
@@ -178,14 +169,11 @@ func main() {
 	}))
 	slog.SetDefault(slogLogger)
 
-	// Wrap slog logger with Printf interface for backward compatibility
-	loggerWrapper := &slogPrintfWrapper{logger: slogLogger}
-
-	// Create downloader with wrapped slog logger (preserving structured logging)
+	// Create downloader with structured slog logger
 	downloaderConfig := downloader.Config{
 		OutputDir:   cfg.Storage.OutputDir,
 		Concurrency: cfg.Download.Concurrency,
-		Logger:      loggerWrapper,
+		Logger:      slogLogger,
 	}
 	dl := downloader.NewDownloader(downloaderConfig, db)
 
@@ -196,7 +184,7 @@ func main() {
 			slogLogger.Info("Shutdown complete")
 			return
 		default:
-			if err := runCycle(ctx, db, redditClient, dl, cfg, slogLogger, loggerWrapper); err != nil {
+			if err := runCycle(ctx, db, redditClient, dl, cfg, slogLogger); err != nil {
 				slogLogger.Error("Cycle error", "error", err)
 			}
 
@@ -296,13 +284,8 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 //
 // Parameters:
 //   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
-//     Use this for structured logging with contextual attributes.
-//   - logger: Printf-compatible interface (Printf(format string, v ...any)) for plain formatted
-//     messages, or compatibility with legacy callers. Use this for simple formatted output.
-//   - Both slogLogger and logger may be non-nil; preference depends on logging needs.
-//
-// See runCycle function implementation, slogLogger and logger parameters for usage details.
-func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger, logger interface{ Printf(format string, v ...any) }) error {
+//     Must be non-nil. Use this for structured logging with contextual attributes.
+func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
 	// Check if full sync is pending (first run after migration)
