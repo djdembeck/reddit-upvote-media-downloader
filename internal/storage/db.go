@@ -448,21 +448,23 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	row := db.conn.QueryRowContext(ctx, query, hash)
 
 	var post Post
+	var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
 	var createdAtUnix, downloadedAtUnix sql.NullInt64
+	var hashValue sql.NullString
 
 	err := row.Scan(
 		&post.ID,
-		&post.Title,
-		&post.Subreddit,
-		&post.Author,
-		&post.URL,
-		&post.Permalink,
+		&title,
+		&subreddit,
+		&author,
+		&url,
+		&permalink,
 		&createdAtUnix,
 		&downloadedAtUnix,
-		&post.MediaType,
-		&post.FilePath,
-		&post.Source,
-		&post.Hash,
+		&mediaType,
+		&filePath,
+		&source,
+		&hashValue,
 	)
 
 	if err == sql.ErrNoRows {
@@ -477,6 +479,33 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	}
 	if downloadedAtUnix.Valid {
 		post.DownloadedAt = time.Unix(downloadedAtUnix.Int64, 0)
+	}
+	if title.Valid {
+		post.Title = title.String
+	}
+	if subreddit.Valid {
+		post.Subreddit = subreddit.String
+	}
+	if author.Valid {
+		post.Author = author.String
+	}
+	if url.Valid {
+		post.URL = url.String
+	}
+	if permalink.Valid {
+		post.Permalink = permalink.String
+	}
+	if mediaType.Valid {
+		post.MediaType = mediaType.String
+	}
+	if filePath.Valid {
+		post.FilePath = filePath.String
+	}
+	if source.Valid {
+		post.Source = source.String
+	}
+	if hashValue.Valid {
+		post.Hash = hashValue.String
 	}
 
 	return &post, nil

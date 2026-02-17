@@ -720,8 +720,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after first run: %v", err)
 	}
-	if fullSyncOnce != "completed" {
-		t.Errorf("Expected full_sync_once=completed after first run, got: %s", fullSyncOnce)
+	if fullSyncOnce != "pending" {
+		t.Errorf("Expected full_sync_once=pending after first run with errors, got: %s", fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {
@@ -742,8 +742,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after second run: %v", err)
 	}
-	if fullSyncOnce != "completed" {
-		t.Errorf("Expected full_sync_once=completed after second run, got: %s", fullSyncOnce)
+	if fullSyncOnce != "pending" {
+		t.Errorf("Expected full_sync_once=pending after second run with errors, got: %s", fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {

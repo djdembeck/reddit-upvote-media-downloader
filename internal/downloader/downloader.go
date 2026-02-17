@@ -414,7 +414,7 @@ func findExistingFile(dir, postID string) string {
 		}
 		filename := entry.Name()
 		matches := storage.FilenamePattern.FindStringSubmatch(filename)
-		if matches != nil && matches[1] == postID {
+		if matches != nil && strings.ToLower(matches[1]) == strings.ToLower(postID) {
 			return filepath.Join(dir, filename)
 		}
 	}

@@ -472,25 +472,17 @@ func TestSavePost_UpdateHash(t *testing.T) {
 		Hash:         initialHash,
 	}
 
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
 	// Update with new hash
 	newHash := "newhash456"
 	post.Hash = newHash
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to update post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to update post")
 
 	// Verify hash was updated
 	retrieved, err := db.GetPost(ctx, post.ID)
-	if err != nil {
-		t.Fatalf("Failed to get post: %v", err)
-	}
-	if retrieved.Hash != newHash {
-		t.Errorf("Expected hash %s, got %s", newHash, retrieved.Hash)
-	}
+	require.NoError(t, err, "Failed to get post")
+	assert.Equal(t, newHash, retrieved.Hash, "Expected hash %s, got %s", newHash, retrieved.Hash)
 }
 
 func TestHashExists(t *testing.T) {
@@ -499,12 +491,8 @@ func TestHashExists(t *testing.T) {
 
 	// Initially hash should not exist
 	exists, err := db.HashExists(ctx, "nonexistenthash")
-	if err != nil {
-		t.Fatalf("HashExists() error = %v", err)
-	}
-	if exists {
-		t.Error("Expected hash to not exist initially")
-	}
+	require.NoError(t, err, "HashExists() error")
+	assert.False(t, exists, "Expected hash to not exist initially")
 
 	// Save a post with hash
 	hash := "testhash123"
@@ -514,18 +502,12 @@ func TestHashExists(t *testing.T) {
 		Source:       "saved",
 		Hash:         hash,
 	}
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
 	// Now hash should exist
 	exists, err = db.HashExists(ctx, hash)
-	if err != nil {
-		t.Fatalf("HashExists() error = %v", err)
-	}
-	if !exists {
-		t.Error("Expected hash to exist after saving post")
-	}
+	require.NoError(t, err, "HashExists() error")
+	assert.True(t, exists, "Expected hash to exist after saving post")
 }
 
 func TestHashExists_MultiplePostsSameHash(t *testing.T) {
@@ -541,31 +523,19 @@ func TestHashExists_MultiplePostsSameHash(t *testing.T) {
 	}
 
 	for _, post := range posts {
-		if err := db.SavePost(ctx, post); err != nil {
-			t.Fatalf("Failed to save post: %v", err)
-		}
+		require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 	}
 
 	// Hash should still exist
 	exists, err := db.HashExists(ctx, hash)
-	if err != nil {
-		t.Fatalf("HashExists() error = %v", err)
-	}
-	if !exists {
-		t.Error("Expected hash to exist")
-	}
+	require.NoError(t, err, "HashExists() error")
+	assert.True(t, exists, "Expected hash to exist")
 
 	// GetPostByHash should return one of them
 	retrieved, err := db.GetPostByHash(ctx, hash)
-	if err != nil {
-		t.Fatalf("GetPostByHash() error = %v", err)
-	}
-	if retrieved == nil {
-		t.Fatal("Expected post to be returned for hash")
-	}
-	if retrieved.Hash != hash {
-		t.Errorf("Expected hash %s, got %s", hash, retrieved.Hash)
-	}
+	require.NoError(t, err, "GetPostByHash() error")
+	require.NotNil(t, retrieved, "Expected post to be returned for hash")
+	assert.Equal(t, hash, retrieved.Hash, "Expected hash %s, got %s", hash, retrieved.Hash)
 }
 
 func TestGetPostByHash(t *testing.T) {
@@ -585,28 +555,16 @@ func TestGetPostByHash(t *testing.T) {
 		Hash:         hash,
 	}
 
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
 	// Retrieve by hash
 	retrieved, err := db.GetPostByHash(ctx, hash)
-	if err != nil {
-		t.Fatalf("GetPostByHash() error = %v", err)
-	}
-	if retrieved == nil {
-		t.Fatal("Expected post to be returned, got nil")
-	}
+	require.NoError(t, err, "GetPostByHash() error")
+	require.NotNil(t, retrieved, "Expected post to be returned, got nil")
 
-	if retrieved.ID != post.ID {
-		t.Errorf("Expected ID %s, got %s", post.ID, retrieved.ID)
-	}
-	if retrieved.Title != post.Title {
-		t.Errorf("Expected Title %s, got %s", post.Title, retrieved.Title)
-	}
-	if retrieved.Hash != hash {
-		t.Errorf("Expected hash %s, got %s", hash, retrieved.Hash)
-	}
+	assert.Equal(t, post.ID, retrieved.ID, "Expected ID %s, got %s", post.ID, retrieved.ID)
+	assert.Equal(t, post.Title, retrieved.Title, "Expected Title %s, got %s", post.Title, retrieved.Title)
+	assert.Equal(t, hash, retrieved.Hash, "Expected hash %s, got %s", hash, retrieved.Hash)
 }
 
 func TestGetPostByHash_NotFound(t *testing.T) {
@@ -614,12 +572,8 @@ func TestGetPostByHash_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	retrieved, err := db.GetPostByHash(ctx, "nonexistenthash")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	if retrieved != nil {
-		t.Error("Expected nil for non-existent hash")
-	}
+	require.NoError(t, err, "Unexpected error")
+	assert.Nil(t, retrieved, "Expected nil for non-existent hash")
 }
 
 func TestHashColumnMigration(t *testing.T) {

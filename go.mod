@@ -1,13 +1,13 @@
 module github.com/user/reddit-media-downloader
 
-go 1.22
+go 1.23.0
 
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/stretchr/testify v1.11.1
 	github.com/zeebo/blake3 v0.2.4
-	golang.org/x/oauth2 v0.25.0
+	golang.org/x/oauth2 v0.27.0
 	golang.org/x/sync v0.10.0
 )
 

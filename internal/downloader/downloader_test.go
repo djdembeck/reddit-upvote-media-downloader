@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/user/reddit-media-downloader/internal/reddit"
 	"github.com/user/reddit-media-downloader/internal/storage"
 )
@@ -481,16 +483,12 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 	outputDir := t.TempDir()
 	subredditDir := filepath.Join(outputDir, "pics")
-	if err := os.MkdirAll(subredditDir, 0755); err != nil {
-		t.Fatalf("MkdirAll error = %v", err)
-	}
+	require.NoError(t, os.MkdirAll(subredditDir, 0755), "MkdirAll error")
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
 	db, err := storage.NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("NewDB error = %v", err)
-	}
+	require.NoError(t, err, "NewDB error")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -524,14 +522,10 @@ func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, conte
 	t.Helper()
 
 	existingFilePath := filepath.Join(s.subredditDir, filename)
-	if err := os.WriteFile(existingFilePath, content, 0644); err != nil {
-		t.Fatalf("WriteFile error = %v", err)
-	}
+	require.NoError(t, os.WriteFile(existingFilePath, content, 0644), "WriteFile error")
 
 	hash, err := CalculateFileHash(existingFilePath)
-	if err != nil {
-		t.Fatalf("CalculateFileHash error = %v", err)
-	}
+	require.NoError(t, err, "CalculateFileHash error")
 
 	if postID != "" {
 		existingPost := &storage.Post{
@@ -539,9 +533,7 @@ func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, conte
 			DownloadedAt: time.Now(),
 			Hash:         hash,
 		}
-		if err := s.db.SavePost(context.Background(), existingPost); err != nil {
-			t.Fatalf("SavePost error = %v", err)
-		}
+		require.NoError(t, s.db.SavePost(context.Background(), existingPost), "SavePost error")
 	}
 
 	return hash
@@ -636,34 +628,22 @@ func TestDeduplication(t *testing.T) {
 			}
 
 			hashes, err := setup.downloader.Download(context.Background(), items)
-			if tt.wantError && err == nil {
-				t.Fatal("Download() should return an error when DB fails")
-			}
-			if !tt.wantError && err != nil {
-				t.Fatalf("Download() error = %v", err)
+			require.Equal(t, tt.wantError, err != nil, "Download() error mismatch")
+			if !tt.wantError {
+				require.NoError(t, err, "Download() error")
 			}
 
 			if tt.wantEmptyHash {
 				if tt.triggerDBError {
-					if hashes[tt.newPostID] != "" {
-						t.Errorf("Expected empty hash (error), got %s", hashes[tt.newPostID])
-					}
+					assert.Empty(t, hashes[tt.newPostID], "Expected empty hash (error)")
 				} else {
 					hash := hashes[tt.newPostID]
-					if hash == "" {
-						t.Error("Hash should be marked with DUPLICATE prefix for duplicates")
-					}
-					if !strings.HasPrefix(hash, "DUPLICATE:") {
-						t.Errorf("Expected hash to start with DUPLICATE: prefix, got %s", hash)
-					}
+					assert.NotEmpty(t, hash, "Hash should be marked with DUPLICATE prefix for duplicates")
+					assert.True(t, strings.HasPrefix(hash, "DUPLICATE:"), "Expected hash to start with DUPLICATE: prefix, got %s", hash)
 				}
 			} else {
-				if hashes[tt.newPostID] == "" {
-					t.Error("Hash should be returned for new file")
-				}
-				if strings.HasPrefix(hashes[tt.newPostID], "DUPLICATE:") {
-					t.Error("Hash should not be marked as duplicate for new file")
-				}
+				assert.NotEmpty(t, hashes[tt.newPostID], "Hash should be returned for new file")
+				assert.False(t, strings.HasPrefix(hashes[tt.newPostID], "DUPLICATE:"), "Hash should not be marked as duplicate for new file")
 			}
 
 			if tt.checkHashLength {
@@ -672,26 +652,17 @@ func TestDeduplication(t *testing.T) {
 				if strings.HasPrefix(hash, "DUPLICATE:") {
 					expectedLen = 75
 				}
-				if len(hash) != expectedLen {
-					t.Errorf("Expected hash length %d, got %d (hash: %s)", expectedLen, len(hash), hash)
-				}
+				assert.Equal(t, expectedLen, len(hash), "Expected hash length %d, got %d (hash: %s)", expectedLen, len(hash), hash)
 			}
 
 			newFilePath := filepath.Join(setup.subredditDir, tt.newFilename)
 			_, err = os.Stat(newFilePath)
 			fileExists := err == nil
 
-			if tt.wantFileExists && !fileExists {
-				t.Errorf("New file should exist: %v", err)
-			}
-			if !tt.wantFileExists && fileExists {
-				t.Error("New file should not exist")
-			}
-
+			assert.Equal(t, tt.wantFileExists, fileExists, "New file existence mismatch")
 			if tt.wantExistingFile && existingFilePath != "" {
-				if _, err := os.Stat(existingFilePath); err != nil {
-					t.Errorf("Existing file should remain: %v", err)
-				}
+				_, err := os.Stat(existingFilePath)
+				assert.NoError(t, err, "Existing file should remain")
 			}
 		})
 	}
@@ -700,40 +671,24 @@ func TestDeduplication(t *testing.T) {
 func TestHashCalculation_Integration(t *testing.T) {
 	outputDir := t.TempDir()
 	subredditDir := filepath.Join(outputDir, "testsub")
-	if err := os.MkdirAll(subredditDir, 0755); err != nil {
-		t.Fatalf("MkdirAll error = %v", err)
-	}
+	require.NoError(t, os.MkdirAll(subredditDir, 0755), "MkdirAll error")
 
 	testContent := []byte("content for hash test")
 	testFilePath := filepath.Join(subredditDir, "testfile.jpg")
-	if err := os.WriteFile(testFilePath, testContent, 0644); err != nil {
-		t.Fatalf("WriteFile error = %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFilePath, testContent, 0644), "WriteFile error")
 
 	hash, err := CalculateFileHash(testFilePath)
-	if err != nil {
-		t.Fatalf("CalculateFileHash error = %v", err)
-	}
+	require.NoError(t, err, "CalculateFileHash error")
 
-	if len(hash) != 64 {
-		t.Errorf("Expected hash length 64, got %d", len(hash))
-	}
+	assert.Equal(t, 64, len(hash), "Expected hash length 64")
 
 	hash2, err := CalculateFileHash(testFilePath)
-	if err != nil {
-		t.Fatalf("CalculateFileHash error = %v", err)
-	}
+	require.NoError(t, err, "CalculateFileHash error")
 
-	if hash != hash2 {
-		t.Error("Hash should be deterministic")
-	}
+	assert.Equal(t, hash, hash2, "Hash should be deterministic")
 
 	hashFromBytes, err := CalculateHashFromReader(bytes.NewReader(testContent))
-	if err != nil {
-		t.Fatalf("CalculateHashFromReader error = %v", err)
-	}
+	require.NoError(t, err, "CalculateHashFromReader error")
 
-	if hash != hashFromBytes {
-		t.Error("File hash and reader hash should match for same content")
-	}
+	assert.Equal(t, hash, hashFromBytes, "File hash and reader hash should match for same content")
 }

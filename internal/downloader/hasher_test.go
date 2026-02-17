@@ -28,7 +28,8 @@ func TestCalculateFileHash(t *testing.T) {
 				dir := t.TempDir()
 				tmpFile, err := os.Create(filepath.Join(dir, "empty.txt"))
 				require.NoError(t, err)
-				tmpFile.Close()
+				err = tmpFile.Close()
+				require.NoError(t, err)
 				return tmpFile.Name()
 			},
 			expectError: false,
@@ -44,7 +45,8 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				_, err = tmpFile.Write([]byte("hello world"))
 				require.NoError(t, err)
-				tmpFile.Close()
+				err = tmpFile.Close()
+				require.NoError(t, err)
 				return tmpFile.Name()
 			},
 			expectError: false,
@@ -60,7 +62,8 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				_, err = file1.Write([]byte("content A"))
 				require.NoError(t, err)
-				file1.Close()
+				err = file1.Close()
+				require.NoError(t, err)
 				return file1.Name()
 			},
 			expectError: false,
@@ -77,7 +80,8 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				_, err = file1.Write(content)
 				require.NoError(t, err)
-				file1.Close()
+				err = file1.Close()
+				require.NoError(t, err)
 				return file1.Name()
 			},
 			expectError: false,
@@ -105,7 +109,8 @@ func TestCalculateFileHash(t *testing.T) {
 				}
 				_, err = tmpFile.Write(largeContent)
 				require.NoError(t, err)
-				tmpFile.Close()
+				err = tmpFile.Close()
+				require.NoError(t, err)
 				return tmpFile.Name()
 			},
 			expectError: false,
@@ -126,7 +131,8 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				_, err = file2.Write(content)
 				require.NoError(t, err)
-				file2.Close()
+				err = file2.Close()
+				require.NoError(t, err)
 
 				hash1, err := CalculateFileHash(filePath)
 				require.NoError(t, err)
@@ -145,7 +151,8 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				_, err = file2.Write([]byte("content B"))
 				require.NoError(t, err)
-				file2.Close()
+				err = file2.Close()
+				require.NoError(t, err)
 
 				hash1, err := CalculateFileHash(filePath)
 				require.NoError(t, err)
@@ -256,7 +263,8 @@ func TestHashConsistency_FileAndReader(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tmpFile.Write(content)
 	require.NoError(t, err)
-	tmpFile.Close()
+	err = tmpFile.Close()
+	require.NoError(t, err)
 
 	hashFromFile, err := CalculateFileHash(tmpFile.Name())
 	require.NoError(t, err)
@@ -273,7 +281,8 @@ func TestHashHexFormat(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tmpFile.Write([]byte("test"))
 	require.NoError(t, err)
-	tmpFile.Close()
+	err = tmpFile.Close()
+	require.NoError(t, err)
 
 	hash, err := CalculateFileHash(tmpFile.Name())
 	require.NoError(t, err)
@@ -295,7 +304,8 @@ func TestCalculateFileHash_KnownReference(t *testing.T) {
 	content := []byte("hello world")
 	_, err = tmpFile.Write(content)
 	require.NoError(t, err)
-	tmpFile.Close()
+	err = tmpFile.Close()
+	require.NoError(t, err)
 
 	hash, err := CalculateFileHash(tmpFile.Name())
 	require.NoError(t, err)

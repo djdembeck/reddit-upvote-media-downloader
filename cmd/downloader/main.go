@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -130,7 +131,27 @@ func main() {
 	}
 	defer redditClient.Close()
 
-	logger := log.New(os.Stderr, "downloader: ", log.LstdFlags|log.Lmsgprefix)
+	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				a.Key = "timestamp"
+			}
+			if a.Key == slog.LevelKey {
+				a.Key = "level"
+			}
+			if a.Key == slog.MessageKey {
+				a.Key = "message"
+			}
+			if a.Key == slog.SourceKey {
+				a.Key = "source"
+			}
+			return a
+		},
+	}))
+	slog.SetDefault(slogLogger)
+
+	logger := slog.NewLogLogger(slogLogger.Handler(), slog.LevelInfo)
 
 	// Create downloader
 	downloaderConfig := downloader.Config{
@@ -144,7 +165,7 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Shutdown complete")
+			logger.Printf("Shutdown complete")
 			return
 		default:
 			if err := runCycle(ctx, db, redditClient, dl, cfg, logger); err != nil {
@@ -340,21 +361,19 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 		}
 	}
 
-	// Mark full sync as completed after cycle (regardless of download success)
-	if isFullSync {
-		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			logger.Printf("Error marking full sync as completed: %v", err)
-		} else {
-			fmt.Println("Full sync completed, switching to incremental mode")
-		}
-	}
-
-	// Return error if there was one (after saving partial results)
 	if err != nil {
 		logger.Printf("Warning: download completed with errors: %v", err)
 		return fmt.Errorf("downloading media: %w", err)
 	}
 
-	fmt.Printf("Cycle complete: downloaded %d items\n", len(items))
+	if isFullSync {
+		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+			logger.Printf("Error marking full sync as completed: %v", err)
+		} else {
+			logger.Printf("Full sync completed, switching to incremental mode")
+		}
+	}
+
+	logger.Printf("Cycle complete: downloaded %d items", len(items))
 	return nil
 }

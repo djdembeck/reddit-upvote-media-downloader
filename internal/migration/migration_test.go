@@ -428,14 +428,10 @@ func TestIdempotentReRun(t *testing.T) {
 	destDir := filepath.Join(tmpDir, "dest")
 	logPath := filepath.Join(tmpDir, "migration_log.json")
 
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
 	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644), "Failed to write test file")
 
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
@@ -443,26 +439,16 @@ func TestIdempotentReRun(t *testing.T) {
 
 	// First run
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator1.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrator1.SaveLog(logPath); err != nil {
-		t.Fatalf("Failed to save log: %v", err)
-	}
+	require.NoError(t, migrator1.Execute())
+	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
 
 	// Second run with existing log - source file is gone, so it should skip
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator2.LoadExistingLog(logPath); err != nil {
-		t.Fatalf("Failed to load existing log: %v", err)
-	}
-	if err := migrator2.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
+	require.NoError(t, migrator2.Execute())
 
 	// Second run should have no operations since source file is gone
-	if migrator2.Log.TotalFiles != 0 {
-		t.Errorf("Second run should have no files to process, TotalFiles = %d", migrator2.Log.TotalFiles)
-	}
+	assert.Equal(t, 0, migrator2.Log.TotalFiles, "Second run should have no files to process")
 }
 
 func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
@@ -471,30 +457,20 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	destDir := filepath.Join(tmpDir, "dest")
 	logPath := filepath.Join(tmpDir, "migration_log.json")
 
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
 	// Create two identical files
 	content := []byte("identical content")
 	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
 	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
 
-	if err := os.WriteFile(file1, content, 0644); err != nil {
-		t.Fatalf("Failed to write file1: %v", err)
-	}
-	if err := os.WriteFile(file2, content, 0644); err != nil {
-		t.Fatalf("Failed to write file2: %v", err)
-	}
+	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
+	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
 
 	// Set deterministic modification times
 	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(file1, baseTime, baseTime); err != nil {
-		t.Fatalf("Failed to set file1 time: %v", err)
-	}
-	if err := os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
-		t.Fatalf("Failed to set file2 time: %v", err)
-	}
+	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
+	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
 
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
@@ -503,37 +479,25 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 
 	// First run - should move file1, skip file2 as duplicate
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator1.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if err := migrator1.SaveLog(logPath); err != nil {
-		t.Fatalf("Failed to save log: %v", err)
-	}
+	require.NoError(t, migrator1.Execute())
+	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
 
 	// Verify first run results
 	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
-	if _, err := os.Stat(destFile1); err != nil {
-		t.Fatalf("First file should be moved: %v", err)
-	}
+	_, err := os.Stat(destFile1)
+	assert.NoError(t, err, "First file should be moved")
 
 	// file2 should still exist as duplicate
-	if _, err := os.Stat(file2); err != nil {
-		t.Errorf("Duplicate source file should remain: %v", err)
-	}
+	_, err = os.Stat(file2)
+	assert.NoError(t, err, "Duplicate source file should remain")
 
 	// Second run - should skip file2 because hash is already in log
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator2.LoadExistingLog(logPath); err != nil {
-		t.Fatalf("Failed to load existing log: %v", err)
-	}
-	if err := migrator2.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
+	require.NoError(t, migrator2.Execute())
 
 	// Second run should skip file2 as duplicate (hash already in log)
-	if migrator2.Log.SkippedCount != 1 {
-		t.Errorf("Second run should skip duplicate, SkippedCount = %d", migrator2.Log.SkippedCount)
-	}
+	assert.Equal(t, 1, migrator2.Log.SkippedCount, "Second run should skip duplicate")
 
 	// Verify skipped reason mentions duplicate
 	foundDuplicate := false
@@ -543,9 +507,7 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 			break
 		}
 	}
-	if !foundDuplicate {
-		t.Error("Second run should log duplicate skip")
-	}
+	assert.True(t, foundDuplicate, "Second run should log duplicate skip")
 }
 
 func TestMigration_SortsByModTime(t *testing.T) {
