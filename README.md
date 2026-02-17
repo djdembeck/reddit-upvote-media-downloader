@@ -1,4 +1,4 @@
-# Reddit Media Downloader
+# Reddit Upvote Media Downloader
 
 A lightweight, efficient Reddit media downloader written in Go. Fetches upvoted and saved posts, downloads images and videos (including from external sites), and tracks downloads to avoid duplicates. Runs on a 1-hour Docker schedule.
 
