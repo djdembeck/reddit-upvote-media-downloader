@@ -81,6 +81,13 @@ func main() {
 		}
 	}
 
+	// Run re-check mode if enabled
+	if cfg.SmartPolling.ReCheck {
+		if err := runReCheckMode(ctx, db); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Re-check failed: %v\n", err)
+		}
+	}
+
 	// Create Reddit client
 	redditConfig := &reddit.Config{
 		ClientID:     cfg.Reddit.ClientID,
@@ -153,15 +160,34 @@ func main() {
 
 // runAutoMigration imports existing bdfr-html data
 func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) error {
-	// Check if database is empty
+	// Check if migration has already been completed using metadata
+	// This check is backward compatible - if metadata doesn't exist or key not found,
+	// migration will proceed normally
+	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
+	if err != nil {
+		// Log warning but don't fail - proceed with migration for backward compatibility
+		fmt.Printf("Warning: Could not check migration_complete metadata: %v\n", err)
+	}
+	if migrationComplete == "true" {
+		fmt.Println("Migration already completed (migration_complete=true), skipping migration")
+		return nil
+	}
+
+	// Check if database is empty (legacy check for backward compatibility)
 	stats, err := db.GetStats(ctx)
 	if err != nil {
 		return fmt.Errorf("getting stats: %w", err)
 	}
 	if stats.TotalPosts > 0 {
-		// Database already has data, skip migration
+		// Database already has data, mark migration as complete and skip
+		fmt.Printf("Database has %d posts, marking migration as complete\n", stats.TotalPosts)
+		if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
+			return fmt.Errorf("setting migration_complete metadata: %w", err)
+		}
 		return nil
 	}
+
+	fmt.Println("Running auto-migration...")
 
 	// Look for idList.txt
 	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
@@ -183,20 +209,85 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 		fmt.Printf("Migrated %d posts from media directory\n", count)
 	}
 
+	// Mark migration as complete
+	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
+		return fmt.Errorf("setting migration_complete metadata: %w", err)
+	}
+	fmt.Println("Migration completed successfully, marking as complete")
+
+	// Set full_sync_once to pending to trigger full sync on first run after migration
+	if err := db.SetMetadata(ctx, "full_sync_once", "pending"); err != nil {
+		return fmt.Errorf("setting full_sync_once metadata: %w", err)
+	}
+	fmt.Println("Full sync scheduled (full_sync_once=pending)")
+
 	return nil
 }
 
+// runReCheckMode verifies all downloaded files exist on disk.
+// For missing files: marks posts for re-download by resetting retry count.
+// Returns the count of missing files found.
+func runReCheckMode(ctx context.Context, db *storage.DB) error {
+	fmt.Println("Starting re-check mode...")
+
+	posts, err := db.GetAllPosts(ctx)
+	if err != nil {
+		return fmt.Errorf("getting all posts: %w", err)
+	}
+
+	var verifiedCount, missingCount int
+
+	for _, post := range posts {
+		if post.FilePath == "" {
+			continue
+		}
+
+		_, err := os.Stat(post.FilePath)
+		if err != nil {
+			fmt.Printf("File missing: %s, resetting for re-download\n", post.FilePath)
+			if err := db.ResetRetry(ctx, post.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
+				continue
+			}
+			missingCount++
+		} else {
+			fmt.Printf("File verified: %s\n", post.FilePath)
+			verifiedCount++
+		}
+	}
+
+	fmt.Printf("Re-check complete: %d files verified, %d missing\n", verifiedCount, missingCount)
+	return nil
+}
+
+type RedditClient interface {
+	GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error)
+	GetSaved(ctx context.Context, limit int) ([]storage.Post, error)
+	Close() error
+}
+
 // runCycle performs one download cycle
-func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *downloader.Downloader, cfg *config.Config) error {
+func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *downloader.Downloader, cfg *config.Config) error {
 	fmt.Println("Starting download cycle...")
 
+	// Check if full sync is pending (first run after migration)
+	fullSyncOnce, _ := db.GetMetadata(ctx, "full_sync_once")
+	isFullSync := fullSyncOnce == "pending" && cfg.Migrate.FullSyncOnce
+
+	fetchLimit := cfg.Download.FetchLimit
+	if isFullSync {
+		// Use higher limit for full sync (fetch all posts)
+		fetchLimit = 1000
+		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
+	}
+
 	// Fetch upvoted and saved posts
-	upvoted, err := client.GetUpvoted(ctx, cfg.Download.FetchLimit)
+	upvoted, err := client.GetUpvoted(ctx, fetchLimit)
 	if err != nil {
 		return fmt.Errorf("fetching upvoted: %w", err)
 	}
 
-	saved, err := client.GetSaved(ctx, cfg.Download.FetchLimit)
+	saved, err := client.GetSaved(ctx, fetchLimit)
 	if err != nil {
 		return fmt.Errorf("fetching saved: %w", err)
 	}
@@ -206,15 +297,15 @@ func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *do
 	// Combine all posts
 	allPosts := append(upvoted, saved...)
 
-	// Filter already downloaded
+	// Filter posts: include new posts and posts eligible for retry
 	var newPosts []storage.Post
 	for _, post := range allPosts {
-		downloaded, err := db.IsDownloaded(ctx, post.ID)
+		status, err := db.CheckPostStatus(ctx, post.ID, cfg.SmartPolling.RetryThreshold, cfg.Backoff.Base, cfg.Backoff.Max)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking if downloaded: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
 			continue
 		}
-		if !downloaded {
+		if !status.Exists || status.RetryEligible {
 			newPosts = append(newPosts, post)
 		}
 	}
@@ -223,6 +314,13 @@ func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *do
 
 	if len(newPosts) == 0 {
 		fmt.Println("No new posts to download")
+		if isFullSync {
+			if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+				fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
+			} else {
+				fmt.Println("Full sync completed, switching to incremental mode")
+			}
+		}
 		return nil
 	}
 
@@ -248,10 +346,10 @@ func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *do
 
 	// Download items
 	hashes, err := dl.Download(ctx, items)
+	downloadErr := err
 	if err != nil {
 		logger := log.New(os.Stderr, "[downloader] ", log.LstdFlags)
 		logger.Printf("download completed with errors: %v", err)
-		return fmt.Errorf("downloading media: %w", err)
 	}
 
 	// Mark posts as downloaded (only those with hashes)
@@ -263,6 +361,19 @@ func runCycle(ctx context.Context, db *storage.DB, client *reddit.Client, dl *do
 				logger.Printf("Error saving post: %v", err)
 			}
 		}
+	}
+
+	// Mark full sync as completed if it was pending
+	if isFullSync {
+		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
+		} else {
+			fmt.Println("Full sync completed, switching to incremental mode")
+		}
+	}
+
+	if downloadErr != nil {
+		return fmt.Errorf("downloading media: %w", downloadErr)
 	}
 
 	fmt.Printf("Cycle complete: downloaded %d items\n", len(items))
