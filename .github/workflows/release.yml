@@ -1,0 +1,193 @@
+name: Release
+
+on:
+  push:
+    branches: [ main, master ]
+
+# Concurrency: Skip duplicate runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  # Job 1: Determine next version and create git tag
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if commit is already tagged
+        id: check_tag
+        run: |
+          TAG=$(git describe --tags --exact-match ${{ github.sha }} 2>/dev/null || echo "")
+          if [ -n "$TAG" ]; then
+            echo "has_tag=true" >> $GITHUB_OUTPUT
+            echo "existing_tag=$TAG" >> $GITHUB_OUTPUT
+          else
+            echo "has_tag=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get latest tag
+        id: get_tag
+        if: steps.check_tag.outputs.has_tag == 'false'
+        run: |
+          # Get latest tag or start with v0.0.0 if none exists
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Determine version bump from commits
+        id: bump
+        if: steps.check_tag.outputs.has_tag == 'false'
+        run: |
+          # Get commits since last tag (or HEAD if no tag)
+          if [ "${{ steps.get_tag.outputs.latest_tag }}" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s" HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"%s" ${{ steps.get_tag.outputs.latest_tag }}..HEAD)
+          fi
+
+          echo "Commits analyzed:"
+          echo "$COMMITS"
+
+          # Determine bump type based on conventional commits
+          # BREAKING CHANGE in body or type! after scope : major
+          # feat              : minor
+          # fix, perf, chore, docs, style, refactor, test, ci, revert : patch
+          # else              : patch
+          BUMP="patch"
+          if echo "$COMMITS" | grep -qiE "BREAKING CHANGE|^[a-z]+(\([a-z0-9-]+\))?!:"; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qiE "^feat(\(|!|:)"; then
+            BUMP="minor"
+          elif echo "$COMMITS" | grep -qiE "^(fix|perf|chore|docs|style|refactor|test|ci|revert)(\(|!|:)"; then
+            BUMP="patch"
+          fi
+
+          echo "bump_type=$BUMP" >> $GITHUB_OUTPUT
+          echo "Version bump: $BUMP"
+
+      - name: Calculate new version
+        id: version
+        if: steps.check_tag.outputs.has_tag == 'false'
+        run: |
+          LATEST="${{ steps.get_tag.outputs.latest_tag }}"
+          BUMP="${{ steps.bump.outputs.bump_type }}"
+
+          # Remove 'v' prefix for calculation
+          VERSION=${LATEST#v}
+
+          # Split version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          # Increment based on bump type
+          case "$BUMP" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Calculated version: $NEW_VERSION"
+
+      - name: Generate changelog
+        id: changelog
+        if: steps.check_tag.outputs.has_tag == 'false'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          LATEST="${{ steps.get_tag.outputs.latest_tag }}"
+
+          # Create changes.md
+          > changes.md
+          echo "## What's Changed" >> changes.md
+          echo "" >> changes.md
+
+          # Get commits
+          if [ "$LATEST" = "v0.0.0" ]; then
+            COMMIT_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+            if [ "$COMMIT_COUNT" -eq 0 ]; then
+              echo "- Initial release" >> changes.md
+            else
+              git log --pretty=format:"- %s (%h)" HEAD >> changes.md
+            fi
+          else
+            COMMIT_COUNT=$(git rev-list --count $LATEST..HEAD 2>/dev/null || echo "0")
+            if [ "$COMMIT_COUNT" -eq 0 ]; then
+              echo "- No new commits since $LATEST" >> changes.md
+            else
+              git log --pretty=format:"- %s (%h)" $LATEST..HEAD >> changes.md
+            fi
+          fi
+
+          # Output to stdout for debug
+          echo "Changelog:"
+          cat changes.md
+
+          # Also set as output
+          CHANGELOG=$(cat changes.md)
+          # Multiline output handling
+          {
+            echo "changelog<<EOF"
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create and push git tag
+        id: tag
+        if: steps.check_tag.outputs.has_tag == 'false'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create tag
+          git tag -a "$NEW_VERSION" -m "Release $NEW_VERSION"
+
+          # Push tag with error handling
+          if ! git push origin "$NEW_VERSION" 2>/dev/null; then
+            echo "Error: Failed to push tag $NEW_VERSION (may already exist)"
+            exit 1
+          fi
+
+          echo "created_tag=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Created and pushed tag: $NEW_VERSION"
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.has_tag == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.new_version }}
+          name: Release ${{ steps.version.outputs.new_version }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: steps.check_tag.outputs.has_tag == 'false'
+        run: |
+          echo "### 🎉 Release Created!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Bump Type:** ${{ steps.bump.outputs.bump_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Previous:** ${{ steps.get_tag.outputs.latest_tag }}" >> $GITHUB_STEP_SUMMARY
