@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/user/reddit-media-downloader/internal/reddit"
+	"github.com/user/reddit-media-downloader/internal/storage"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -296,7 +300,8 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 	if err := os.MkdirAll(subredditDir, 0755); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
-	bdfrStyleFilePath := filepath.Join(subredditDir, "test_abc.jpg")
+	// Use proper bdfr-html filename pattern: {POSTID}.ext (POSTID must be 6+ chars)
+	bdfrStyleFilePath := filepath.Join(subredditDir, "abc123.jpg")
 	if err := os.WriteFile(bdfrStyleFilePath, []byte("existing"), 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
@@ -311,13 +316,13 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 		Retries:    1,
 		Timeout:    time.Second,
 		UserAgent:  "test-agent",
-	})
+	}, nil)
 
 	items := []Downloadable{{
-		PostID:    "abc",
+		PostID:    "abc123",
 		Subreddit: "pics",
-		Filename:  "abc_1.jpg",
-		URL:       "https://example.com/abc.jpg",
+		Filename:  "abc123_1.jpg",
+		URL:       "https://example.com/abc123.jpg",
 	}}
 
 	if _, err := downloader.Download(context.Background(), items); err != nil {
@@ -347,7 +352,7 @@ func TestDownloaderRetries(t *testing.T) {
 		Timeout:     time.Second,
 		UserAgent:   "test-agent",
 		Concurrency: 1,
-	})
+	}, nil)
 
 	items := []Downloadable{{
 		PostID:    "retry1",
@@ -387,7 +392,7 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 		Timeout:     time.Second,
 		UserAgent:   "test-agent",
 		Concurrency: 2,
-	})
+	}, nil)
 
 	items := []Downloadable{
 		{PostID: "fail", Subreddit: "pics", Filename: "fail_1.jpg", URL: server.URL + "/fail.jpg"},
@@ -435,7 +440,7 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 		Timeout:     2 * time.Second,
 		UserAgent:   "test-agent",
 		Concurrency: 2,
-	})
+	}, nil)
 
 	items := []Downloadable{
 		{PostID: "p1", Subreddit: "pics", Filename: "p1_1.jpg", URL: server.URL + "/1.jpg"},
@@ -461,4 +466,229 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	if max := atomic.LoadInt32(&maxActive); max > 2 {
 		t.Fatalf("max concurrency = %d, want <= 2", max)
 	}
+}
+
+type dedupTestSetup struct {
+	outputDir    string
+	subredditDir string
+	db           *storage.DB
+	server       *httptest.Server
+	downloader   *Downloader
+	existingFile string
+	existingHash string
+}
+
+func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup {
+	t.Helper()
+
+	outputDir := t.TempDir()
+	subredditDir := filepath.Join(outputDir, "pics")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755), "MkdirAll error")
+
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	db, err := storage.NewDB(dbPath)
+	require.NoError(t, err, "NewDB error")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(serverContent)
+	}))
+
+	d := NewDownloader(Config{
+		OutputDir:   outputDir,
+		HTTPClient:  server.Client(),
+		Retries:     1,
+		Timeout:     time.Second,
+		UserAgent:   "test-agent",
+		Concurrency: 1,
+	}, db)
+
+	return &dedupTestSetup{
+		outputDir:    outputDir,
+		subredditDir: subredditDir,
+		db:           db,
+		server:       server,
+		downloader:   d,
+	}
+}
+
+func (s *dedupTestSetup) cleanup() {
+	s.server.Close()
+	s.db.Close()
+}
+
+func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, content []byte, postID string) string {
+	t.Helper()
+
+	existingFilePath := filepath.Join(s.subredditDir, filename)
+	require.NoError(t, os.WriteFile(existingFilePath, content, 0644), "WriteFile error")
+
+	hash, err := CalculateFileHash(existingFilePath)
+	require.NoError(t, err, "CalculateFileHash error")
+
+	if postID != "" {
+		existingPost := &storage.Post{
+			ID:           postID,
+			DownloadedAt: time.Now(),
+			Hash:         hash,
+		}
+		require.NoError(t, s.db.SavePost(context.Background(), existingPost), "SavePost error")
+	}
+
+	return hash
+}
+
+func TestDeduplication(t *testing.T) {
+	tests := []struct {
+		name                string
+		serverContent       []byte
+		existingFile        bool
+		existingFileContent []byte
+		existingFilename    string
+		existingPostID      string
+		newPostID           string
+		newFilename         string
+		wantEmptyHash       bool
+		wantFileExists      bool
+		wantExistingFile    bool
+		checkHashLength     bool
+		triggerDBError      bool
+		wantError           bool
+	}{
+		{
+			name:                "SkipsExistingHash",
+			serverContent:       []byte("shared file content"),
+			existingFile:        true,
+			existingFileContent: []byte("shared file content"),
+			existingFilename:    "existing_abc.jpg",
+			existingPostID:      "existing",
+			newPostID:           "abc",
+			newFilename:         "abc_1.jpg",
+			wantEmptyHash:       true,
+			wantFileExists:      false,
+			wantExistingFile:    true,
+		},
+		{
+			name:           "KeepsFileOnDBError",
+			serverContent:  []byte("downloaded content"),
+			existingFile:   false,
+			newPostID:      "newpost",
+			newFilename:    "newpost_1.jpg",
+			wantEmptyHash:  true,
+			wantFileExists: true,
+			triggerDBError: true,
+			wantError:      true,
+		},
+		{
+			name:            "NewHashSaved",
+			serverContent:   []byte("unique content for new hash"),
+			existingFile:    false,
+			newPostID:       "uniquepost",
+			newFilename:     "uniquepost_1.jpg",
+			wantEmptyHash:   false,
+			wantFileExists:  true,
+			checkHashLength: true,
+		},
+		{
+			name:                "IdenticalContent",
+			serverContent:       []byte("shared identical content"),
+			existingFile:        true,
+			existingFileContent: []byte("shared identical content"),
+			existingFilename:    "original_abc.jpg",
+			existingPostID:      "existing",
+			newPostID:           "duplicate",
+			newFilename:         "duplicate_1.jpg",
+			wantEmptyHash:       true,
+			wantFileExists:      false,
+			wantExistingFile:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setup := setupDeduplicationTest(t, tt.serverContent)
+			defer setup.cleanup()
+
+			var existingFilePath string
+			if tt.existingFile {
+				setup.createExistingFile(t, tt.existingFilename, tt.existingFileContent, tt.existingPostID)
+				existingFilePath = filepath.Join(setup.subredditDir, tt.existingFilename)
+			}
+
+			items := []Downloadable{{
+				PostID:    tt.newPostID,
+				Subreddit: "pics",
+				Filename:  tt.newFilename,
+				URL:       setup.server.URL + "/download.jpg",
+			}}
+
+			if tt.triggerDBError {
+				setup.db.Close()
+			}
+
+			hashes, err := setup.downloader.Download(context.Background(), items)
+			require.Equal(t, tt.wantError, err != nil, "Download() error mismatch")
+			if !tt.wantError {
+				require.NoError(t, err, "Download() error")
+			}
+
+			if tt.wantEmptyHash {
+				if tt.triggerDBError {
+					assert.Empty(t, hashes[tt.newPostID], "Expected empty hash (error)")
+				} else {
+					hash := hashes[tt.newPostID]
+					assert.NotEmpty(t, hash, "Hash should be marked with DUPLICATE prefix for duplicates")
+					assert.True(t, strings.HasPrefix(hash, "DUPLICATE:"), "Expected hash to start with DUPLICATE: prefix, got %s", hash)
+				}
+			} else {
+				assert.NotEmpty(t, hashes[tt.newPostID], "Hash should be returned for new file")
+				assert.False(t, strings.HasPrefix(hashes[tt.newPostID], "DUPLICATE:"), "Hash should not be marked as duplicate for new file")
+			}
+
+			if tt.checkHashLength {
+				hash := hashes[tt.newPostID]
+				expectedLen := 64
+				if strings.HasPrefix(hash, "DUPLICATE:") {
+					expectedLen = 75
+				}
+				assert.Equal(t, expectedLen, len(hash), "Expected hash length %d, got %d (hash: %s)", expectedLen, len(hash), hash)
+			}
+
+			newFilePath := filepath.Join(setup.subredditDir, tt.newFilename)
+			_, err = os.Stat(newFilePath)
+			fileExists := err == nil
+
+			assert.Equal(t, tt.wantFileExists, fileExists, "New file existence mismatch")
+			if tt.wantExistingFile && existingFilePath != "" {
+				_, err := os.Stat(existingFilePath)
+				assert.NoError(t, err, "Existing file should remain")
+			}
+		})
+	}
+}
+
+func TestHashCalculation_Integration(t *testing.T) {
+	outputDir := t.TempDir()
+	subredditDir := filepath.Join(outputDir, "testsub")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755), "MkdirAll error")
+
+	testContent := []byte("content for hash test")
+	testFilePath := filepath.Join(subredditDir, "testfile.jpg")
+	require.NoError(t, os.WriteFile(testFilePath, testContent, 0644), "WriteFile error")
+
+	hash, err := CalculateFileHash(testFilePath)
+	require.NoError(t, err, "CalculateFileHash error")
+
+	assert.Equal(t, 64, len(hash), "Expected hash length 64")
+
+	hash2, err := CalculateFileHash(testFilePath)
+	require.NoError(t, err, "CalculateFileHash error")
+
+	assert.Equal(t, hash, hash2, "Hash should be deterministic")
+
+	hashFromBytes, err := CalculateHashFromReader(bytes.NewReader(testContent))
+	require.NoError(t, err, "CalculateHashFromReader error")
+
+	assert.Equal(t, hash, hashFromBytes, "File hash and reader hash should match for same content")
 }

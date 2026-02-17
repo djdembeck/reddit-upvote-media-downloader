@@ -1,10 +1,16 @@
 package migration
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractPostID(t *testing.T) {
@@ -342,4 +348,252 @@ func TestRollbackMissingFile(t *testing.T) {
 	if rollbackLog.ErrorCount != 1 {
 		t.Errorf("ErrorCount = %d, want 1", rollbackLog.ErrorCount)
 	}
+}
+
+// assertHasDuplicateSkip is a test helper that asserts operations contain a duplicate skip.
+func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
+	t.Helper()
+	for _, op := range operations {
+		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+			return
+		}
+	}
+	t.Error("Expected to find duplicate skip in operations, but none was found")
+}
+
+func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
+	tmpDir := t.TempDir()
+	sourceDir = filepath.Join(tmpDir, "source")
+	destDir = filepath.Join(tmpDir, "dest")
+
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
+
+	file1 = filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 = filepath.Join(sourceDir, "Post2_def456.jpg")
+
+	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
+	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
+
+	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
+	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
+
+	postMap = map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
+	}
+
+	return
+}
+
+func TestDuplicateHandling(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    "empty_content",
+			content: []byte{},
+		},
+		{
+			name:    "large_content",
+			content: make([]byte, 1024*100),
+		},
+		{
+			name:    "different_extension",
+			content: []byte("content with extension"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceDir, destDir, file1, file2, postMap := setupDuplicateScenario(t, tt.content)
+
+			if tt.name == "different_extension" {
+				newFile1 := filepath.Join(filepath.Dir(file1), "Post1_abc123.png")
+				newFile2 := filepath.Join(filepath.Dir(file2), "Post2_def456.png")
+
+				require.NoError(t, os.Rename(file1, newFile1), "Failed to rename file1")
+				require.NoError(t, os.Rename(file2, newFile2), "Failed to rename file2")
+
+				file1 = newFile1
+				file2 = newFile2
+			}
+
+			migrator := NewMigrator(sourceDir, destDir, postMap, false)
+			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+
+			ext := ".jpg"
+			if tt.name == "different_extension" {
+				ext = ".png"
+			}
+			destFile1 := filepath.Join(destDir, "pics", "Post1_abc123"+ext)
+			_, err := os.Stat(destFile1)
+			require.NoError(t, err, "First file should be moved")
+
+			destFile2 := filepath.Join(destDir, "pics", "Post2_def456"+ext)
+			_, err = os.Stat(destFile2)
+			assert.True(t, os.IsNotExist(err), "Duplicate file should not be moved")
+
+			_, err = os.Stat(file2)
+			require.NoError(t, err, "Duplicate source file should remain")
+
+			assert.Equal(t, 1, migrator.Log.MovedCount, "Expected 1 moved file")
+			assert.Equal(t, 1, migrator.Log.SkippedCount, "Expected 1 skipped file")
+
+			assertHasDuplicateSkip(t, migrator.Log.Operations)
+		})
+	}
+}
+
+func TestIdempotentReRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
+
+	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644), "Failed to write test file")
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	}
+
+	// First run
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	require.NoError(t, migrator1.Execute())
+	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
+
+	// Second run with existing log - source file is gone, so it should skip
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
+	require.NoError(t, migrator2.Execute())
+
+	// Second run should have no operations since source file is gone
+	assert.Equal(t, 0, migrator2.Log.TotalFiles, "Second run should have no files to process")
+}
+
+func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
+	content := []byte("identical content")
+	sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, content)
+	logPath := filepath.Join(filepath.Dir(sourceDir), "migration_log.json")
+
+	// First run - should move file1, skip file2 as duplicate
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	require.NoError(t, migrator1.Execute())
+	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
+
+	// Verify first run results
+	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
+	_, err := os.Stat(destFile1)
+	assert.NoError(t, err, "First file should be moved")
+
+	// file2 should still exist as duplicate
+	_, err = os.Stat(file2)
+	assert.NoError(t, err, "Duplicate source file should remain")
+
+	// Second run - should skip file2 because hash is already in log
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
+	require.NoError(t, migrator2.Execute())
+
+	// Second run should skip file2 as duplicate (hash already in log)
+	assert.Equal(t, 1, migrator2.Log.SkippedCount, "Second run should skip duplicate")
+
+	assertHasDuplicateSkip(t, migrator2.Log.Operations)
+}
+
+func TestMigration_SortsByModTime(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
+
+	// Create files with different modification times
+	// PostIDs chosen so they are NOT alphabetically ordered with mod-times
+	fileOldest := filepath.Join(sourceDir, "Oldest_zzzzzz.jpg")
+	fileMiddle := filepath.Join(sourceDir, "Middle_aaaaaa.jpg")
+	fileNewest := filepath.Join(sourceDir, "Newest_mmmmmm.jpg")
+
+	// Write in order with small delays to ensure different mod times
+	require.NoError(t, os.WriteFile(fileOldest, []byte("oldest content"), 0644), "Failed to write fileOldest")
+	require.NoError(t, os.WriteFile(fileMiddle, []byte("middle content"), 0644), "Failed to write fileMiddle")
+	require.NoError(t, os.WriteFile(fileNewest, []byte("newest content"), 0644), "Failed to write fileNewest")
+
+	// Set deterministic modification times
+	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(fileOldest, baseTime, baseTime), "Failed to set fileOldest time")
+	require.NoError(t, os.Chtimes(fileMiddle, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set fileMiddle time")
+	require.NoError(t, os.Chtimes(fileNewest, baseTime.Add(2*time.Second), baseTime.Add(2*time.Second)), "Failed to set fileNewest time")
+
+	postMap := map[string]PostInfo{
+		"zzzzzz": {PostID: "zzzzzz", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"aaaaaa": {PostID: "aaaaaa", Subreddit: "pics", Username: "user2", IsUserPost: false},
+		"mmmmmm": {PostID: "mmmmmm", Subreddit: "pics", Username: "user3", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+
+	// All files should be moved
+	require.Equal(t, 3, migrator.Log.MovedCount, "Expected 3 moved files")
+
+	// Verify all destination files exist
+	for _, postID := range []string{"zzzzzz", "aaaaaa", "mmmmmm"} {
+		destFile := filepath.Join(destDir, "pics", fmt.Sprintf("%s_%s.jpg", map[string]string{
+			"zzzzzz": "Oldest",
+			"aaaaaa": "Middle",
+			"mmmmmm": "Newest",
+		}[postID], postID))
+		_, err := os.Stat(destFile)
+		assert.NoError(t, err, "Dest file should exist for %s", postID)
+	}
+
+	// Verify operations are sorted by modification time (not PostID)
+	var opPostIDs []string
+	for _, op := range migrator.Log.Operations {
+		if op.Status == "moved" {
+			opPostIDs = append(opPostIDs, op.PostID)
+		}
+	}
+
+	// Files should be processed in mod-time order: Oldest (zzzzzz), Middle (aaaaaa), Newest (mmmmmm)
+	expectedOrder := []string{"zzzzzz", "aaaaaa", "mmmmmm"}
+	assert.Equal(t, expectedOrder, opPostIDs, "Operations should process files by modification time")
+}
+
+func TestMigration_HashLogging(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
+
+	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
+	content := []byte("content for hashing")
+	require.NoError(t, os.WriteFile(testFile, content, 0644), "Failed to write test file")
+
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+
+	// Verify hash was recorded in log
+	require.Len(t, migrator.Log.Operations, 1, "Expected 1 operation")
+
+	op := migrator.Log.Operations[0]
+	assert.Equal(t, "moved", op.Status, "Expected status 'moved'")
+	assert.NotEmpty(t, op.Hash, "Hash should be recorded in migration log")
+
+	// Verify hash is valid hex (64 characters for BLAKE3-256)
+	assert.Len(t, op.Hash, 64, "Expected hash length 64")
+
+	decoded, err := hex.DecodeString(op.Hash)
+	require.NoError(t, err, "Hash should be valid hex string")
+	assert.Len(t, decoded, 32, "BLAKE3-256 should produce 32 bytes")
 }

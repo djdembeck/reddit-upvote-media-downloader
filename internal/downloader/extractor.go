@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -43,11 +43,13 @@ type Downloadable struct {
 	Filename  string
 	MediaType string
 	Subreddit string
+	Hash      string
 }
 
 type Extractor struct {
 	client    *http.Client
 	userAgent string
+	logger    *slog.Logger
 }
 
 func NewExtractor(client *http.Client, userAgent string) *Extractor {
@@ -57,7 +59,20 @@ func NewExtractor(client *http.Client, userAgent string) *Extractor {
 	if userAgent == "" {
 		userAgent = defaultUserAgent
 	}
-	return &Extractor{client: client, userAgent: userAgent}
+	return &Extractor{client: client, userAgent: userAgent, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.Logger) *Extractor {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	if userAgent == "" {
+		userAgent = defaultUserAgent
+	}
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return &Extractor{client: client, userAgent: userAgent, logger: logger}
 }
 
 func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Downloadable, error) {
@@ -110,7 +125,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	for _, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
-			log.Printf("Warning: gallery media metadata missing for %s", item.MediaID)
+			e.logger.Warn("gallery media metadata missing", "media_id", item.MediaID)
 			continue
 		}
 
@@ -119,7 +134,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			mediaURL = strings.TrimSpace(meta.Previews[0].URL)
 		}
 		if mediaURL == "" {
-			log.Printf("Warning: gallery media URL missing for %s", item.MediaID)
+			e.logger.Warn("gallery media URL missing", "media_id", item.MediaID)
 			continue
 		}
 

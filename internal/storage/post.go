@@ -19,6 +19,7 @@ type Post struct {
 	RetryCount   int       `json:"retry_count"`
 	LastError    string    `json:"last_error"`
 	LastAttempt  time.Time `json:"last_attempt"`
+	Hash         string    `json:"hash"` // hash of the media file for deduplication
 }
 
 // Stats represents download statistics.

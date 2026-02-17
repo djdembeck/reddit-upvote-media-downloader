@@ -4,10 +4,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,22 @@ import (
 	"github.com/user/reddit-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
 )
+
+// parseSlogLevel converts a log level string to slog.Level.
+func parseSlogLevel(levelStr string) slog.Level {
+	switch strings.ToLower(levelStr) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
 
 // memoryTokenStore implements reddit.TokenStore with in-memory storage
 type memoryTokenStore struct {
@@ -129,23 +146,46 @@ func main() {
 	}
 	defer redditClient.Close()
 
-	// Create downloader
+	// Parse log level from configuration
+	parsedLevel := parseSlogLevel(cfg.Log.Level)
+
+	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: parsedLevel,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				a.Key = "timestamp"
+			}
+			if a.Key == slog.LevelKey {
+				a.Key = "level"
+			}
+			if a.Key == slog.MessageKey {
+				a.Key = "message"
+			}
+			if a.Key == slog.SourceKey {
+				a.Key = "source"
+			}
+			return a
+		},
+	}))
+	slog.SetDefault(slogLogger)
+
+	// Create downloader with structured slog logger
 	downloaderConfig := downloader.Config{
 		OutputDir:   cfg.Storage.OutputDir,
 		Concurrency: cfg.Download.Concurrency,
+		Logger:      slogLogger,
 	}
-	dl := downloader.NewDownloader(downloaderConfig)
+	dl := downloader.NewDownloader(downloaderConfig, db)
 
 	// Main loop
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Shutdown complete")
+			slogLogger.Info("Shutdown complete")
 			return
 		default:
-			if err := runCycle(ctx, db, redditClient, dl, cfg); err != nil {
-				logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
-				logger.Printf("Cycle error: %v", err)
+			if err := runCycle(ctx, db, redditClient, dl, cfg, slogLogger); err != nil {
+				slogLogger.Error("Cycle error", "error", err)
 			}
 
 			// Sleep for 1 hour
@@ -187,8 +227,6 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 		return nil
 	}
 
-	fmt.Println("Running auto-migration...")
-
 	// Look for idList.txt
 	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
 	if _, err := os.Stat(idListPath); err == nil {
@@ -209,39 +247,22 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 		fmt.Printf("Migrated %d posts from media directory\n", count)
 	}
 
-	// Mark migration as complete
-	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
-		return fmt.Errorf("setting migration_complete metadata: %w", err)
-	}
-	fmt.Println("Migration completed successfully, marking as complete")
-
-	// Set full_sync_once to pending to trigger full sync on first run after migration
-	if err := db.SetMetadata(ctx, "full_sync_once", "pending"); err != nil {
-		return fmt.Errorf("setting full_sync_once metadata: %w", err)
-	}
-	fmt.Println("Full sync scheduled (full_sync_once=pending)")
-
 	return nil
 }
 
-// runReCheckMode verifies all downloaded files exist on disk.
-// For missing files: marks posts for re-download by resetting retry count.
-// Returns the count of missing files found.
+// runReCheckMode verifies that all recorded files exist on disk and resets retry status for missing files.
+// This is useful for recovering from partial downloads, disk corruption, or accidental file deletion.
 func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	fmt.Println("Starting re-check mode...")
-
 	posts, err := db.GetAllPosts(ctx)
 	if err != nil {
 		return fmt.Errorf("getting all posts: %w", err)
 	}
-
 	var verifiedCount, missingCount int
-
 	for _, post := range posts {
 		if post.FilePath == "" {
 			continue
 		}
-
 		_, err := os.Stat(post.FilePath)
 		if err != nil {
 			fmt.Printf("File missing: %s, resetting for re-download\n", post.FilePath)
@@ -255,19 +276,16 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 			verifiedCount++
 		}
 	}
-
 	fmt.Printf("Re-check complete: %d files verified, %d missing\n", verifiedCount, missingCount)
 	return nil
 }
 
-type RedditClient interface {
-	GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error)
-	GetSaved(ctx context.Context, limit int) ([]storage.Post, error)
-	Close() error
-}
-
-// runCycle performs one download cycle
-func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *downloader.Downloader, cfg *config.Config) error {
+// runCycle performs one download cycle.
+//
+// Parameters:
+//   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
+//     Must be non-nil. Use this for structured logging with contextual attributes.
+func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
 	// Check if full sync is pending (first run after migration)
@@ -344,38 +362,46 @@ func runCycle(ctx context.Context, db *storage.DB, client RedditClient, dl *down
 
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	// Download items
+	// Download items and get hashes (may return partial hashes + error)
 	hashes, err := dl.Download(ctx, items)
-	downloadErr := err
-	if err != nil {
-		logger := log.New(os.Stderr, "[downloader] ", log.LstdFlags)
-		logger.Printf("download completed with errors: %v", err)
-	}
 
-	// Mark posts as downloaded (only those with hashes)
+	// Save posts with whatever hashes we have (preserves partial results on error)
+	// Collect any save errors to prevent finalizing full_sync_once on persistence failures
+	var firstSaveErr error
 	for _, post := range newPosts {
-		if hash, ok := hashes[post.ID]; ok && hash != "" {
+		if hash, ok := hashes[post.ID]; ok {
 			post.DownloadedAt = time.Now()
-			if err := db.SavePost(ctx, &post); err != nil {
-				logger := log.New(os.Stderr, "[main] ", log.LstdFlags)
-				logger.Printf("Error saving post: %v", err)
+			// Strip DUPLICATE: prefix if present before saving to database
+			if strings.HasPrefix(hash, "DUPLICATE:") {
+				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
+			} else {
+				post.Hash = hash
+			}
+			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
+				if firstSaveErr == nil {
+					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
+				}
 			}
 		}
 	}
 
-	// Mark full sync as completed if it was pending
+	if err != nil {
+		slogLogger.Warn("Warning: download completed with errors", "error", err)
+		return fmt.Errorf("downloading media: %w", err)
+	}
+	if firstSaveErr != nil {
+		return fmt.Errorf("saving posts: %w", firstSaveErr)
+	}
+
 	if isFullSync {
 		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
+			slogLogger.Error("Error marking full sync as completed", "error", err)
 		} else {
-			fmt.Println("Full sync completed, switching to incremental mode")
+			slogLogger.Info("Full sync completed, switching to incremental mode")
 		}
 	}
 
-	if downloadErr != nil {
-		return fmt.Errorf("downloading media: %w", downloadErr)
-	}
-
-	fmt.Printf("Cycle complete: downloaded %d items\n", len(items))
+	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
 	return nil
 }

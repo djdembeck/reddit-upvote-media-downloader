@@ -137,6 +137,20 @@ func NewDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
+	// Migration: Add hash column if not exists (preserve existing data)
+	_, err = conn.Exec(`ALTER TABLE posts ADD COLUMN hash TEXT`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		conn.Close()
+		return nil, fmt.Errorf("failed to add hash column: %w", err)
+	}
+
+	// Create index on hash column for fast lookups
+	_, err = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to create hash index: %w", err)
+	}
+
 	return db, nil
 }
 
@@ -152,8 +166,8 @@ func (db *DB) Close() error {
 // Also saves retry-related fields: retry_count, last_error, last_attempt.
 func (db *DB) SavePost(ctx context.Context, post *Post) error {
 	query := `
-		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			subreddit = excluded.subreddit,
@@ -167,7 +181,8 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 			source = excluded.source,
 			retry_count = excluded.retry_count,
 			last_error = excluded.last_error,
-			last_attempt = excluded.last_attempt
+			last_attempt = excluded.last_attempt,
+			hash = excluded.hash
 	`
 
 	var lastError sql.NullString
@@ -197,6 +212,7 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 		post.RetryCount,
 		lastError,
 		lastAttempt,
+		post.Hash,
 	)
 
 	if err != nil {
@@ -205,11 +221,9 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 
 	return nil
 }
-
-// GetPost retrieves a post by its ID.
 func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt
+		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
 		FROM posts
 		WHERE id = ?
 	`
@@ -222,6 +236,7 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	var retryCount sql.NullInt64
 	var lastError sql.NullString
 	var lastAttempt sql.NullInt64
+	var hash sql.NullString
 
 	err := row.Scan(
 		&post.ID,
@@ -238,6 +253,7 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 		&retryCount,
 		&lastError,
 		&lastAttempt,
+		&hash,
 	)
 
 	if err == sql.ErrNoRows {
@@ -287,21 +303,24 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	if lastAttempt.Valid {
 		post.LastAttempt = time.Unix(lastAttempt.Int64, 0)
 	}
+	if hash.Valid {
+		post.Hash = hash.String
+	}
 
 	return &post, nil
 }
 
-// IsDownloaded checks if a post should be treated as downloaded (skip downloading).
-// This is a convenience wrapper around CheckPostStatus that preserves backward compatibility.
-// Returns true if the post should be skipped: it exists and either has a file on disk,
-// is within a backoff period, or has exceeded retry threshold.
+// IsDownloaded checks if a post has been downloaded.
 func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
-	status, err := db.CheckPostStatus(ctx, id, 0, 0, 0)
+	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?)`
+
+	var exists bool
+	err := db.conn.QueryRowContext(ctx, query, id).Scan(&exists)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("failed to check if post exists: %w", err)
 	}
-	// Treat as downloaded if it exists but shouldn't be retried
-	return status.Exists && !status.RetryEligible, nil
+
+	return exists, nil
 }
 
 // CheckPostStatus returns detailed status of a post for download eligibility checking.
@@ -365,65 +384,129 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 	}
 
 	// Check 1: Retry count exceeds threshold (permanent skip)
-	if threshold > 0 && status.RetryCount > threshold {
+	if threshold > 0 && status.RetryCount >= threshold {
 		status.ShouldSkip = true
 		status.RetryEligible = false
 		return status, nil
 	}
 
-	// Check 2: File existence on disk (if file_path is set)
+	// Check 2: File exists on disk (if file_path is set)
 	if status.FilePath != "" {
-		_, err := os.Stat(status.FilePath)
-		if err == nil {
-			// File exists on disk - no need to retry
+		if _, err := os.Stat(status.FilePath); err == nil {
 			status.FileExists = true
 			status.ShouldSkip = true
 			status.RetryEligible = false
 			return status, nil
 		}
-		// File doesn't exist - could be eligible for retry, continue to check backoff
-		status.FileExists = false
-	} else {
-		// No file_path set - for backward compatibility:
-		// If never attempted (retry_count == 0), treat as downloaded (legacy behavior)
-		// If has retry history, need to check backoff/threshold below
-		if status.RetryCount == 0 {
-			status.ShouldSkip = true
-			status.RetryEligible = false
-			return status, nil
-		}
-		// Has retry history but no file_path - continue to check backoff
 	}
 
-	// Check 3: Backoff window (only if retry history exists)
-	// If last_attempt is set and backoff parameters are provided, check if within backoff
-	if !status.LastAttempt.IsZero() && backoffBase > 0 && status.RetryCount > 0 {
-		// Calculate backoff delay: min(backoffBase * 2^(retryCount-1), backoffMax)
-		retryCount := status.RetryCount - 1
-		if retryCount < 0 {
-			retryCount = 0
-		}
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(retryCount)))
+	// Check 3: Backoff window - if last_attempt is within backoff window, skip retry
+	if backoffBase > 0 && !status.LastAttempt.IsZero() {
+		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
 		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
 
+		// Check if we're still within the backoff window
 		elapsed := time.Since(status.LastAttempt)
 		if elapsed < backoffDelay {
-			// Still within backoff window - should skip for now
+			// Within backoff window - skip this cycle
 			status.ShouldSkip = true
 			status.RetryEligible = false
 			return status, nil
 		}
 	}
 
-	// Post is eligible for retry if we got here:
-	// - Has file_path but file is missing, OR
-	// - Has retry history and backoff has passed, OR
-	// - Has retry history but no backoff params (immediate retry)
+	// If we got here, the post is eligible for retry
 	status.RetryEligible = true
-	status.ShouldSkip = false
 	return status, nil
+}
+
+func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE hash = ?)`
+
+	var exists bool
+	err := db.conn.QueryRowContext(ctx, query, hash).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if hash exists: %w", err)
+	}
+
+	return exists, nil
+}
+
+// GetPostByHash retrieves a post by its hash.
+func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
+	query := `
+		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, hash
+		FROM posts
+		WHERE hash = ?
+	`
+
+	row := db.conn.QueryRowContext(ctx, query, hash)
+
+	var post Post
+	var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
+	var createdAtUnix, downloadedAtUnix sql.NullInt64
+	var hashValue sql.NullString
+
+	err := row.Scan(
+		&post.ID,
+		&title,
+		&subreddit,
+		&author,
+		&url,
+		&permalink,
+		&createdAtUnix,
+		&downloadedAtUnix,
+		&mediaType,
+		&filePath,
+		&source,
+		&hashValue,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get post by hash: %w", err)
+	}
+
+	if createdAtUnix.Valid {
+		post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
+	}
+	if downloadedAtUnix.Valid {
+		post.DownloadedAt = time.Unix(downloadedAtUnix.Int64, 0)
+	}
+	if title.Valid {
+		post.Title = title.String
+	}
+	if subreddit.Valid {
+		post.Subreddit = subreddit.String
+	}
+	if author.Valid {
+		post.Author = author.String
+	}
+	if url.Valid {
+		post.URL = url.String
+	}
+	if permalink.Valid {
+		post.Permalink = permalink.String
+	}
+	if mediaType.Valid {
+		post.MediaType = mediaType.String
+	}
+	if filePath.Valid {
+		post.FilePath = filePath.String
+	}
+	if source.Valid {
+		post.Source = source.String
+	}
+	if hashValue.Valid {
+		post.Hash = hashValue.String
+	}
+
+	return &post, nil
 }
 
 // GetStats returns download statistics.
@@ -561,10 +644,10 @@ func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error
 	return imported, nil
 }
 
-// filenamePattern matches bdfr-html filenames like {POSTID}.ext or {POSTID}_1.ext
+// FilenamePattern matches bdfr-html filenames like {POSTID}.ext or {POSTID}_1.ext
 // Examples: abc123.jpg, def456_1.mp4, xyz789_2.png
 // Reddit post IDs are typically 6-7 alphanumeric characters.
-var filenamePattern = regexp.MustCompile(`^([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
+var FilenamePattern = regexp.MustCompile(`^([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
 
 // ImportFromDirectory scans a directory for media files and imports post IDs from filenames.
 // Supports bdfr-html filename patterns: {POSTID}.ext, {POSTID}_1.ext
@@ -583,7 +666,7 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 		}
 
 		filename := entry.Name()
-		matches := filenamePattern.FindStringSubmatch(filename)
+		matches := FilenamePattern.FindStringSubmatch(filename)
 		if matches == nil {
 			// Not a bdfr-html filename pattern
 			continue
@@ -730,7 +813,7 @@ func (db *DB) ResetRetry(ctx context.Context, postID string) error {
 // Used for re-check mode to verify file existence on disk.
 func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt
+		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
 		FROM posts
 	`
 
@@ -749,6 +832,7 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 		var retryCount sql.NullInt64
 		var lastError sql.NullString
 		var lastAttempt sql.NullInt64
+		var hash sql.NullString
 
 		err := rows.Scan(
 			&post.ID,
@@ -765,6 +849,7 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 			&retryCount,
 			&lastError,
 			&lastAttempt,
+			&hash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan post: %w", err)
@@ -808,6 +893,9 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 		}
 		if lastAttempt.Valid {
 			post.LastAttempt = time.Unix(lastAttempt.Int64, 0)
+		}
+		if hash.Valid {
+			post.Hash = hash.String
 		}
 
 		posts = append(posts, post)
