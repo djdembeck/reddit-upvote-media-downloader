@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/reddit-media-downloader/internal/reddit"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 )
 
 const (

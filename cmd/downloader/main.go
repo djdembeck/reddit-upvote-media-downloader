@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/user/reddit-media-downloader/internal/config"
-	"github.com/user/reddit-media-downloader/internal/downloader"
-	"github.com/user/reddit-media-downloader/internal/reddit"
-	"github.com/user/reddit-media-downloader/internal/storage"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/downloader"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
 )
 

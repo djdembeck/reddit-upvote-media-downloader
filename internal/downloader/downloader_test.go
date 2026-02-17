@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/user/reddit-media-downloader/internal/reddit"
-	"github.com/user/reddit-media-downloader/internal/storage"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

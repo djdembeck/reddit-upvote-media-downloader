@@ -1,4 +1,4 @@
-module github.com/user/reddit-media-downloader
+module github.com/djdembeck/reddit-upvote-media-downloader
 
 go 1.23.0
 

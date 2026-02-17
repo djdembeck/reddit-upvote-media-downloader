@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/user/reddit-media-downloader/internal/storage"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
 )
 

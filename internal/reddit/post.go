@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/reddit-media-downloader/internal/storage"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 // RedditPost represents the JSON structure of a Reddit post from the API.

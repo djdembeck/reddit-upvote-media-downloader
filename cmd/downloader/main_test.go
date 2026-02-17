@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/user/reddit-media-downloader/internal/config"
-	"github.com/user/reddit-media-downloader/internal/downloader"
-	"github.com/user/reddit-media-downloader/internal/storage"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/downloader"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {

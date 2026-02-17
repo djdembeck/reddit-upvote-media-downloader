@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/user/reddit-media-downloader/internal/migration"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
 )
 
 func main() {
