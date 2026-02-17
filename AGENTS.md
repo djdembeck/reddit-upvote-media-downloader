@@ -16,7 +16,7 @@ This document provides guidance for AI agents working on the reddit-media-downlo
 
 ### Technology Stack
 
-- **Language**: Go 1.22
+- **Language**: Go 1.23
 - **Database**: SQLite (via `github.com/mattn/go-sqlite3`)
 - **Key Dependencies**:
   - `golang.org/x/oauth2` - OAuth2 authentication
