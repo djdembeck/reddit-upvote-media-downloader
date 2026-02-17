@@ -1,10 +1,10 @@
 # AGENTS.md - AI Assistant Guide for Reddit Media Downloader
 
-This document provides guidance for AI agents working on the reddit-media-downloader project. It supplements the existing README.md with development-specific patterns, workflows, and best practices.
+This document provides guidance for AI agents working on the reddit-upvote-media-downloader project. It supplements the existing README.md with development-specific patterns, workflows, and best practices.
 
 ## Project Overview
 
-**reddit-media-downloader** is a lightweight, efficient Reddit media downloader written in Go. It fetches upvoted and saved posts, downloads images and videos (including from external sites), and tracks downloads to avoid duplicates. Runs on a 1-hour Docker schedule.
+**reddit-upvote-media-downloader** is a lightweight, efficient Reddit media downloader written in Go. It fetches upvoted and saved posts, downloads images and videos (including from external sites), and tracks downloads to avoid duplicates. Runs on a 1-hour Docker schedule.
 
 ### Core Purpose
 
@@ -28,7 +28,7 @@ This document provides guidance for AI agents working on the reddit-media-downlo
 ### Directory Structure
 
 ```
-reddit-media-downloader/
+reddit-upvote-media-downloader/
 ├── cmd/
 │   ├── downloader/
 │   │   └── main.go              # Main downloader entry point
@@ -202,7 +202,7 @@ Optional variables:
 
 ```yaml
 services:
-  reddit-downloader:
+  reddit-upvote-media-downloader:
     build: .
     environment:
       - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
@@ -292,7 +292,7 @@ For testing Reddit API calls, use table-driven tests with mock responses.
 ### Building Docker Image
 
 ```bash
-docker build -t reddit-media-downloader:latest .
+docker build -t reddit-upvote-media-downloader:latest .
 ```
 
 ### Build Stages
@@ -346,7 +346,7 @@ go test -cover ./...
 docker builder prune
 
 # Build without cache
-docker build --no-cache -t reddit-media-downloader .
+docker build --no-cache -t reddit-upvote-media-downloader .
 
 # Check Dockerfile syntax
 docker build --check .

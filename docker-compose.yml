@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  reddit-downloader:
+  reddit-upvote-media-downloader:
     build: .
-    container_name: reddit-media-downloader
+    container_name: reddit-upvote-media-downloader
     environment:
       - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
       - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}

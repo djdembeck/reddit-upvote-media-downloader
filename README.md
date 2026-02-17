@@ -22,7 +22,7 @@ A lightweight, efficient Reddit media downloader written in Go. Fetches upvoted 
 
 1. Clone and configure:
 ```bash
-cd /path/to/reddit-media-downloader
+cd /path/to/reddit-upvote-media-downloader
 cp .env.example .env
 # Edit .env with your Reddit credentials
 ```
@@ -55,7 +55,7 @@ Create a `.env` file with the following variables:
 # Get these from https://www.reddit.com/prefs/apps
 REDDIT_CLIENT_ID=your_client_id_here
 REDDIT_CLIENT_SECRET=your_client_secret_here
-REDDIT_USER_AGENT=script:reddit-media-downloader:v1.0 (by /u/your_username)
+REDDIT_USER_AGENT=script:reddit-upvote-media-downloader:v1.0 (by /u/your_username)
 REDDIT_USERNAME=your_reddit_username
 REDDIT_PASSWORD=your_reddit_password
 
@@ -102,7 +102,7 @@ The application reads all configuration from environment variables. These can be
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDDIT_USER_AGENT` | `reddit-media-downloader/1.0` | Reddit API user agent string |
+| `REDDIT_USER_AGENT` | `reddit-upvote-media-downloader/1.0` | Reddit API user agent string |
 | `REDDIT_PASSWORD` | *(empty)* | Reddit password (optional for OAuth) |
 | `OUTPUT_DIR` | `./data/output` | Directory to save downloaded media |
 | `DB_PATH` | `./data/posts.db` | SQLite database file path |
@@ -309,7 +309,7 @@ output/
 1. Go to https://www.reddit.com/prefs/apps
 2. Click "create another app..."
 3. Select "script"
-4. Name: `reddit-media-downloader`
+4. Name: `reddit-upvote-media-downloader`
 5. Description: (optional)
 6. About URL: (optional)
 7. Redirect URI: `http://localhost:8080` (not used, but required)
@@ -320,7 +320,7 @@ output/
 ## Project Structure
 
 ```
-reddit-media-downloader/
+reddit-upvote-media-downloader/
 ├── cmd/
 │   ├── downloader/
 │   │   └── main.go              # Main downloader entry point
