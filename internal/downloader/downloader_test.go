@@ -298,7 +298,8 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 	if err := os.MkdirAll(subredditDir, 0755); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
-	bdfrStyleFilePath := filepath.Join(subredditDir, "test_abc.jpg")
+	// Use proper bdfr-html filename pattern: {POSTID}.ext (POSTID must be 6+ chars)
+	bdfrStyleFilePath := filepath.Join(subredditDir, "abc123.jpg")
 	if err := os.WriteFile(bdfrStyleFilePath, []byte("existing"), 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
@@ -316,10 +317,10 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{{
-		PostID:    "abc",
+		PostID:    "abc123",
 		Subreddit: "pics",
-		Filename:  "abc_1.jpg",
-		URL:       "https://example.com/abc.jpg",
+		Filename:  "abc123_1.jpg",
+		URL:       "https://example.com/abc123.jpg",
 	}}
 
 	if _, err := downloader.Download(context.Background(), items); err != nil {
@@ -565,9 +566,9 @@ func TestDeduplication(t *testing.T) {
 	}{
 		{
 			name:                "SkipsExistingHash",
-			serverContent:       []byte("new content"),
+			serverContent:       []byte("shared file content"),
 			existingFile:        true,
-			existingFileContent: []byte("existing file content"),
+			existingFileContent: []byte("shared file content"),
 			existingFilename:    "existing_abc.jpg",
 			existingPostID:      "existing",
 			newPostID:           "abc",

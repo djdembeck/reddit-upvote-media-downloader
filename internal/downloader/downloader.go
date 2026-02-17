@@ -406,8 +406,10 @@ func findExistingFile(dir, postID string) string {
 		if entry.IsDir() {
 			continue
 		}
-		if strings.Contains(entry.Name(), postID) {
-			return filepath.Join(dir, entry.Name())
+		filename := entry.Name()
+		matches := storage.FilenamePattern.FindStringSubmatch(filename)
+		if matches != nil && matches[1] == postID {
+			return filepath.Join(dir, filename)
 		}
 	}
 	return ""

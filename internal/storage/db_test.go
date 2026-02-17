@@ -1,7 +1,6 @@
 // Package storage provides SQLite database operations for the Reddit Media Downloader.
 package storage
 
-	"database/sql"
 import (
 	"context"
 	"fmt"
@@ -385,7 +384,7 @@ func TestFilenamePattern(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		matches := filenamePattern.FindStringSubmatch(tc.filename)
+		matches := FilenamePattern.FindStringSubmatch(tc.filename)
 		if tc.shouldMatch {
 			if matches == nil {
 				t.Errorf("Expected %s to match pattern", tc.filename)

@@ -311,6 +311,129 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 
 	return &post, nil
 }
+
+// IsDownloaded checks if a post has been downloaded.
+func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?)`
+
+	var exists bool
+	err := db.conn.QueryRowContext(ctx, query, id).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if post exists: %w", err)
+	}
+
+	return exists, nil
+}
+
+// CheckPostStatus returns detailed status of a post for download eligibility checking.
+// It checks file existence on disk (if file_path is set), retry count against threshold,
+// and last_attempt against backoff window.
+// Parameters:
+//   - threshold: max retry count before permanent skip (0 = ignore)
+//   - backoffBase: base delay for exponential backoff calculation (0 = ignore)
+//   - backoffMax: max delay cap for backoff calculation (0 = ignore)
+func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, backoffBase, backoffMax time.Duration) (*PostStatus, error) {
+	query := `
+		SELECT retry_count, last_error, last_attempt, file_path
+		FROM posts
+		WHERE id = ?
+	`
+
+	status := &PostStatus{
+		Exists:        false,
+		FileExists:    false,
+		RetryCount:    0,
+		ShouldSkip:    false,
+		RetryEligible: true,
+	}
+
+	var lastError sql.NullString
+	var lastAttempt sql.NullInt64
+	var filePath sql.NullString
+	var retryCount sql.NullInt64
+
+	err := db.conn.QueryRowContext(ctx, query, id).Scan(
+		&retryCount,
+		&lastError,
+		&lastAttempt,
+		&filePath,
+	)
+
+	if err == sql.ErrNoRows {
+		// Post doesn't exist - eligible for download
+		return status, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to check post status: %w", err)
+	}
+
+	// Post exists in DB
+	status.Exists = true
+	status.RetryEligible = false // Will be set to true if eligible for retry
+
+	// Extract values from NULLable columns
+	if retryCount.Valid {
+		status.RetryCount = int(retryCount.Int64)
+	}
+	if lastError.Valid {
+		status.LastError = lastError.String
+	}
+	if lastAttempt.Valid {
+		status.LastAttempt = time.Unix(lastAttempt.Int64, 0)
+	}
+	if filePath.Valid {
+		status.FilePath = filePath.String
+	}
+
+	// Check 1: Retry count exceeds threshold (permanent skip)
+	if threshold > 0 && status.RetryCount >= threshold {
+		status.ShouldSkip = true
+		status.RetryEligible = false
+		return status, nil
+	}
+
+	// Check 2: File exists on disk (if file_path is set)
+	if status.FilePath != "" {
+		if _, err := os.Stat(status.FilePath); err == nil {
+			status.FileExists = true
+			status.ShouldSkip = true
+			status.RetryEligible = false
+			return status, nil
+		}
+	}
+
+	// Check 3: Backoff window - if last_attempt is within backoff window, skip retry
+	if backoffBase > 0 && !status.LastAttempt.IsZero() {
+		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
+		if backoffMax > 0 && backoffDelay > backoffMax {
+			backoffDelay = backoffMax
+		}
+
+		// Check if we're still within the backoff window
+		elapsed := time.Since(status.LastAttempt)
+		if elapsed < backoffDelay {
+			// Within backoff window - skip this cycle
+			status.ShouldSkip = true
+			status.RetryEligible = false
+			return status, nil
+		}
+	}
+
+	// If we got here, the post is eligible for retry
+	status.RetryEligible = true
+	return status, nil
+}
+
+func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE hash = ?)`
+
+	var exists bool
+	err := db.conn.QueryRowContext(ctx, query, hash).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if hash exists: %w", err)
+	}
+
 	return exists, nil
 }
 
@@ -490,10 +613,10 @@ func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error
 	return imported, nil
 }
 
-// filenamePattern matches bdfr-html filenames like {POSTID}.ext or {POSTID}_1.ext
+// FilenamePattern matches bdfr-html filenames like {POSTID}.ext or {POSTID}_1.ext
 // Examples: abc123.jpg, def456_1.mp4, xyz789_2.png
 // Reddit post IDs are typically 6-7 alphanumeric characters.
-var filenamePattern = regexp.MustCompile(`^([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
+var FilenamePattern = regexp.MustCompile(`^([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
 
 // ImportFromDirectory scans a directory for media files and imports post IDs from filenames.
 // Supports bdfr-html filename patterns: {POSTID}.ext, {POSTID}_1.ext
@@ -512,7 +635,7 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 		}
 
 		filename := entry.Name()
-		matches := filenamePattern.FindStringSubmatch(filename)
+		matches := FilenamePattern.FindStringSubmatch(filename)
 		if matches == nil {
 			// Not a bdfr-html filename pattern
 			continue

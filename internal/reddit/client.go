@@ -58,6 +58,16 @@ type TokenStore interface {
 	LoadToken() (*oauth2.Token, error)
 }
 
+// RedditClient defines the interface for Reddit API operations.
+type RedditClient interface {
+	// GetUpvoted fetches upvoted posts with the specified limit.
+	GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error)
+	// GetSaved fetches saved posts with the specified limit.
+	GetSaved(ctx context.Context, limit int) ([]storage.Post, error)
+	// Close cleans up the client resources.
+	Close() error
+}
+
 // Client provides authenticated access to the Reddit API.
 type Client struct {
 	config      *Config

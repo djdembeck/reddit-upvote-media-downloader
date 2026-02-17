@@ -706,7 +706,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 		OutputDir:   outputDir,
 		Concurrency: 5,
 	}
-	dl := downloader.NewDownloader(dlConfig)
+	dl := downloader.NewDownloader(dlConfig, db)
 
 	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
 		t.Logf("First run cycle completed with expected download errors: %v", err)
@@ -894,7 +894,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 		OutputDir:   outputDir,
 		Concurrency: 5,
 	}
-	dl := downloader.NewDownloader(dlConfig)
+	dl := downloader.NewDownloader(dlConfig, db)
 
 	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
 		t.Logf("Cycle completed with expected download errors: %v", err)
@@ -1135,7 +1135,7 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 		OutputDir:   outputDir,
 		Concurrency: 5,
 	}
-	dl := downloader.NewDownloader(dlConfig)
+	dl := downloader.NewDownloader(dlConfig, db)
 
 	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
 		t.Logf("Cycle completed: %v", err)
