@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -129,10 +130,13 @@ func main() {
 	}
 	defer redditClient.Close()
 
+	logger := log.New(os.Stderr, "downloader: ", log.LstdFlags|log.Lmsgprefix)
+
 	// Create downloader
 	downloaderConfig := downloader.Config{
 		OutputDir:   cfg.Storage.OutputDir,
 		Concurrency: cfg.Download.Concurrency,
+		Logger:      logger,
 	}
 	dl := downloader.NewDownloader(downloaderConfig, db)
 
@@ -143,8 +147,8 @@ func main() {
 			fmt.Println("Shutdown complete")
 			return
 		default:
-			if err := runCycle(ctx, db, redditClient, dl, cfg); err != nil {
-				fmt.Fprintf(os.Stderr, "Cycle error: %v\n", err)
+			if err := runCycle(ctx, db, redditClient, dl, cfg, logger); err != nil {
+				logger.Printf("Cycle error: %v", err)
 			}
 
 			// Sleep for 1 hour
@@ -240,7 +244,7 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 }
 
 // runCycle performs one download cycle
-func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config) error {
+func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, logger *log.Logger) error {
 	fmt.Println("Starting download cycle...")
 
 	// Check if full sync is pending (first run after migration)
@@ -331,7 +335,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 				post.Hash = hash
 			}
 			if err := db.SavePost(ctx, &post); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving post: %v\n", err)
+				logger.Printf("Error saving post: %v", err)
 			}
 		}
 	}
@@ -339,7 +343,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	// Mark full sync as completed after cycle (regardless of download success)
 	if isFullSync {
 		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
+			logger.Printf("Error marking full sync as completed: %v", err)
 		} else {
 			fmt.Println("Full sync completed, switching to incremental mode")
 		}
@@ -347,7 +351,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 
 	// Return error if there was one (after saving partial results)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: download completed with errors: %v\n", err)
+		logger.Printf("Warning: download completed with errors: %v", err)
 		return fmt.Errorf("downloading media: %w", err)
 	}
 

@@ -4,6 +4,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -705,10 +707,12 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
+		Logger:      log.New(io.Discard, "", 0),
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
+	testLogger := log.New(io.Discard, "", 0)
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
 		t.Logf("First run cycle completed with expected download errors: %v", err)
 	}
 
@@ -730,7 +734,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 
 	mockClient.upvoted = append(mockClient.upvoted, createTestPost("post006", "upvoted"))
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
 		t.Logf("Second run cycle completed with expected download errors: %v", err)
 	}
 
@@ -890,13 +894,15 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 		},
 	}
 
+	testLogger := log.New(io.Discard, "", 0)
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
+		Logger:      testLogger,
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
 		t.Logf("Cycle completed with expected download errors: %v", err)
 	}
 
@@ -920,7 +926,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	mockClient.callCount = 0
 	mockClient.upvoted = append(mockClient.upvoted, createTestPost("newpost001", "upvoted"))
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
 		t.Logf("Cycle with new post completed with expected errors: %v", err)
 	}
 
@@ -1131,13 +1137,15 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 		},
 	}
 
+	testLogger := log.New(io.Discard, "", 0)
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
+		Logger:      testLogger,
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
 		t.Logf("Cycle completed: %v", err)
 	}
 
