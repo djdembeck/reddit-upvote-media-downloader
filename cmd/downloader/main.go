@@ -383,6 +383,8 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	hashes, err := dl.Download(ctx, items)
 
 	// Save posts with whatever hashes we have (preserves partial results on error)
+	// Collect any save errors to prevent finalizing full_sync_once on persistence failures
+	var firstSaveErr error
 	for _, post := range newPosts {
 		if hash, ok := hashes[post.ID]; ok {
 			post.DownloadedAt = time.Now()
@@ -392,8 +394,11 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 			} else {
 				post.Hash = hash
 			}
-			if err := db.SavePost(ctx, &post); err != nil {
-				slogLogger.Error("Error saving post", "error", err, "post_id", post.ID)
+			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
+				if firstSaveErr == nil {
+					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
+				}
 			}
 		}
 	}
@@ -401,6 +406,9 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	if err != nil {
 		slogLogger.Warn("Warning: download completed with errors", "error", err)
 		return fmt.Errorf("downloading media: %w", err)
+	}
+	if firstSaveErr != nil {
+		return fmt.Errorf("saving posts: %w", firstSaveErr)
 	}
 
 	if isFullSync {

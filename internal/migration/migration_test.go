@@ -513,10 +513,10 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
 	// Create files with different modification times
-	// Oldest file first
-	fileOldest := filepath.Join(sourceDir, "Oldest_abc123.jpg")
-	fileMiddle := filepath.Join(sourceDir, "Middle_def456.jpg")
-	fileNewest := filepath.Join(sourceDir, "Newest_ghi789.jpg")
+	// PostIDs chosen so they are NOT alphabetically ordered with mod-times
+	fileOldest := filepath.Join(sourceDir, "Oldest_zzzzzz.jpg")
+	fileMiddle := filepath.Join(sourceDir, "Middle_aaaaaa.jpg")
+	fileNewest := filepath.Join(sourceDir, "Newest_mmmmmm.jpg")
 
 	// Write in order with small delays to ensure different mod times
 	require.NoError(t, os.WriteFile(fileOldest, []byte("oldest content"), 0644), "Failed to write fileOldest")
@@ -530,9 +530,9 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	require.NoError(t, os.Chtimes(fileNewest, baseTime.Add(2*time.Second), baseTime.Add(2*time.Second)), "Failed to set fileNewest time")
 
 	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
-		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
-		"ghi789": {PostID: "ghi789", Subreddit: "pics", Username: "user3", IsUserPost: false},
+		"zzzzzz": {PostID: "zzzzzz", Subreddit: "pics", Username: "user1", IsUserPost: false},
+		"aaaaaa": {PostID: "aaaaaa", Subreddit: "pics", Username: "user2", IsUserPost: false},
+		"mmmmmm": {PostID: "mmmmmm", Subreddit: "pics", Username: "user3", IsUserPost: false},
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false)
@@ -542,17 +542,17 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	require.Equal(t, 3, migrator.Log.MovedCount, "Expected 3 moved files")
 
 	// Verify all destination files exist
-	for _, postID := range []string{"abc123", "def456", "ghi789"} {
+	for _, postID := range []string{"zzzzzz", "aaaaaa", "mmmmmm"} {
 		destFile := filepath.Join(destDir, "pics", fmt.Sprintf("%s_%s.jpg", map[string]string{
-			"abc123": "Oldest",
-			"def456": "Middle",
-			"ghi789": "Newest",
+			"zzzzzz": "Oldest",
+			"aaaaaa": "Middle",
+			"mmmmmm": "Newest",
 		}[postID], postID))
 		_, err := os.Stat(destFile)
 		assert.NoError(t, err, "Dest file should exist for %s", postID)
 	}
 
-	// Verify operations are in order of PostID
+	// Verify operations are sorted by modification time (not PostID)
 	var opPostIDs []string
 	for _, op := range migrator.Log.Operations {
 		if op.Status == "moved" {
@@ -560,9 +560,9 @@ func TestMigration_SortsByModTime(t *testing.T) {
 		}
 	}
 
-	// Files should be processed in order: Oldest (abc123), Middle (def456), Newest (ghi789)
-	expectedOrder := []string{"abc123", "def456", "ghi789"}
-	assert.Equal(t, expectedOrder, opPostIDs, "Operations should process files in PostID order")
+	// Files should be processed in mod-time order: Oldest (zzzzzz), Middle (aaaaaa), Newest (mmmmmm)
+	expectedOrder := []string{"zzzzzz", "aaaaaa", "mmmmmm"}
+	assert.Equal(t, expectedOrder, opPostIDs, "Operations should process files by modification time")
 }
 
 func TestMigration_HashLogging(t *testing.T) {

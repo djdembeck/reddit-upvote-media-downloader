@@ -135,7 +135,7 @@ func TestCalculateFileHash(t *testing.T) {
 		{
 			name: "NonExistentFile",
 			setup: func(t *testing.T) string {
-				return "/nonexistent/path/to/file.txt"
+				return filepath.Join(t.TempDir(), "file.txt")
 			},
 			expectError: true,
 			description: "returns error for non-existent file",
