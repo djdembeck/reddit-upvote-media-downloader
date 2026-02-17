@@ -209,12 +209,14 @@ The downloader automatically migrates existing bdfr-html data on first run:
 
 **To migrate:**
 1. Copy your existing bdfr-html output to the new data directory:
-   ```bash
-   cp -r /path/to/bdfr-html/output/* ./data/output/
-   cp /path/to/bdfr-html/output/idList.txt ./data/
-   ```
-2. Start the downloader with `MIGRATE_ON_START=true`
-3. Logs will show: *"Migrated X existing posts from bdfr-html"*
+
+```bash
+cp -r /path/to/bdfr-html/output/* ./data/output/
+cp /path/to/bdfr-html/output/idList.txt ./data/
+```
+
+1. Start the downloader with `MIGRATE_ON_START=true`
+2. Logs will show: *"Migrated X existing posts from bdfr-html"*
 
 ### Full Sync Behavior
 
@@ -225,7 +227,6 @@ When `FULL_SYNC_ONCE=true` (default), the first run after migration behaves as f
 
 This ensures your local database is fully synchronized with Reddit after migration, while avoiding redundant API calls on future runs.
 
-To change this behavior:
 ```bash
 # Disable full sync (only fetch new posts after migration)
 FULL_SYNC_ONCE=false
@@ -247,18 +248,21 @@ If your media is organized in a flat directory structure and you want to reorgan
 
 
 ### Build the migration tool
+
 ```bash
 go build -o migrate cmd/migrate/main.go
 ```
 
 
 ### Dry-run (preview changes)
+
 ```bash
 ./migrate --source /path/to/media --dest ./output --index /path/to/index.html --dry-run
 ```
 
 
 ### Execute migration
+
 ```bash
 ./migrate --source /path/to/media --dest ./output --index /path/to/index.html
 ```
@@ -277,6 +281,7 @@ output/
 
 
 ### Rollback (if needed)
+
 ```bash
 ./migrate --rollback --log-file ./output/.migration_log.json
 ```
