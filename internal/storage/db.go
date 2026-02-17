@@ -886,7 +886,7 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 			backoffRetryCount = 0
 		}
 		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(backoffRetryCount)))
-		if backoffDelay > backoffMax {
+		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
 
