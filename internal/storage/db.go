@@ -398,8 +398,12 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 	// Check 3: Backoff window (only if retry history exists)
 	// If last_attempt is set and backoff parameters are provided, check if within backoff
 	if !status.LastAttempt.IsZero() && backoffBase > 0 && status.RetryCount > 0 {
-		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
+		// Calculate backoff delay: min(backoffBase * 2^(retryCount-1), backoffMax)
+		retryCount := status.RetryCount - 1
+		if retryCount < 0 {
+			retryCount = 0
+		}
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(retryCount)))
 		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
@@ -840,7 +844,7 @@ func (db *DB) GetRetryCount(ctx context.Context, postID string) (int, error) {
 // It considers posts where:
 // - retry_count < threshold (not permanently skipped)
 // - Either retry_count == 0 (never tried) OR enough time has passed since last_attempt
-// backoffDelay = min(backoffBase * 2^retry_count, backoffMax)
+// backoffDelay = min(backoffBase * 2^(retryCount-1), backoffMax)
 func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.Duration, threshold int) ([]string, error) {
 	query := `
 		SELECT id, retry_count, last_attempt FROM posts
@@ -876,17 +880,23 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 			continue
 		}
 
-		// Calculate backoff delay: min(backoffBase * 2^retry_count, backoffMax)
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(retryCount)))
+		// Calculate backoff delay: min(backoffBase * 2^(retryCount-1), backoffMax)
+		backoffRetryCount := retryCount - 1
+		if backoffRetryCount < 0 {
+			backoffRetryCount = 0
+		}
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(backoffRetryCount)))
 		if backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
 
 		// Check if enough time has passed since last attempt
 		lastAttemptTime := time.Unix(lastAttempt.Int64, 0)
-		eligibleAt := lastAttemptTime.Add(backoffDelay)
+		elapsed := time.Since(lastAttemptTime)
 
-		if time.Now().After(eligibleAt) {
+		// Post is eligible if elapsed time is >= backoff delay
+		// Add 1 second margin to account for Unix timestamp precision loss
+		if elapsed >= backoffDelay+time.Second {
 			eligiblePosts = append(eligiblePosts, postID)
 		}
 	}
