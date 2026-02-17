@@ -4,10 +4,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -324,7 +324,12 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	for _, post := range newPosts {
 		if hash, ok := hashes[post.ID]; ok {
 			post.DownloadedAt = time.Now()
-			post.Hash = hash
+			// Strip DUPLICATE: prefix if present before saving to database
+			if strings.HasPrefix(hash, "DUPLICATE:") {
+				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
+			} else {
+				post.Hash = hash
+			}
 			if err := db.SavePost(ctx, &post); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving post: %v\n", err)
 			}
@@ -342,7 +347,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 
 	// Return error if there was one (after saving partial results)
 	if err != nil {
-		log.Printf("Warning: download completed with errors: %v", err)
+		fmt.Fprintf(os.Stderr, "Warning: download completed with errors: %v\n", err)
 		return fmt.Errorf("downloading media: %w", err)
 	}
 

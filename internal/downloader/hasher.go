@@ -19,14 +19,14 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 		n, err := reader.Read(buf)
 		if n > 0 {
 			if _, writeErr := hash.Write(buf[:n]); writeErr != nil {
-				return "", writeErr
+				return "", fmt.Errorf("writing to hash: %w", writeErr)
 			}
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("reading source for hashing: %w", err)
 		}
 	}
 
@@ -45,7 +45,7 @@ func CalculateFileHash(filePath string) (string, error) {
 
 	hash, err := CalculateHashFromReader(file)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("calculate hash for %s: %w", filePath, err)
 	}
 
 	return hash, nil

@@ -4,9 +4,16 @@ go 1.22
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/cpuid/v2 v2.0.12
 	github.com/mattn/go-sqlite3 v1.14.34
+	github.com/stretchr/testify v1.11.1
 	github.com/zeebo/blake3 v0.2.4
 	golang.org/x/oauth2 v0.25.0
 	golang.org/x/sync v0.10.0
+)
+
+require (
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

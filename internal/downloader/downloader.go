@@ -113,7 +113,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			hash, err := d.downloadItem(ctx, item)
+			hash, isDuplicate, err := d.downloadItem(ctx, item)
 			if err != nil {
 				d.logger.Printf("download failed for post %s (%s): %v", item.PostID, item.URL, err)
 				mu.Lock()
@@ -121,11 +121,17 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 				mu.Unlock()
 				return err
 			}
-			if hash != "" {
-				mu.Lock()
+			// Record the post as handled, even if it's a duplicate
+			// For duplicates, we'll store the hash with a sentinel marker
+			mu.Lock()
+			if hash != "" && isDuplicate {
+				// For duplicates, send a sentinel value that indicates duplicate
+				// Use a special hash prefix to mark duplicates
+				hashes[item.PostID] = "DUPLICATE:" + hash
+			} else if hash != "" {
 				hashes[item.PostID] = hash
-				mu.Unlock()
 			}
+			mu.Unlock()
 			return nil
 		})
 	}
@@ -147,19 +153,19 @@ func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.RedditPos
 	return items, hashes, combineErrors(extractErr, downloadErr)
 }
 
-func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (string, error) {
+func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (string, bool, error) {
 	if strings.TrimSpace(item.URL) == "" {
-		return "", errors.New("download URL is empty")
+		return "", false, errors.New("download URL is empty")
 	}
 	if strings.TrimSpace(item.PostID) == "" {
-		return "", errors.New("post ID is empty")
+		return "", false, errors.New("post ID is empty")
 	}
 
 	filename := item.Filename
 	if filename == "" {
 		ext, _, err := extensionAndType(item.URL, "")
 		if err != nil {
-			return "", err
+			return "", false, fmt.Errorf("detect extension for %s: %w", item.URL, err)
 		}
 		filename = fmt.Sprintf("untitled_%s%s", item.PostID, ext)
 	}
@@ -167,7 +173,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	subreddit := sanitizeSubreddit(item.Subreddit)
 	outputDir := filepath.Join(d.config.OutputDir, subreddit)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", fmt.Errorf("create subreddit directory: %w", err)
+		return "", false, fmt.Errorf("create subreddit directory: %w", err)
 	}
 
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
@@ -178,14 +184,14 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		if err != nil {
 			d.logger.Printf("failed to hash existing file %s: %v", existingFile, err)
 		}
-		return hash, nil
+		return hash, true, nil
 	}
 
 	filePath := filepath.Join(outputDir, filename)
 	var lastErr error
 	for attempt := 1; attempt <= d.config.Retries; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return "", false, err
 		}
 		// Re-check for existing file before each attempt
 		existingFile = findExistingFile(outputDir, item.PostID)
@@ -195,7 +201,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			if err != nil {
 				d.logger.Printf("failed to hash existing file %s: %v", existingFile, err)
 			}
-			return hash, nil
+			return hash, true, nil
 		}
 
 		err := d.downloadOnce(ctx, item.URL, filePath)
@@ -207,7 +213,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 				if removeErr := os.Remove(filePath); removeErr != nil {
 					d.logger.Printf("failed to remove file %s: %v", filePath, removeErr)
 				}
-				return "", fmt.Errorf("calculate hash: %w", hashErr)
+				return "", false, fmt.Errorf("calculate hash: %w", hashErr)
 			}
 
 			// Check if hash already exists in database.
@@ -218,28 +224,28 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 				exists, dbErr := d.db.HashExists(ctx, hash)
 				if dbErr != nil {
 					d.logger.Printf("error checking hash in database: %v", dbErr)
-					return "", fmt.Errorf("check hash exists: %w", dbErr)
+					return "", false, fmt.Errorf("check hash exists: %w", dbErr)
 				}
 				if exists {
 					d.logger.Printf("skip duplicate hash %s for post %s", hash, item.PostID)
 					if removeErr := os.Remove(filePath); removeErr != nil {
 						d.logger.Printf("failed to remove file %s: %v", filePath, removeErr)
 					}
-					return "", nil
+					return hash, true, nil
 				}
 			}
 
-			return hash, nil
+			return hash, false, nil
 		}
 		lastErr = err
 		if attempt < d.config.Retries {
 			if err := sleepWithContext(ctx, d.backoffDuration(attempt)); err != nil {
-				return "", err
+				return "", false, err
 			}
 		}
 	}
 
-	return "", fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
+	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
 func (d *Downloader) downloadOnce(ctx context.Context, url, filePath string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)

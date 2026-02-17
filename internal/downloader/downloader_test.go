@@ -644,18 +644,36 @@ func TestDeduplication(t *testing.T) {
 			}
 
 			if tt.wantEmptyHash {
-				if hashes[tt.newPostID] != "" {
-					t.Errorf("Expected empty hash (skipped), got %s", hashes[tt.newPostID])
+				if tt.triggerDBError {
+					if hashes[tt.newPostID] != "" {
+						t.Errorf("Expected empty hash (error), got %s", hashes[tt.newPostID])
+					}
+				} else {
+					hash := hashes[tt.newPostID]
+					if hash == "" {
+						t.Error("Hash should be marked with DUPLICATE prefix for duplicates")
+					}
+					if !strings.HasPrefix(hash, "DUPLICATE:") {
+						t.Errorf("Expected hash to start with DUPLICATE: prefix, got %s", hash)
+					}
 				}
 			} else {
 				if hashes[tt.newPostID] == "" {
 					t.Error("Hash should be returned for new file")
 				}
+				if strings.HasPrefix(hashes[tt.newPostID], "DUPLICATE:") {
+					t.Error("Hash should not be marked as duplicate for new file")
+				}
 			}
 
 			if tt.checkHashLength {
-				if len(hashes[tt.newPostID]) != 64 {
-					t.Errorf("Expected hash length 64, got %d", len(hashes[tt.newPostID]))
+				hash := hashes[tt.newPostID]
+				expectedLen := 64
+				if strings.HasPrefix(hash, "DUPLICATE:") {
+					expectedLen = 75
+				}
+				if len(hash) != expectedLen {
+					t.Errorf("Expected hash length %d, got %d (hash: %s)", expectedLen, len(hash), hash)
 				}
 			}
 

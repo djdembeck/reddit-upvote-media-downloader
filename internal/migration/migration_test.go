@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractPostID(t *testing.T) {
@@ -346,81 +349,76 @@ func TestRollbackMissingFile(t *testing.T) {
 	}
 }
 
-func TestDuplicateHandling(t *testing.T) {
+func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
 	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
+	sourceDir = filepath.Join(tmpDir, "source")
+	destDir = filepath.Join(tmpDir, "dest")
 
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
-	// Create two files with identical content (duplicates)
-	content := []byte("identical content")
-	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
-	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
+	file1 = filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 = filepath.Join(sourceDir, "Post2_def456.jpg")
 
-	if err := os.WriteFile(file1, content, 0644); err != nil {
-		t.Fatalf("Failed to write file1: %v", err)
-	}
-	if err := os.WriteFile(file2, content, 0644); err != nil {
-		t.Fatalf("Failed to write file2: %v", err)
-	}
+	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
+	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
 
-	// Set deterministic modification times
 	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(file1, baseTime, baseTime); err != nil {
-		t.Fatalf("Failed to set file1 time: %v", err)
-	}
-	if err := os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
-		t.Fatalf("Failed to set file2 time: %v", err)
-	}
+	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
+	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
 
-	postMap := map[string]PostInfo{
+	postMap = map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
 		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator.Execute(); err != nil {
-		t.Fatal(err)
+	return
+}
+
+func TestDuplicateHandling(t *testing.T) {
+	tests := []struct {
+		name    string
+		content []byte
+	}{
+		{
+			name:    "identical_content",
+			content: []byte("identical content"),
+		},
+		{
+			name:    "same_content_in_both_files",
+			content: []byte("same content in both files"),
+		},
 	}
 
-	// First file should be moved
-	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
-	if _, err := os.Stat(destFile1); err != nil {
-		t.Errorf("First file should be moved: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, tt.content)
 
-	// Second file should be skipped as duplicate
-	destFile2 := filepath.Join(destDir, "pics", "Post2_def456.jpg")
-	if _, err := os.Stat(destFile2); !os.IsNotExist(err) {
-		t.Errorf("Duplicate file should not be moved: %v", err)
-	}
+			migrator := NewMigrator(sourceDir, destDir, postMap, false)
+			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
-	// Source file2 should still exist
-	if _, err := os.Stat(file2); err != nil {
-		t.Errorf("Duplicate source file should remain: %v", err)
-	}
+			destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
+			_, err := os.Stat(destFile1)
+			require.NoError(t, err, "First file should be moved")
 
-	// Check migration log
-	if migrator.Log.MovedCount != 1 {
-		t.Errorf("MovedCount = %d, want 1", migrator.Log.MovedCount)
-	}
-	if migrator.Log.SkippedCount != 1 {
-		t.Errorf("SkippedCount = %d, want 1", migrator.Log.SkippedCount)
-	}
+			destFile2 := filepath.Join(destDir, "pics", "Post2_def456.jpg")
+			_, err = os.Stat(destFile2)
+			assert.True(t, os.IsNotExist(err), "Duplicate file should not be moved")
 
-	// Check that skipped reason mentions duplicate
-	foundDuplicate := false
-	for _, op := range migrator.Log.Operations {
-		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
-			foundDuplicate = true
-			break
-		}
-	}
-	if !foundDuplicate {
-		t.Error("Should have logged a duplicate skip")
+			_, err = os.Stat(file2)
+			require.NoError(t, err, "Duplicate source file should remain")
+
+			assert.Equal(t, 1, migrator.Log.MovedCount, "Expected 1 moved file")
+			assert.Equal(t, 1, migrator.Log.SkippedCount, "Expected 1 skipped file")
+
+			foundDuplicateSkip := false
+			for _, op := range migrator.Log.Operations {
+				if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+					foundDuplicateSkip = true
+					break
+				}
+			}
+			assert.True(t, foundDuplicateSkip, "Should have logged duplicate hash skip")
+		})
 	}
 }
 
@@ -634,7 +632,6 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	}
 }
 
-
 func TestMigration_HashLogging(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourceDir := filepath.Join(tmpDir, "source")
@@ -682,83 +679,5 @@ func TestMigration_HashLogging(t *testing.T) {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 			t.Errorf("Hash contains invalid character: %c", c)
 		}
-	}
-}
-
-func TestMigration_DuplicateHashDetection(t *testing.T) {
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
-
-	// Create two files with identical content
-	identicalContent := []byte("same content in both files")
-	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
-	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
-
-	if err := os.WriteFile(file1, identicalContent, 0644); err != nil {
-		t.Fatalf("Failed to write file1: %v", err)
-	}
-	if err := os.WriteFile(file2, identicalContent, 0644); err != nil {
-		t.Fatalf("Failed to write file2: %v", err)
-	}
-
-	// Set deterministic modification times
-	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(file1, baseTime, baseTime); err != nil {
-		t.Fatalf("Failed to set file1 time: %v", err)
-	}
-	if err := os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
-		t.Fatalf("Failed to set file2 time: %v", err)
-	}
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
-		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
-	}
-
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator.Execute(); err != nil {
-		t.Fatal(err)
-	}
-
-	// First file should be moved
-	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
-	if _, err := os.Stat(destFile1); err != nil {
-		t.Errorf("First file should be moved: %v", err)
-	}
-
-	// Second file should be skipped as duplicate
-	destFile2 := filepath.Join(destDir, "pics", "Post2_def456.jpg")
-	if _, err := os.Stat(destFile2); !os.IsNotExist(err) {
-		t.Errorf("Duplicate file should not be moved: %v", err)
-	}
-
-	// Source file2 should remain
-	if _, err := os.Stat(file2); err != nil {
-		t.Errorf("Duplicate source file should remain: %v", err)
-	}
-
-	// Verify counts
-	if migrator.Log.MovedCount != 1 {
-		t.Errorf("Expected 1 moved, got %d", migrator.Log.MovedCount)
-	}
-	if migrator.Log.SkippedCount != 1 {
-		t.Errorf("Expected 1 skipped, got %d", migrator.Log.SkippedCount)
-	}
-
-	// Verify skipped reason mentions duplicate hash
-	foundDuplicateSkip := false
-	for _, op := range migrator.Log.Operations {
-		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
-			foundDuplicateSkip = true
-			break
-		}
-	}
-	if !foundDuplicateSkip {
-		t.Error("Should have logged duplicate hash skip")
 	}
 }

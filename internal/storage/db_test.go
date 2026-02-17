@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestDB(t *testing.T) (*DB, string) {
@@ -430,7 +433,6 @@ func TestSavePost_WithHash(t *testing.T) {
 	db, _ := setupTestDB(t)
 	ctx := context.Background()
 
-	// Test hash is saved correctly
 	hash := "abc123def456"
 	post := &Post{
 		ID:           "hashpost1",
@@ -447,22 +449,13 @@ func TestSavePost_WithHash(t *testing.T) {
 		Hash:         hash,
 	}
 
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
-	// Verify the post was saved with hash
 	retrieved, err := db.GetPost(ctx, post.ID)
-	if err != nil {
-		t.Fatalf("Failed to get post: %v", err)
-	}
-	if retrieved == nil {
-		t.Fatal("Expected post to be saved, got nil")
-	}
+	require.NoError(t, err, "Failed to get post")
+	require.NotNil(t, retrieved, "Expected post to be saved")
 
-	if retrieved.Hash != hash {
-		t.Errorf("Expected hash %s, got %s", hash, retrieved.Hash)
-	}
+	assert.Equal(t, hash, retrieved.Hash, "Expected hash to be saved correctly")
 }
 
 func TestSavePost_UpdateHash(t *testing.T) {
@@ -630,24 +623,15 @@ func TestGetPostByHash_NotFound(t *testing.T) {
 }
 
 func TestHashColumnMigration(t *testing.T) {
-	// This test verifies that the hash column is properly added
-	// when creating a new database
-	tempDir, err := os.MkdirTemp("", "reddit-media-downloader-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
+	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
+
 	db, err := NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
+	require.NoError(t, err)
 	defer db.Close()
 
 	ctx := context.Background()
 
-	// Save a post with hash
 	hash := "migrationtesthash"
 	post := &Post{
 		ID:           "migrationpost",
@@ -657,27 +641,15 @@ func TestHashColumnMigration(t *testing.T) {
 		Hash:         hash,
 	}
 
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
-	// Verify hash column exists and works
 	exists, err := db.HashExists(ctx, hash)
-	if err != nil {
-		t.Fatalf("HashExists() error = %v", err)
-	}
-	if !exists {
-		t.Error("Expected hash to exist after migration")
-	}
+	require.NoError(t, err, "HashExists error")
+	assert.True(t, exists, "Expected hash to exist after migration")
 
-	// Verify we can retrieve by hash
 	retrieved, err := db.GetPostByHash(ctx, hash)
-	if err != nil {
-		t.Fatalf("GetPostByHash() error = %v", err)
-	}
-	if retrieved == nil {
-		t.Fatal("Expected post to be returned")
-	}
+	require.NoError(t, err, "GetPostByHash error")
+	assert.NotNil(t, retrieved, "Expected post to be returned")
 }
 
 func TestHashIndexExists(t *testing.T) {

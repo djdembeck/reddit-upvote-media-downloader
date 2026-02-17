@@ -448,7 +448,7 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	row := db.conn.QueryRowContext(ctx, query, hash)
 
 	var post Post
-	var createdAtUnix, downloadedAtUnix int64
+	var createdAtUnix, downloadedAtUnix sql.NullInt64
 
 	err := row.Scan(
 		&post.ID,
@@ -472,8 +472,12 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 		return nil, fmt.Errorf("failed to get post by hash: %w", err)
 	}
 
-	post.CreatedAt = time.Unix(createdAtUnix, 0)
-	post.DownloadedAt = time.Unix(downloadedAtUnix, 0)
+	if createdAtUnix.Valid {
+		post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
+	}
+	if downloadedAtUnix.Valid {
+		post.DownloadedAt = time.Unix(downloadedAtUnix.Int64, 0)
+	}
 
 	return &post, nil
 }
