@@ -167,11 +167,6 @@ func TestCalculateFileHash(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filePath := tt.setup(t)
 
-			if tt.expectEqual != nil {
-				tt.expectEqual(t, filePath)
-				return
-			}
-
 			hash, err := CalculateFileHash(filePath)
 
 			if tt.expectError {
@@ -189,6 +184,10 @@ func TestCalculateFileHash(t *testing.T) {
 				for _, c := range hash {
 					assert.True(t, isValidHex(byte(c)), "hash contains invalid hex character: %c", c)
 				}
+			}
+
+			if tt.expectEqual != nil {
+				tt.expectEqual(t, filePath)
 			}
 		})
 	}

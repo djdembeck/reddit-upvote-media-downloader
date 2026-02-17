@@ -351,16 +351,14 @@ func TestRollbackMissingFile(t *testing.T) {
 }
 
 // assertHasDuplicateSkip is a test helper that asserts operations contain a duplicate skip.
-// It returns true if an operation with status="skipped" and a non-empty error (excluding "no matching POSTID in index.html") is found.
-func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) bool {
+func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
 	t.Helper()
 	for _, op := range operations {
 		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
-			return true
+			return
 		}
 	}
 	t.Error("Expected to find duplicate skip in operations, but none was found")
-	return false
 }
 
 func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
@@ -412,10 +410,14 @@ func TestDuplicateHandling(t *testing.T) {
 			sourceDir, destDir, file1, file2, postMap := setupDuplicateScenario(t, tt.content)
 
 			if tt.name == "different_extension" {
-				os.Rename(file1, filepath.Join(filepath.Dir(file1), "Post1_abc123.png"))
-				os.Rename(file2, filepath.Join(filepath.Dir(file2), "Post2_def456.png"))
-				file1 = filepath.Join(filepath.Dir(file1), "Post1_abc123.png")
-				file2 = filepath.Join(filepath.Dir(file2), "Post2_def456.png")
+				newFile1 := filepath.Join(filepath.Dir(file1), "Post1_abc123.png")
+				newFile2 := filepath.Join(filepath.Dir(file2), "Post2_def456.png")
+
+				require.NoError(t, os.Rename(file1, newFile1), "Failed to rename file1")
+				require.NoError(t, os.Rename(file2, newFile2), "Failed to rename file2")
+
+				file1 = newFile1
+				file2 = newFile2
 			}
 
 			migrator := NewMigrator(sourceDir, destDir, postMap, false)
@@ -474,10 +476,9 @@ func TestIdempotentReRun(t *testing.T) {
 }
 
 func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
-	tmpDir := t.TempDir()
 	content := []byte("identical content")
 	sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, content)
-	logPath := filepath.Join(tmpDir, "migration_log.json")
+	logPath := filepath.Join(filepath.Dir(sourceDir), "migration_log.json")
 
 	// First run - should move file1, skip file2 as duplicate
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
@@ -551,18 +552,17 @@ func TestMigration_SortsByModTime(t *testing.T) {
 		assert.NoError(t, err, "Dest file should exist for %s", postID)
 	}
 
-	// Verify operations are in order of mod time (oldest first)
-	var opTimestamps []time.Time
+	// Verify operations are in order of PostID
+	var opPostIDs []string
 	for _, op := range migrator.Log.Operations {
 		if op.Status == "moved" {
-			opTimestamps = append(opTimestamps, op.Timestamp)
+			opPostIDs = append(opPostIDs, op.PostID)
 		}
 	}
 
-	// Operations should be in chronological order (oldest file processed first)
-	for i := 1; i < len(opTimestamps); i++ {
-		assert.False(t, opTimestamps[i].Before(opTimestamps[i-1]), "Operations should be in order of file mod time (oldest first)")
-	}
+	// Files should be processed in order: Oldest (abc123), Middle (def456), Newest (ghi789)
+	expectedOrder := []string{"abc123", "def456", "ghi789"}
+	assert.Equal(t, expectedOrder, opPostIDs, "Operations should process files in PostID order")
 }
 
 func TestMigration_HashLogging(t *testing.T) {

@@ -19,6 +19,22 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// parseSlogLevel converts a log level string to slog.Level.
+func parseSlogLevel(levelStr string) slog.Level {
+	switch strings.ToLower(levelStr) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 // slogPrintfWrapper wraps *slog.Logger to provide Printf interface for compatibility
 type slogPrintfWrapper struct {
 	logger *slog.Logger
@@ -139,8 +155,11 @@ func main() {
 	}
 	defer redditClient.Close()
 
+	// Parse log level from configuration
+	parsedLevel := parseSlogLevel(cfg.Log.Level)
+
 	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: parsedLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				a.Key = "timestamp"
