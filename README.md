@@ -65,6 +65,17 @@ DB_PATH=./data/posts.db           # SQLite database path
 CONCURRENCY=10                    # Parallel downloads
 FETCH_LIMIT=100                   # Posts per fetch
 
+# Retry and Backoff (optional)
+RETRY_THRESHOLD=3                 # Max retries before permanent skip
+BACKOFF_BASE=5s                   # Base delay for exponential backoff
+BACKOFF_MAX=60s                   # Maximum backoff delay
+
+# Re-check Mode (optional)
+RE_CHECK=false                    # Verify files exist and re-download missing
+
+# Full Sync (optional)
+FULL_SYNC_ONCE=true               # First run after migration fetches all posts
+
 # Logging (optional)
 LOG_LEVEL=info                    # debug, info, warn, error
 
@@ -97,7 +108,11 @@ The application reads all configuration from environment variables. These can be
 | `DB_PATH` | `./data/posts.db` | SQLite database file path |
 | `CONCURRENCY` | `10` | Number of parallel downloads |
 | `FETCH_LIMIT` | `100` | Number of posts to fetch per cycle |
-| `MAX_RETRIES` | `3` | Retry attempts for failed downloads |
+| `RETRY_THRESHOLD` | `3` | Max retries before permanently skipping a failed post |
+| `BACKOFF_BASE` | `5s` | Base delay for exponential backoff |
+| `BACKOFF_MAX` | `60s` | Maximum backoff delay |
+| `RE_CHECK` | `false` | Enable re-check mode to verify and re-download missing files |
+| `FULL_SYNC_ONCE` | `true` | First run after migration fetches all posts |
 | `LOG_LEVEL` | `info` | Logging level: `debug`, `info`, `warn`, `error` |
 | `MIGRATE_ON_START` | `true` | Auto-import existing bdfr-html data on first run |
 
@@ -130,6 +145,60 @@ services:
       - LOG_LEVEL=info
 ```
 
+## CLI Flags
+
+The downloader supports the following command-line flags:
+
+```bash
+./reddit-downloader --re-check --retry-threshold 5 --concurrency 20
+```
+
+### Available Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--re-check` | `false` | Enable re-check mode to verify files exist on disk and re-download missing ones |
+| `--retry-threshold` | `3` | Maximum retries before permanently skipping a failed post |
+| `--client-id` | *(from env)* | Reddit API client ID |
+| `--client-secret` | *(from env)* | Reddit API client secret |
+| `--username` | *(from env)* | Reddit username |
+| `--concurrency` | `10` | Number of parallel downloads |
+| `--fetch-limit` | `100` | Posts per fetch |
+| `--backoff-base` | `5s` | Base delay for exponential backoff |
+| `--backoff-max` | `60s` | Maximum backoff delay |
+| `--help` | - | Show help message |
+| `--version` | - | Show version information |
+
+### Re-check Mode (`--re-check`)
+
+When enabled, the downloader will:
+1. Scan the output directory for existing files
+2. Compare against the SQLite database
+3. Re-download any files that are missing from disk but recorded in the database
+4. Useful for recovering from partial downloads, disk corruption, or accidental file deletion
+
+Example:
+```bash
+./reddit-downloader --re-check
+```
+
+### Retry and Exponential Backoff
+
+When a download fails, the application uses exponential backoff before retrying:
+
+1. **First failure**: Wait `BACKOFF_BASE` (default: 5s)
+2. **Second failure**: Wait `2 * BACKOFF_BASE` (default: 10s)
+3. **Third failure**: Wait `4 * BACKOFF_BASE` (default: 20s)
+4. **Fourth failure**: Wait `8 * BACKOFF_BASE` (default: 40s)
+5. **Fifth failure**: Wait `BACKOFF_MAX` (default: 60s)
+
+After `RETRY_THRESHOLD` failures (default: 3), the post is permanently skipped and marked as failed in the database.
+
+Example with custom backoff:
+```bash
+./reddit-downloader --backoff-base=10s --backoff-max=120s --retry-threshold=5
+```
+
 ## Migration from bdfr-html
 
 The downloader automatically migrates existing bdfr-html data on first run:
@@ -146,6 +215,31 @@ The downloader automatically migrates existing bdfr-html data on first run:
    ```
 2. Start the downloader with `MIGRATE_ON_START=true`
 3. Logs will show: *"Migrated X existing posts from bdfr-html"*
+
+### Full Sync Behavior
+
+When `FULL_SYNC_ONCE=true` (default), the first run after migration behaves as follows:
+
+- **First run**: Fetches **all** upvoted and saved posts from Reddit
+- **Subsequent runs**: Only fetches **new** posts (incremental sync)
+
+This ensures your local database is fully synchronized with Reddit after migration, while avoiding redundant API calls on future runs.
+
+To change this behavior:
+```bash
+# Disable full sync (only fetch new posts after migration)
+FULL_SYNC_ONCE=false
+```
+
+### Re-check After Migration
+
+After migration, you can verify all files exist on disk:
+
+```bash
+./reddit-downloader --re-check
+```
+
+This will identify any missing files from your migrated collection.
 
 ## File Reorganization Tool
 

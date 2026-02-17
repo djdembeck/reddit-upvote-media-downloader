@@ -3,21 +3,25 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
 
 // Config holds all application configuration
 type Config struct {
-	Reddit   RedditConfig
-	Storage  StorageConfig
-	Download DownloadConfig
-	Log      LogConfig
-	Migrate  MigrateConfig
+	Reddit       RedditConfig
+	Storage      StorageConfig
+	Download     DownloadConfig
+	Log          LogConfig
+	Migrate      MigrateConfig
+	Backoff      BackoffConfig
+	SmartPolling SmartPollingConfig
 }
 
 // RedditConfig holds Reddit API credentials and settings
@@ -49,14 +53,89 @@ type LogConfig struct {
 
 // MigrateConfig holds migration settings
 type MigrateConfig struct {
-	OnStart bool
+	OnStart      bool
+	FullSyncOnce bool
 }
 
-// Load loads configuration from environment variables and .env file
-// Priority: Environment vars > .env file > defaults
+// BackoffConfig holds exponential backoff settings for retries
+type BackoffConfig struct {
+	Base time.Duration
+	Max  time.Duration
+}
+
+// CalculateBackoffDelay calculates exponential backoff delay for retries
+// Formula: baseDelay * (2^retryCount), capped at maxDelay
+// Edge cases: negative retryCount returns 0, zero base returns 0
+func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+	// Handle edge cases
+	if retryCount < 0 {
+		return 0
+	}
+	if base <= 0 {
+		return 0
+	}
+
+	// Calculate delay using bit shift for efficiency: base * 2^retryCount
+	delay := base * time.Duration(1<<uint(retryCount))
+
+	// Cap at max delay
+	if delay > max {
+		return max
+	}
+	return delay
+}
+
+// SmartPollingConfig holds smart polling settings for re-checking posts
+type SmartPollingConfig struct {
+	ReCheck        bool
+	RetryThreshold int
+}
+
+// Flag variables for CLI parsing
+var (
+	flagReCheck        bool
+	flagRetryThreshold int
+	flagClientID       string
+	flagClientSecret   string
+	flagUsername       string
+	flagConcurrency    int
+	flagFetchLimit     int
+	flagBackoffBase    time.Duration
+	flagBackoffMax     time.Duration
+	flagSet            bool
+)
+
+func init() {
+	// Define CLI flags - use zero values as defaults
+	flag.BoolVar(&flagReCheck, "re-check", false, "Enable re-check mode for previously failed posts")
+	flag.IntVar(&flagRetryThreshold, "retry-threshold", 0, "Max retries before permanent skip")
+	flag.StringVar(&flagClientID, "client-id", "", "Reddit API client ID")
+	flag.StringVar(&flagClientSecret, "client-secret", "", "Reddit API client secret")
+	flag.StringVar(&flagUsername, "username", "", "Reddit username")
+	flag.IntVar(&flagConcurrency, "concurrency", 0, "Number of parallel downloads")
+	flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
+	flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
+	flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
+}
+
+// flagWasSet returns true if a flag was explicitly provided on the command line
+func flagWasSet() bool {
+	// Check if any non-default flag values were set
+	// We use flag.CommandLine.Lookup to check if flags were explicitly set
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		flagSet = true
+	})
+	return flagSet
+}
+
+// Load loads configuration from environment variables, .env file, and CLI flags
+// Priority: CLI flags > Environment vars > .env file > defaults
 func Load() (*Config, error) {
 	// Load .env file if exists (ignore error if file doesn't exist)
 	_ = godotenv.Load()
+
+	// Parse CLI flags
+	flag.Parse()
 
 	cfg := &Config{
 		Reddit: RedditConfig{
@@ -79,8 +158,47 @@ func Load() (*Config, error) {
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
 		Migrate: MigrateConfig{
-			OnStart: getEnvBool("MIGRATE_ON_START", true),
+			OnStart:      getEnvBool("MIGRATE_ON_START", true),
+			FullSyncOnce: getEnvBool("FULL_SYNC_ONCE", true),
 		},
+		Backoff: BackoffConfig{
+			Base: getEnvDuration("BACKOFF_BASE", 5*time.Second),
+			Max:  getEnvDuration("BACKOFF_MAX", 60*time.Second),
+		},
+		SmartPolling: SmartPollingConfig{
+			ReCheck:        getEnvBool("RE_CHECK", false),
+			RetryThreshold: getEnvInt("RETRY_THRESHOLD", 3),
+		},
+	}
+
+	// Apply CLI flag overrides (highest priority)
+	// Only override if flags were explicitly provided on command line
+	if flagWasSet() {
+		if flagClientID != "" {
+			cfg.Reddit.ClientID = flagClientID
+		}
+		if flagClientSecret != "" {
+			cfg.Reddit.ClientSecret = flagClientSecret
+		}
+		if flagUsername != "" {
+			cfg.Reddit.Username = flagUsername
+		}
+		if flagConcurrency > 0 {
+			cfg.Download.Concurrency = flagConcurrency
+		}
+		if flagFetchLimit > 0 {
+			cfg.Download.FetchLimit = flagFetchLimit
+		}
+		if flagBackoffBase > 0 {
+			cfg.Backoff.Base = flagBackoffBase
+		}
+		if flagBackoffMax > 0 {
+			cfg.Backoff.Max = flagBackoffMax
+		}
+		cfg.SmartPolling.ReCheck = flagReCheck
+		if flagRetryThreshold > 0 {
+			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
+		}
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -105,7 +223,7 @@ func (c *Config) Validate() error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
 
 	// Validate numeric values
@@ -120,6 +238,22 @@ func (c *Config) Validate() error {
 	validLogLevels := []string{"debug", "info", "warn", "error"}
 	if !contains(validLogLevels, strings.ToLower(c.Log.Level)) {
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error, got %s", c.Log.Level)
+	}
+
+	// Validate backoff settings
+	if c.Backoff.Base <= 0 {
+		return fmt.Errorf("BACKOFF_BASE must be greater than 0, got %v", c.Backoff.Base)
+	}
+	if c.Backoff.Max <= 0 {
+		return fmt.Errorf("BACKOFF_MAX must be greater than 0, got %v", c.Backoff.Max)
+	}
+	if c.Backoff.Base > c.Backoff.Max {
+		return fmt.Errorf("BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)", c.Backoff.Base, c.Backoff.Max)
+	}
+
+	// Validate retry threshold
+	if c.SmartPolling.RetryThreshold < 0 {
+		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
 	}
 
 	return nil
@@ -161,6 +295,15 @@ func getEnvBool(key string, defaultValue bool) bool {
 	if value := os.Getenv(key); value != "" {
 		lower := strings.ToLower(value)
 		return lower == "true" || lower == "1" || lower == "yes"
+	}
+	return defaultValue
+}
+
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if duration, err := time.ParseDuration(value); err == nil {
+			return duration
+		}
 	}
 	return defaultValue
 }
