@@ -17,22 +17,16 @@ func setupTestDB(t *testing.T) (*DB, string) {
 	t.Helper()
 
 	// Create a temporary directory for the test database
-	tempDir, err := os.MkdirTemp("", "reddit-media-downloader-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-
+	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 	db, err := NewDB(dbPath)
 	if err != nil {
-		os.RemoveAll(tempDir)
 		t.Fatalf("Failed to create database: %v", err)
 	}
 
 	// Register cleanup
 	t.Cleanup(func() {
 		db.Close()
-		os.RemoveAll(tempDir)
 	})
 
 	return db, tempDir
@@ -405,28 +399,18 @@ func TestFilenamePattern(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "reddit-media-downloader-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
+	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create database: %v", err)
-	}
 
-	if err := db.Close(); err != nil {
-		t.Errorf("Failed to close database: %v", err)
-	}
+	db, err := NewDB(dbPath)
+	require.NoError(t, err, "Failed to create database")
+
+	require.NoError(t, db.Close(), "Failed to close database")
 
 	// Verify connection is closed by trying to use it
 	ctx := context.Background()
 	_, err = db.IsDownloaded(ctx, "test")
-	if err == nil {
-		t.Error("Expected error when using closed database")
-	}
+	assert.Error(t, err, "Expected error when using closed database")
 }
 
 func TestSavePost_WithHash(t *testing.T) {

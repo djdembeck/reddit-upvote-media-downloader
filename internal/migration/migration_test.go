@@ -515,9 +515,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	sourceDir := filepath.Join(tmpDir, "source")
 	destDir := filepath.Join(tmpDir, "dest")
 
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
 	// Create files with different modification times
 	// Oldest file first
@@ -526,29 +524,15 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	fileNewest := filepath.Join(sourceDir, "Newest_ghi789.jpg")
 
 	// Write in order with small delays to ensure different mod times
-	if err := os.WriteFile(fileOldest, []byte("oldest content"), 0644); err != nil {
-		t.Fatalf("Failed to write fileOldest: %v", err)
-	}
-
-	if err := os.WriteFile(fileMiddle, []byte("middle content"), 0644); err != nil {
-		t.Fatalf("Failed to write fileMiddle: %v", err)
-	}
-
-	if err := os.WriteFile(fileNewest, []byte("newest content"), 0644); err != nil {
-		t.Fatalf("Failed to write fileNewest: %v", err)
-	}
+	require.NoError(t, os.WriteFile(fileOldest, []byte("oldest content"), 0644), "Failed to write fileOldest")
+	require.NoError(t, os.WriteFile(fileMiddle, []byte("middle content"), 0644), "Failed to write fileMiddle")
+	require.NoError(t, os.WriteFile(fileNewest, []byte("newest content"), 0644), "Failed to write fileNewest")
 
 	// Set deterministic modification times
 	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(fileOldest, baseTime, baseTime); err != nil {
-		t.Fatalf("Failed to set fileOldest time: %v", err)
-	}
-	if err := os.Chtimes(fileMiddle, baseTime.Add(time.Second), baseTime.Add(time.Second)); err != nil {
-		t.Fatalf("Failed to set fileMiddle time: %v", err)
-	}
-	if err := os.Chtimes(fileNewest, baseTime.Add(2*time.Second), baseTime.Add(2*time.Second)); err != nil {
-		t.Fatalf("Failed to set fileNewest time: %v", err)
-	}
+	require.NoError(t, os.Chtimes(fileOldest, baseTime, baseTime), "Failed to set fileOldest time")
+	require.NoError(t, os.Chtimes(fileMiddle, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set fileMiddle time")
+	require.NoError(t, os.Chtimes(fileNewest, baseTime.Add(2*time.Second), baseTime.Add(2*time.Second)), "Failed to set fileNewest time")
 
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
@@ -557,14 +541,10 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
 	// All files should be moved
-	if migrator.Log.MovedCount != 3 {
-		t.Errorf("Expected 3 moved files, got %d", migrator.Log.MovedCount)
-	}
+	require.Equal(t, 3, migrator.Log.MovedCount, "Expected 3 moved files")
 
 	// Verify all destination files exist
 	for _, postID := range []string{"abc123", "def456", "ghi789"} {
@@ -573,9 +553,8 @@ func TestMigration_SortsByModTime(t *testing.T) {
 			"def456": "Middle",
 			"ghi789": "Newest",
 		}[postID], postID))
-		if _, err := os.Stat(destFile); err != nil {
-			t.Errorf("Dest file should exist for %s: %v", postID, err)
-		}
+		_, err := os.Stat(destFile)
+		assert.NoError(t, err, "Dest file should exist for %s", postID)
 	}
 
 	// Verify operations are in order of mod time (oldest first)
@@ -588,9 +567,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 
 	// Operations should be in chronological order (oldest file processed first)
 	for i := 1; i < len(opTimestamps); i++ {
-		if opTimestamps[i].Before(opTimestamps[i-1]) {
-			t.Error("Operations should be in order of file mod time (oldest first)")
-		}
+		assert.False(t, opTimestamps[i].Before(opTimestamps[i-1]), "Operations should be in order of file mod time (oldest first)")
 	}
 }
 
@@ -599,47 +576,31 @@ func TestMigration_HashLogging(t *testing.T) {
 	sourceDir := filepath.Join(tmpDir, "source")
 	destDir := filepath.Join(tmpDir, "dest")
 
-	if err := os.MkdirAll(sourceDir, 0755); err != nil {
-		t.Fatalf("Failed to create source directory: %v", err)
-	}
+	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
 	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
 	content := []byte("content for hashing")
-	if err := os.WriteFile(testFile, content, 0644); err != nil {
-		t.Fatalf("Failed to write test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(testFile, content, 0644), "Failed to write test file")
 
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false)
-	if err := migrator.Execute(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
 	// Verify hash was recorded in log
-	if len(migrator.Log.Operations) != 1 {
-		t.Fatalf("Expected 1 operation, got %d", len(migrator.Log.Operations))
-	}
+	require.Len(t, migrator.Log.Operations, 1, "Expected 1 operation")
 
 	op := migrator.Log.Operations[0]
-	if op.Status != "moved" {
-		t.Errorf("Expected status 'moved', got '%s'", op.Status)
-	}
-
-	if op.Hash == "" {
-		t.Error("Hash should be recorded in migration log")
-	}
+	assert.Equal(t, "moved", op.Status, "Expected status 'moved'")
+	assert.NotEmpty(t, op.Hash, "Hash should be recorded in migration log")
 
 	// Verify hash is valid hex (64 characters for BLAKE3-256)
-	if len(op.Hash) != 64 {
-		t.Errorf("Expected hash length 64, got %d", len(op.Hash))
-	}
+	assert.Len(t, op.Hash, 64, "Expected hash length 64")
 
 	for _, c := range op.Hash {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			t.Errorf("Hash contains invalid character: %c", c)
-		}
+		isHexChar := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		assert.True(t, isHexChar, "Hash contains invalid character: %c", c)
 	}
 }

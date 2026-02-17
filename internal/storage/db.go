@@ -164,8 +164,6 @@ func (db *DB) Close() error {
 
 // SavePost saves a post to the database. If the post already exists, it updates the record.
 // Also saves retry-related fields: retry_count, last_error, last_attempt.
-// SavePost saves a post to the database. If the post already exists, it updates the record.
-// Also saves retry-related fields: retry_count, last_error, last_attempt.
 func (db *DB) SavePost(ctx context.Context, post *Post) error {
 	query := `
 		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash)
@@ -815,7 +813,7 @@ func (db *DB) ResetRetry(ctx context.Context, postID string) error {
 // Used for re-check mode to verify file existence on disk.
 func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt
+		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
 		FROM posts
 	`
 
@@ -834,6 +832,7 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 		var retryCount sql.NullInt64
 		var lastError sql.NullString
 		var lastAttempt sql.NullInt64
+		var hash sql.NullString
 
 		err := rows.Scan(
 			&post.ID,
@@ -850,6 +849,7 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 			&retryCount,
 			&lastError,
 			&lastAttempt,
+			&hash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan post: %w", err)
@@ -893,6 +893,9 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 		}
 		if lastAttempt.Valid {
 			post.LastAttempt = time.Unix(lastAttempt.Int64, 0)
+		}
+		if hash.Valid {
+			post.Hash = hash.String
 		}
 
 		posts = append(posts, post)

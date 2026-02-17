@@ -34,14 +34,18 @@ type Config struct {
 	BackoffBase time.Duration
 	UserAgent   string
 	HTTPClient  *http.Client
-	Logger      *log.Logger
+	Logger      interface {
+		Printf(format string, v ...any)
+	}
 }
 
 type Downloader struct {
 	config    Config
 	extractor *Extractor
-	logger    *log.Logger
-	db        *storage.DB
+	logger    interface {
+		Printf(format string, v ...any)
+	}
+	db *storage.DB
 }
 
 func NewDownloader(config Config, db *storage.DB) *Downloader {

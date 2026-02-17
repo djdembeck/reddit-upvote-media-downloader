@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/user/reddit-media-downloader/internal/config"
 	"github.com/user/reddit-media-downloader/internal/downloader"
@@ -22,9 +26,7 @@ func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 	db, err := storage.NewDB(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create test database: %v", err)
-	}
+	require.NoError(t, err, "Failed to create test database")
 
 	cleanup := func() {
 		db.Close()
@@ -51,18 +53,13 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 		LastError:    "previous error",
 	}
 
-	if err := db.SavePost(ctx, post); err != nil {
-		t.Fatalf("Failed to save post: %v", err)
-	}
+	require.NoError(t, db.SavePost(ctx, post), "Failed to save post")
 
-	if _, err := os.Stat(nonExistentFile); !os.IsNotExist(err) {
-		t.Fatal("Expected file to not exist")
-	}
+	_, err := os.Stat(nonExistentFile)
+	assert.True(t, os.IsNotExist(err), "Expected file to not exist")
 
 	posts, err := db.GetAllPosts(ctx)
-	if err != nil {
-		t.Fatalf("Failed to get all posts: %v", err)
-	}
+	require.NoError(t, err, "Failed to get all posts")
 
 	var missingCount int
 	for _, p := range posts {
@@ -72,34 +69,20 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 
 		_, err := os.Stat(p.FilePath)
 		if err != nil {
-			if err := db.ResetRetry(ctx, p.ID); err != nil {
-				t.Errorf("Error resetting retry for %s: %v", p.ID, err)
-				continue
-			}
+			assert.NoError(t, db.ResetRetry(ctx, p.ID), "Error resetting retry for %s", p.ID)
 			missingCount++
 		}
 	}
 
-	if missingCount != 1 {
-		t.Errorf("Expected 1 missing file, got %d", missingCount)
-	}
+	assert.Equal(t, 1, missingCount, "Expected 1 missing file")
 
 	retrieved, err := db.GetPost(ctx, "missing123")
-	if err != nil {
-		t.Fatalf("Failed to get post: %v", err)
-	}
+	require.NoError(t, err, "Failed to get post")
+	require.NotNil(t, retrieved, "Expected post to be retrieved")
 
-	if retrieved.RetryCount != 0 {
-		t.Errorf("Expected retry count to be reset to 0, got %d", retrieved.RetryCount)
-	}
-
-	if retrieved.LastError != "" {
-		t.Errorf("Expected last_error to be cleared, got %s", retrieved.LastError)
-	}
-
-	if !retrieved.LastAttempt.IsZero() {
-		t.Error("Expected LastAttempt to be zero after reset")
-	}
+	assert.Equal(t, 0, retrieved.RetryCount, "Expected retry count to be reset to 0")
+	assert.Empty(t, retrieved.LastError, "Expected last_error to be cleared")
+	assert.True(t, retrieved.LastAttempt.IsZero(), "Expected LastAttempt to be zero after reset")
 }
 
 func TestReCheckMode_FileExists(t *testing.T) {
@@ -711,8 +694,9 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	testLogger := log.New(io.Discard, "", 0)
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
+	testSlogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	testLoggerWrapper := &slogPrintfWrapper{logger: testSlogLogger}
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger, testLoggerWrapper); err != nil {
 		t.Logf("First run cycle completed with expected download errors: %v", err)
 	}
 
@@ -734,7 +718,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 
 	mockClient.upvoted = append(mockClient.upvoted, createTestPost("post006", "upvoted"))
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger, testLoggerWrapper); err != nil {
 		t.Logf("Second run cycle completed with expected download errors: %v", err)
 	}
 
@@ -895,6 +879,8 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	}
 
 	testLogger := log.New(io.Discard, "", 0)
+	localSlogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	localLoggerWrapper := &slogPrintfWrapper{logger: localSlogLogger}
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
@@ -902,7 +888,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, localSlogLogger, localLoggerWrapper); err != nil {
 		t.Logf("Cycle completed with expected download errors: %v", err)
 	}
 
@@ -926,7 +912,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	mockClient.callCount = 0
 	mockClient.upvoted = append(mockClient.upvoted, createTestPost("newpost001", "upvoted"))
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, localSlogLogger, localLoggerWrapper); err != nil {
 		t.Logf("Cycle with new post completed with expected errors: %v", err)
 	}
 
@@ -1138,6 +1124,8 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 	}
 
 	testLogger := log.New(io.Discard, "", 0)
+	testSlogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	testLoggerWrapper := &slogPrintfWrapper{logger: testSlogLogger}
 	dlConfig := downloader.Config{
 		OutputDir:   outputDir,
 		Concurrency: 5,
@@ -1145,7 +1133,7 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 	}
 	dl := downloader.NewDownloader(dlConfig, db)
 
-	if err := runCycle(ctx, db, mockClient, dl, cfg, testLogger); err != nil {
+	if err := runCycle(ctx, db, mockClient, dl, cfg, testSlogLogger, testLoggerWrapper); err != nil {
 		t.Logf("Cycle completed: %v", err)
 	}
 

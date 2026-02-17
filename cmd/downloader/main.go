@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -19,6 +18,15 @@ import (
 	"github.com/user/reddit-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
 )
+
+// slogPrintfWrapper wraps *slog.Logger to provide Printf interface for compatibility
+type slogPrintfWrapper struct {
+	logger *slog.Logger
+}
+
+func (w *slogPrintfWrapper) Printf(format string, v ...any) {
+	w.logger.Info(fmt.Sprintf(format, v...))
+}
 
 // memoryTokenStore implements reddit.TokenStore with in-memory storage
 type memoryTokenStore struct {
@@ -151,13 +159,14 @@ func main() {
 	}))
 	slog.SetDefault(slogLogger)
 
-	logger := slog.NewLogLogger(slogLogger.Handler(), slog.LevelInfo)
+	// Wrap slog logger with Printf interface for backward compatibility
+	loggerWrapper := &slogPrintfWrapper{logger: slogLogger}
 
-	// Create downloader
+	// Create downloader with wrapped slog logger (preserving structured logging)
 	downloaderConfig := downloader.Config{
 		OutputDir:   cfg.Storage.OutputDir,
 		Concurrency: cfg.Download.Concurrency,
-		Logger:      logger,
+		Logger:      loggerWrapper,
 	}
 	dl := downloader.NewDownloader(downloaderConfig, db)
 
@@ -165,11 +174,11 @@ func main() {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Printf("Shutdown complete")
+			slogLogger.Info("Shutdown complete")
 			return
 		default:
-			if err := runCycle(ctx, db, redditClient, dl, cfg, logger); err != nil {
-				logger.Printf("Cycle error: %v", err)
+			if err := runCycle(ctx, db, redditClient, dl, cfg, slogLogger, loggerWrapper); err != nil {
+				slogLogger.Error("Cycle error", "error", err)
 			}
 
 			// Sleep for 1 hour
@@ -265,7 +274,7 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 }
 
 // runCycle performs one download cycle
-func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, logger *log.Logger) error {
+func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger, logger interface{ Printf(format string, v ...any) }) error {
 	fmt.Println("Starting download cycle...")
 
 	// Check if full sync is pending (first run after migration)
@@ -356,24 +365,24 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 				post.Hash = hash
 			}
 			if err := db.SavePost(ctx, &post); err != nil {
-				logger.Printf("Error saving post: %v", err)
+				slogLogger.Error("Error saving post", "error", err, "post_id", post.ID)
 			}
 		}
 	}
 
 	if err != nil {
-		logger.Printf("Warning: download completed with errors: %v", err)
+		slogLogger.Warn("Warning: download completed with errors", "error", err)
 		return fmt.Errorf("downloading media: %w", err)
 	}
 
 	if isFullSync {
 		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			logger.Printf("Error marking full sync as completed: %v", err)
+			slogLogger.Error("Error marking full sync as completed", "error", err)
 		} else {
-			logger.Printf("Full sync completed, switching to incremental mode")
+			slogLogger.Info("Full sync completed, switching to incremental mode")
 		}
 	}
 
-	logger.Printf("Cycle complete: downloaded %d items", len(items))
+	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
 	return nil
 }
