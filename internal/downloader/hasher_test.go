@@ -19,7 +19,7 @@ func TestCalculateFileHash(t *testing.T) {
 		expectError bool
 		expectLen   int
 		expectHex   bool
-		expectEqual func(hash string) (string, bool)
+		expectEqual func(t *testing.T, filePath string)
 		description string
 	}{
 		{
@@ -52,6 +52,13 @@ func TestCalculateFileHash(t *testing.T) {
 			expectError: false,
 			expectLen:   64,
 			expectHex:   true,
+			expectEqual: func(t *testing.T, filePath string) {
+				expectedHash, err := CalculateFileHash(filePath)
+				require.NoError(t, err)
+				hash, err := CalculateFileHash(filePath)
+				require.NoError(t, err)
+				assert.Equal(t, hash, expectedHash, "hash should be deterministic")
+			},
 			description: "calculates hash for known content",
 		},
 		{
@@ -69,6 +76,23 @@ func TestCalculateFileHash(t *testing.T) {
 			expectError: false,
 			expectLen:   64,
 			expectHex:   true,
+			expectEqual: func(t *testing.T, filePath string) {
+				dir := t.TempDir()
+				file2, err := os.Create(filepath.Join(dir, "contentB.txt"))
+				require.NoError(t, err)
+				_, err = file2.Write([]byte("content B"))
+				require.NoError(t, err)
+				err = file2.Close()
+				require.NoError(t, err)
+
+				hash1, err := CalculateFileHash(filePath)
+				require.NoError(t, err)
+
+				hash2, err := CalculateFileHash(file2.Name())
+				require.NoError(t, err)
+
+				assert.NotEqual(t, hash1, hash2, "different content should produce different hashes")
+			},
 			description: "calculates hash for different content",
 		},
 		{
@@ -87,6 +111,25 @@ func TestCalculateFileHash(t *testing.T) {
 			expectError: false,
 			expectLen:   64,
 			expectHex:   true,
+			expectEqual: func(t *testing.T, filePath string) {
+				dir := t.TempDir()
+				content := []byte("identical content for both files")
+				file2, err := os.Create(filepath.Join(dir, "file2.txt"))
+				require.NoError(t, err)
+				_, err = file2.Write(content)
+				require.NoError(t, err)
+				err = file2.Close()
+				require.NoError(t, err)
+
+				hash1, err := CalculateFileHash(filePath)
+				require.NoError(t, err)
+				assert.Len(t, hash1, 64)
+
+				hash2, err := CalculateFileHash(file2.Name())
+				require.NoError(t, err)
+
+				assert.Equal(t, hash1, hash2, "identical content should produce identical hashes")
+			},
 			description: "calculates identical hash for identical content",
 		},
 		{
@@ -124,43 +167,8 @@ func TestCalculateFileHash(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filePath := tt.setup(t)
 
-			if tt.name == "IdenticalContent" {
-				dir := t.TempDir()
-				content := []byte("identical content for both files")
-				file2, err := os.Create(filepath.Join(dir, "file2.txt"))
-				require.NoError(t, err)
-				_, err = file2.Write(content)
-				require.NoError(t, err)
-				err = file2.Close()
-				require.NoError(t, err)
-
-				hash1, err := CalculateFileHash(filePath)
-				require.NoError(t, err)
-				assert.Len(t, hash1, 64)
-
-				hash2, err := CalculateFileHash(file2.Name())
-				require.NoError(t, err)
-
-				assert.Equal(t, hash1, hash2, "identical content should produce identical hashes")
-				return
-			}
-
-			if tt.name == "DifferentContent" {
-				dir := t.TempDir()
-				file2, err := os.Create(filepath.Join(dir, "contentB.txt"))
-				require.NoError(t, err)
-				_, err = file2.Write([]byte("content B"))
-				require.NoError(t, err)
-				err = file2.Close()
-				require.NoError(t, err)
-
-				hash1, err := CalculateFileHash(filePath)
-				require.NoError(t, err)
-
-				hash2, err := CalculateFileHash(file2.Name())
-				require.NoError(t, err)
-
-				assert.NotEqual(t, hash1, hash2, "different content should produce different hashes")
+			if tt.expectEqual != nil {
+				tt.expectEqual(t, filePath)
 				return
 			}
 
@@ -181,12 +189,6 @@ func TestCalculateFileHash(t *testing.T) {
 				for _, c := range hash {
 					assert.True(t, isValidHex(byte(c)), "hash contains invalid hex character: %c", c)
 				}
-			}
-
-			if tt.name == "KnownContent" {
-				expectedHash, err := CalculateFileHash(filePath)
-				require.NoError(t, err)
-				assert.Equal(t, hash, expectedHash, "hash should be deterministic")
 			}
 		})
 	}

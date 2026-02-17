@@ -273,7 +273,16 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	return nil
 }
 
-// runCycle performs one download cycle
+// runCycle performs one download cycle.
+//
+// Parameters:
+//   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
+//     Use this for structured logging with contextual attributes.
+//   - logger: Printf-compatible interface (Printf(format string, v ...any)) for plain formatted
+//     messages, or compatibility with legacy callers. Use this for simple formatted output.
+//   - Both slogLogger and logger may be non-nil; preference depends on logging needs.
+//
+// See runCycle function implementation, slogLogger and logger parameters for usage details.
 func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger, logger interface{ Printf(format string, v ...any) }) error {
 	fmt.Println("Starting download cycle...")
 

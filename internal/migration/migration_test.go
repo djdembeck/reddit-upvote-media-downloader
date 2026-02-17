@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -349,6 +350,19 @@ func TestRollbackMissingFile(t *testing.T) {
 	}
 }
 
+// assertHasDuplicateSkip is a test helper that asserts operations contain a duplicate skip.
+// It returns true if an operation with status="skipped" and a non-empty error (excluding "no matching POSTID in index.html") is found.
+func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) bool {
+	t.Helper()
+	for _, op := range operations {
+		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+			return true
+		}
+	}
+	t.Error("Expected to find duplicate skip in operations, but none was found")
+	return false
+}
+
 func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
 	tmpDir := t.TempDir()
 	sourceDir = filepath.Join(tmpDir, "source")
@@ -380,27 +394,42 @@ func TestDuplicateHandling(t *testing.T) {
 		content []byte
 	}{
 		{
-			name:    "identical_content",
-			content: []byte("identical content"),
+			name:    "empty_content",
+			content: []byte{},
 		},
 		{
-			name:    "same_content_in_both_files",
-			content: []byte("same content in both files"),
+			name:    "large_content",
+			content: make([]byte, 1024*100),
+		},
+		{
+			name:    "different_extension",
+			content: []byte("content with extension"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, tt.content)
+			sourceDir, destDir, file1, file2, postMap := setupDuplicateScenario(t, tt.content)
+
+			if tt.name == "different_extension" {
+				os.Rename(file1, filepath.Join(filepath.Dir(file1), "Post1_abc123.png"))
+				os.Rename(file2, filepath.Join(filepath.Dir(file2), "Post2_def456.png"))
+				file1 = filepath.Join(filepath.Dir(file1), "Post1_abc123.png")
+				file2 = filepath.Join(filepath.Dir(file2), "Post2_def456.png")
+			}
 
 			migrator := NewMigrator(sourceDir, destDir, postMap, false)
 			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
-			destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
+			ext := ".jpg"
+			if tt.name == "different_extension" {
+				ext = ".png"
+			}
+			destFile1 := filepath.Join(destDir, "pics", "Post1_abc123"+ext)
 			_, err := os.Stat(destFile1)
 			require.NoError(t, err, "First file should be moved")
 
-			destFile2 := filepath.Join(destDir, "pics", "Post2_def456.jpg")
+			destFile2 := filepath.Join(destDir, "pics", "Post2_def456"+ext)
 			_, err = os.Stat(destFile2)
 			assert.True(t, os.IsNotExist(err), "Duplicate file should not be moved")
 
@@ -410,14 +439,7 @@ func TestDuplicateHandling(t *testing.T) {
 			assert.Equal(t, 1, migrator.Log.MovedCount, "Expected 1 moved file")
 			assert.Equal(t, 1, migrator.Log.SkippedCount, "Expected 1 skipped file")
 
-			foundDuplicateSkip := false
-			for _, op := range migrator.Log.Operations {
-				if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
-					foundDuplicateSkip = true
-					break
-				}
-			}
-			assert.True(t, foundDuplicateSkip, "Should have logged duplicate hash skip")
+			assertHasDuplicateSkip(t, migrator.Log.Operations)
 		})
 	}
 }
@@ -453,29 +475,9 @@ func TestIdempotentReRun(t *testing.T) {
 
 func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	logPath := filepath.Join(tmpDir, "migration_log.json")
-
-	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
-
-	// Create two identical files
 	content := []byte("identical content")
-	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
-	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
-
-	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
-	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
-
-	// Set deterministic modification times
-	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
-	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
-		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
-	}
+	sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, content)
+	logPath := filepath.Join(tmpDir, "migration_log.json")
 
 	// First run - should move file1, skip file2 as duplicate
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
@@ -499,15 +501,7 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	// Second run should skip file2 as duplicate (hash already in log)
 	assert.Equal(t, 1, migrator2.Log.SkippedCount, "Second run should skip duplicate")
 
-	// Verify skipped reason mentions duplicate
-	foundDuplicate := false
-	for _, op := range migrator2.Log.Operations {
-		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
-			foundDuplicate = true
-			break
-		}
-	}
-	assert.True(t, foundDuplicate, "Second run should log duplicate skip")
+	assertHasDuplicateSkip(t, migrator2.Log.Operations)
 }
 
 func TestMigration_SortsByModTime(t *testing.T) {
@@ -599,8 +593,7 @@ func TestMigration_HashLogging(t *testing.T) {
 	// Verify hash is valid hex (64 characters for BLAKE3-256)
 	assert.Len(t, op.Hash, 64, "Expected hash length 64")
 
-	for _, c := range op.Hash {
-		isHexChar := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-		assert.True(t, isHexChar, "Hash contains invalid character: %c", c)
-	}
+	decoded, err := hex.DecodeString(op.Hash)
+	require.NoError(t, err, "Hash should be valid hex string")
+	assert.Len(t, decoded, 32, "BLAKE3-256 should produce 32 bytes")
 }
