@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,7 +17,6 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
 )
-
 
 const (
 	// RedditOAuthEndpoint is the base URL for Reddit OAuth.
@@ -204,40 +204,25 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if c.token != nil && c.token.RefreshToken != "" {
 		// Use oauth2.TokenSource to refresh the token
 		tokenSource := c.oauthConfig.TokenSource(ctx, c.token)
-		newToken, err := tokenSource.Token()
-		if err == nil && newToken != nil {
-			c.token = newToken
-
-			// Save token if store is available
-			if c.tokenStore != nil {
-				if err := c.tokenStore.SaveToken(c.token); err != nil {
-					// Log but don't fail if save fails
-					// fmt.Printf("warning: failed to save token: %v\n", err)
-				}
-			}
-
+		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
+			// If refresh fails, continue to password grant
+		} else {
 			return nil
-	}
-	// If refresh fails, continue to password grant
+		}
 	}
 
 	// Check if we have a refresh token in config (set via --auth or REDDIT_REFRESH_TOKEN)
 	if c.config.RefreshToken != "" {
 		// Use refresh token to get new access token
 		tokenSource := c.oauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: c.config.RefreshToken})
-		newToken, err := tokenSource.Token()
-		if err == nil && newToken != nil && newToken.AccessToken != "" {
-			c.token = newToken
-			// Save token if store is available
-			if c.tokenStore != nil {
-				if err := c.tokenStore.SaveToken(c.token); err != nil {
-					// Log but don't fail
-				}
-			}
+		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
+			// Refresh failed, continue to fallback
+		} else {
 			return nil
 		}
-		// Refresh failed, continue to fallback
 	}
+
+	// Fallback: password grant (for backward compatibility)
 
 	// Fallback: password grant (for backward compatibility)
 	if c.config.Password == "" {
@@ -253,10 +238,6 @@ func (c *Client) authenticate(ctx context.Context) error {
 	data.Set("password", c.config.Password)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return fmt.Errorf("creating token request: %w", err)
-	}
-
 	if err != nil {
 		return fmt.Errorf("creating token request: %w", err)
 	}
@@ -293,6 +274,26 @@ func (c *Client) authenticate(ctx context.Context) error {
 		if err := c.tokenStore.SaveToken(c.token); err != nil {
 			// Log but don't fail if save fails
 			// fmt.Printf("warning: failed to save token: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// refreshAndSaveToken refreshes the token using the provided tokenSource and saves it.
+// It logs any save errors using slog for diagnostics.
+func (c *Client) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource) error {
+	newToken, err := ts.Token()
+	if err != nil {
+		return fmt.Errorf("refreshing token: %w", err)
+	}
+
+	c.token = newToken
+
+	// Save token if store is available and log any errors
+	if c.tokenStore != nil {
+		if err := c.tokenStore.SaveToken(c.token); err != nil {
+			slog.Warn("Failed to save token", "error", err, "source", "refresh")
 		}
 	}
 

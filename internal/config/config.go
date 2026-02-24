@@ -25,8 +25,6 @@ type Config struct {
 	Auth         bool
 }
 
-
-
 // RedditConfig holds Reddit API credentials and settings
 type RedditConfig struct {
 	ClientID     string
@@ -223,21 +221,25 @@ func (c *Config) Validate() error {
 
 	if c.Reddit.ClientID == "" {
 		missing = append(missing, "REDDIT_CLIENT_ID")
-}
-if c.Reddit.ClientSecret == "" {
-	missing = append(missing, "REDDIT_CLIENT_SECRET")
-}
-if c.Reddit.Username == "" {
-	missing = append(missing, "REDDIT_USERNAME")
-}
-// Require either password or refresh token
-if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
-	missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
-}
+	}
+	if c.Reddit.ClientSecret == "" {
+		missing = append(missing, "REDDIT_CLIENT_SECRET")
+	}
+	if c.Reddit.Username == "" {
+		missing = append(missing, "REDDIT_USERNAME")
+	}
 
-if len(missing) > 0 {
-	return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
-}
+	// Skip password/refresh token check when in auth mode
+	if !c.Auth {
+		// Require either password or refresh token
+		if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
+			missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+	}
 
 	// Validate numeric values
 	if c.Download.Concurrency <= 0 {

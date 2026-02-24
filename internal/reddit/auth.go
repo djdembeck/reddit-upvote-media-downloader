@@ -2,15 +2,16 @@
 package reddit
 
 import (
+	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"html"
 	"math/big"
 	"net/http"
-	"net/url"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,6 +21,26 @@ import (
 // OAuth2CodeFlow performs OAuth2 code flow to obtain a refresh token.
 // It opens a browser for user authentication and listens for the callback.
 func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
+	// Try multiple ports in case of conflict
+	defaultPorts := []int{7765, 7766, 7767, 7768, 7769}
+	var lastErr error
+	for _, port := range defaultPorts {
+		token, err := tryOAuth2Flow(clientID, clientSecret, userAgent, port)
+		if err == nil {
+			return token, nil
+		}
+		lastErr = err
+		// If it's a port conflict, try next port
+		if !isPortConflict(err) {
+			break
+		}
+		fmt.Printf("Port %d in use, trying next...\n", port)
+	}
+	return "", fmt.Errorf("all OAuth ports in use: %w", lastErr)
+}
+
+// tryOAuth2Flow attempts OAuth2 flow on a specific port
+func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, error) {
 	// Generate random state for CSRF protection
 	state, err := generateRandomState(16)
 	if err != nil {
@@ -34,26 +55,39 @@ func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
 			TokenURL: RedditOAuthEndpoint + "/access_token",
 			AuthURL:  RedditOAuthEndpoint + "/authorize",
 		},
-		Scopes: []string{"identity", "history", "read", "save"},
+		RedirectURL: fmt.Sprintf("http://localhost:%d", port),
+		Scopes:      []string{"identity", "history", "read", "save"},
 	}
 
-	// Build the authorization URL
-	authURL := oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	// Build the authorization URL with duration=permanent to get refresh tokens
+	authURL := oauthConfig.AuthCodeURL(state, oauth2.SetAuthURLParam("duration", "permanent"))
 
 	// Open browser for user authentication
 	fmt.Println("Opening browser for authentication...")
 	fmt.Printf("If the browser doesn't open, visit: %s\n", authURL)
-	_ = openURL(authURL)
+	if err := openURL(authURL); err != nil {
+		fmt.Printf("Warning: Failed to open browser: %v\n", err)
+	}
 
 	// Start local server to receive callback
-	fmt.Println("Waiting for Reddit callback on http://localhost:7765...")
-	refreshToken, err := waitForCallback(7765, state, oauthConfig, clientSecret, userAgent)
+	fmt.Printf("Waiting for Reddit callback on http://localhost:%d...\n", port)
+	refreshToken, err := waitForCallback(port, state, oauthConfig, clientSecret, userAgent)
 	if err != nil {
 		return "", fmt.Errorf("waiting for callback: %w", err)
 	}
 
 	fmt.Println("Successfully obtained refresh token!")
 	return refreshToken, nil
+}
+
+// isPortConflict checks if the error is due to port already in use
+func isPortConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "port") ||
+		strings.Contains(err.Error(), "address already in use") ||
+		strings.Contains(err.Error(), " Bind")
 }
 
 // generateRandomState generates a random string for OAuth state parameter.
@@ -72,7 +106,18 @@ func generateRandomState(n int) (string, error) {
 
 // openURL opens a URL in the default browser.
 func openURL(url string) error {
-	return nil
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/C", "start", "", url)
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+	return cmd.Start()
 }
 
 // waitForCallback starts an HTTP server and waits for the OAuth callback.
@@ -80,10 +125,14 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config, clientS
 	resultChan := make(chan string, 1)
 	errorChan := make(chan error, 1)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Check for error in query params
+	// Create local ServeMux to avoid global registration issues
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Check for error in query params - escape user input to prevent XSS
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
-			fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", errMsg, r.URL.Query().Get("error_description"))
+			escapedErrMsg := html.EscapeString(errMsg)
+			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
+			fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
 			errorChan <- fmt.Errorf("oauth error: %s - %s", errMsg, r.URL.Query().Get("error_description"))
 			return
 		}
@@ -99,66 +148,77 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config, clientS
 		code := r.URL.Query().Get("code")
 		token, err := exchangeCodeForToken(code, oauthConfig, clientSecret, userAgent)
 		if err != nil {
-			fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %v</h1></body></html>", err)
+			escapedErr := html.EscapeString(err.Error())
+			fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
 			errorChan <- err
 			return
 		}
 
 		// Success - show token
 		fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
-		// Write token to file for automation
-		_ = os.WriteFile("./refresh_token.txt", []byte(token), 0600)
+
+		// Write token to file for automation - handle error properly
+		err = os.WriteFile("./refresh_token.txt", []byte(token), 0600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to write refresh token to file: %v\n", err)
+			errorChan <- fmt.Errorf("failed to write token file: %w", err)
+			return
+		}
 		fmt.Println("\nRefresh token saved to ./refresh_token.txt")
 		resultChan <- token
 	})
 
 	addr := fmt.Sprintf(":%d", port)
-	server := &http.Server{Addr: addr}
-	go server.ListenAndServe()
-	defer server.Close()
+	server := &http.Server{Addr: addr, Handler: mux}
+
+	// Start server in goroutine and capture errors
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- server.ListenAndServe()
+	}()
 
 	// Wait for callback with timeout
+	timer := time.NewTimer(30 * time.Second)
+	defer func() {
+		// Clean up token file after 30 seconds
+		timer.Stop()
+		if err := os.Remove("./refresh_token.txt"); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("Note: Could not clean up token file: %v\n", err)
+		} else if err == nil {
+			fmt.Println("Token file cleanup: removed ./refresh_token.txt")
+		}
+	}()
+
 	select {
 	case token := <-resultChan:
+		_ = server.Close()
 		return token, nil
 	case err := <-errorChan:
+		_ = server.Close()
 		return "", err
+	case err := <-errChan:
+		_ = server.Close()
+		return "", fmt.Errorf("server error: %w", err)
 	case <-time.After(5 * time.Minute):
+		_ = server.Close()
 		return "", errors.New("timeout waiting for OAuth callback")
 	}
 }
 
 // exchangeCodeForToken exchanges an authorization code for a refresh token.
 func exchangeCodeForToken(code string, oauthConfig *oauth2.Config, clientSecret, userAgent string) (string, error) {
-	data := url.Values{}
-	data.Set("grant_type", "authorization_code")
-	data.Set("code", code)
-	data.Set("redirect_uri", "http://localhost:7765")
+	// Use oauth2.Config.Exchange with context
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	req, err := http.NewRequest("POST", oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()))
+	token, err := oauthConfig.Exchange(ctx, code)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("exchanging code for token: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", userAgent)
-	req.SetBasicAuth(oauthConfig.ClientID, clientSecret)
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var token oauth2.Token
-	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
-		return "", err
+	// Verify we got a refresh token
+	if token.RefreshToken == "" {
+		return "", fmt.Errorf("no refresh token returned - ensure authorization was requested with duration=permanent")
 	}
 
 	return token.RefreshToken, nil

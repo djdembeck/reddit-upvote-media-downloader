@@ -49,6 +49,44 @@ func (m *memoryTokenStore) LoadToken() (*oauth2.Token, error) {
 	return m.token, nil
 }
 
+// buildTokenFromEnv builds an oauth2.Token from environment variables
+func buildTokenFromEnv() *oauth2.Token {
+	accessToken := os.Getenv("REDDIT_ACCESS_TOKEN")
+	refreshToken := os.Getenv("REDDIT_REFRESH_TOKEN")
+
+	if accessToken != "" && refreshToken != "" {
+		return &oauth2.Token{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			TokenType:    "Bearer",
+			Expiry:       time.Now().Add(1 * time.Hour),
+		}
+	}
+	if refreshToken != "" {
+		return &oauth2.Token{
+			RefreshToken: refreshToken,
+			TokenType:    "Bearer",
+			Expiry:       time.Now(),
+		}
+	}
+	if accessToken != "" {
+		return &oauth2.Token{
+			AccessToken: accessToken,
+			TokenType:   "Bearer",
+			Expiry:      time.Now().Add(1 * time.Hour),
+		}
+	}
+	return nil
+}
+
+// maskToken masks a token showing only the last 4 characters
+func maskToken(token string) string {
+	if len(token) > 4 {
+		return "****" + token[len(token)-4:]
+	}
+	return "****"
+}
+
 func main() {
 	// Load configuration from environment variables
 	cfg, err := config.Load()
@@ -123,26 +161,13 @@ func main() {
 
 	tokenStore := &memoryTokenStore{}
 
-	// Check for existing OAuth access token from environment variable
-	if accessToken := os.Getenv("REDDIT_ACCESS_TOKEN"); accessToken != "" {
-		token := &oauth2.Token{
-			AccessToken: accessToken,
-			TokenType:   "Bearer",
-			Expiry:      time.Now().Add(1 * time.Hour),
-		}
+	// Check for existing OAuth tokens from environment variables
+	token := buildTokenFromEnv()
+
+	// Save token if one was built
+	if token != nil {
 		if err := tokenStore.SaveToken(token); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving token from env: %v\n", err)
-		}
-	}
-
-	if refreshToken := os.Getenv("REDDIT_REFRESH_TOKEN"); refreshToken != "" {
-		token := &oauth2.Token{
-			RefreshToken: refreshToken,
-			TokenType:    "Bearer",
-			Expiry:       time.Now(),
-		}
-		if err := tokenStore.SaveToken(token); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving refresh token from env: %v\n", err)
 		}
 	}
 
@@ -436,13 +461,36 @@ func handleAuth(cfg *config.Config) {
 		os.Exit(1)
 	}
 
+	// Mask token for display (show only last 4 characters)
+	maskedToken := maskToken(refreshToken)
+
 	fmt.Println("")
 	fmt.Println("=== SETUP COMPLETE ===")
 	fmt.Println("")
+	fmt.Println("Security Note: Store your refresh token securely.")
+	fmt.Println("Do not commit it to version control or share it publicly.")
+	fmt.Println("")
+	fmt.Printf("Masked token for reference: %s\n", maskedToken)
+	fmt.Println("")
+	fmt.Println("Options to save your token:")
+	fmt.Println("1. Add to .env file: REDDIT_REFRESH_TOKEN=" + maskedToken)
+	fmt.Println("2. Copy full token to clipboard (manual): echo \"$REDDIT_REFRESH_TOKEN\" | xclip or similar")
+	fmt.Println("")
 	fmt.Println("To use with Docker, add this to your .env file:")
-	fmt.Printf("REDDIT_REFRESH_TOKEN=%s\n", refreshToken)
+	fmt.Printf("# REDDIT_REFRESH_TOKEN=%s\n", maskedToken)
 	fmt.Println("")
 	fmt.Println("Or pass it via environment variable:")
-	fmt.Printf("REDDIT_REFRESH_TOKEN=%s docker-compose up -d\n", refreshToken)
-}
+	fmt.Printf("# REDDIT_REFRESH_TOKEN=%s docker-compose up -d\n", maskedToken)
+	fmt.Println("")
+	fmt.Println("Note: For security, the full token was saved to ./refresh_token.txt")
+	fmt.Println("Please copy it to your .env file manually.")
+	fmt.Println("")
 
+	// Write token to a file for the user to retrieve
+	fmt.Println("Writing token to ./refresh_token.txt for retrieval...")
+	if err := os.WriteFile("./refresh_token.txt", []byte(refreshToken), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to write token file: %v\n", err)
+	} else {
+		fmt.Println("Token written to ./refresh_token.txt - please secure this file!")
+	}
+}
