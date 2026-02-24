@@ -22,7 +22,10 @@ type Config struct {
 	Migrate      MigrateConfig
 	Backoff      BackoffConfig
 	SmartPolling SmartPollingConfig
+	Auth         bool
 }
+
+
 
 // RedditConfig holds Reddit API credentials and settings
 type RedditConfig struct {
@@ -31,6 +34,7 @@ type RedditConfig struct {
 	UserAgent    string
 	Username     string
 	Password     string
+	RefreshToken string
 }
 
 // StorageConfig holds database and file storage settings
@@ -103,6 +107,7 @@ var (
 	flagBackoffBase    time.Duration
 	flagBackoffMax     time.Duration
 	flagSet            bool
+	flagAuth           bool
 )
 
 func init() {
@@ -116,6 +121,7 @@ func init() {
 	flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
 	flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
 	flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
+	flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
 }
 
 // flagWasSet returns true if a flag was explicitly provided on the command line
@@ -144,7 +150,9 @@ func Load() (*Config, error) {
 			UserAgent:    getEnv("REDDIT_USER_AGENT", ""),
 			Username:     getEnv("REDDIT_USERNAME", ""),
 			Password:     getEnv("REDDIT_PASSWORD", ""),
+			RefreshToken: getEnv("REDDIT_REFRESH_TOKEN", ""),
 		},
+
 		Storage: StorageConfig{
 			OutputDir: getEnv("OUTPUT_DIR", "./data/output"),
 			DBPath:    getEnv("DB_PATH", "./data/posts.db"),
@@ -199,6 +207,7 @@ func Load() (*Config, error) {
 		if flagRetryThreshold > 0 {
 			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
 		}
+		cfg.Auth = flagAuth
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -214,17 +223,21 @@ func (c *Config) Validate() error {
 
 	if c.Reddit.ClientID == "" {
 		missing = append(missing, "REDDIT_CLIENT_ID")
-	}
-	if c.Reddit.ClientSecret == "" {
-		missing = append(missing, "REDDIT_CLIENT_SECRET")
-	}
-	if c.Reddit.Username == "" {
-		missing = append(missing, "REDDIT_USERNAME")
-	}
+}
+if c.Reddit.ClientSecret == "" {
+	missing = append(missing, "REDDIT_CLIENT_SECRET")
+}
+if c.Reddit.Username == "" {
+	missing = append(missing, "REDDIT_USERNAME")
+}
+// Require either password or refresh token
+if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
+	missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
+}
 
-	if len(missing) > 0 {
-		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
-	}
+if len(missing) > 0 {
+	return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+}
 
 	// Validate numeric values
 	if c.Download.Concurrency <= 0 {

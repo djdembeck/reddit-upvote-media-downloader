@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
+
 const (
 	// RedditOAuthEndpoint is the base URL for Reddit OAuth.
 	RedditOAuthEndpoint = "https://www.reddit.com/api/v1"
@@ -47,6 +48,7 @@ type Config struct {
 	ClientSecret string
 	Username     string
 	Password     string
+	RefreshToken string
 	UserAgent    string
 }
 
@@ -215,32 +217,46 @@ func (c *Client) authenticate(ctx context.Context) error {
 			}
 
 			return nil
+	}
+	// If refresh fails, continue to password grant
+	}
+
+	// Check if we have a refresh token in config (set via --auth or REDDIT_REFRESH_TOKEN)
+	if c.config.RefreshToken != "" {
+		// Use refresh token to get new access token
+		tokenSource := c.oauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: c.config.RefreshToken})
+		newToken, err := tokenSource.Token()
+		if err == nil && newToken != nil && newToken.AccessToken != "" {
+			c.token = newToken
+			// Save token if store is available
+			if c.tokenStore != nil {
+				if err := c.tokenStore.SaveToken(c.token); err != nil {
+					// Log but don't fail
+				}
+			}
+			return nil
 		}
-		// If refresh fails, continue to password grant
+		// Refresh failed, continue to fallback
 	}
 
-	// Fall back to password grant
-	// Create custom HTTP client for token request with proper User-Agent
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
-
-	// Use password grant for personal use script
-	// This requires username and password
+	// Fallback: password grant (for backward compatibility)
 	if c.config.Password == "" {
-		return errors.New("password is required for password grant")
+		return errors.New("password is required for password grant (use --auth to get a refresh token)")
 	}
 
 	// Build token request manually to include User-Agent header
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+
 	data := url.Values{}
 	data.Set("grant_type", "password")
 	data.Set("username", c.config.Username)
 	data.Set("password", c.config.Password)
-	data.Set("scope", "identity history read")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return fmt.Errorf("creating token request: %w", err)
+	}
+
 	if err != nil {
 		return fmt.Errorf("creating token request: %w", err)
 	}

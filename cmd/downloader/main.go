@@ -57,6 +57,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle --auth flag: run OAuth2 code flow to get refresh token
+	if cfg.Auth {
+		handleAuth(cfg)
+		os.Exit(0)
+	}
+
 	// Setup logging
 	fmt.Printf("Log level: %s\n", cfg.Log.Level)
 
@@ -112,6 +118,7 @@ func main() {
 		UserAgent:    cfg.Reddit.UserAgent,
 		Username:     cfg.Reddit.Username,
 		Password:     cfg.Reddit.Password,
+		RefreshToken: cfg.Reddit.RefreshToken,
 	}
 
 	tokenStore := &memoryTokenStore{}
@@ -405,3 +412,37 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
 	return nil
 }
+
+// handleAuth runs the OAuth2 code flow to get a refresh token.
+func handleAuth(cfg *config.Config) {
+	// Validate we have the required credentials
+	if cfg.Reddit.ClientID == "" || cfg.Reddit.ClientSecret == "" {
+		fmt.Fprintf(os.Stderr, "Error: REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are required for authentication\n")
+		os.Exit(1)
+	}
+
+	userAgent := cfg.Reddit.UserAgent
+	if userAgent == "" {
+		userAgent = "reddit-media-downloader/1.0"
+	}
+
+	fmt.Println("Starting OAuth2 authentication...")
+	fmt.Println("This will open a browser window for you to authorize the application.")
+	fmt.Println("")
+
+	refreshToken, err := reddit.OAuth2CodeFlow(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret, userAgent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("")
+	fmt.Println("=== SETUP COMPLETE ===")
+	fmt.Println("")
+	fmt.Println("To use with Docker, add this to your .env file:")
+	fmt.Printf("REDDIT_REFRESH_TOKEN=%s\n", refreshToken)
+	fmt.Println("")
+	fmt.Println("Or pass it via environment variable:")
+	fmt.Printf("REDDIT_REFRESH_TOKEN=%s docker-compose up -d\n", refreshToken)
+}
+

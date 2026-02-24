@@ -255,15 +255,16 @@ func TestValidationInvalidRetryThreshold(t *testing.T) {
 		t.Error("Load() should return error when RETRY_THRESHOLD is negative")
 	}
 }
-
 func TestDefaultValues(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	cfg, err := Load()
@@ -402,16 +403,17 @@ func TestCLIFlagsOverrideEnvVars(t *testing.T) {
 	// Save original os.Args
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
-
 	// Set environment variables
 	os.Setenv("REDDIT_CLIENT_ID", "env-client-id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "env-client-secret")
 	os.Setenv("REDDIT_USERNAME", "env-user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	os.Setenv("CONCURRENCY", "5")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("CONCURRENCY")
 	}()
 
@@ -538,15 +540,16 @@ func TestFlagDefaults(t *testing.T) {
 	testFlagSet.Visit(func(f *flag.Flag) {
 		flagSet = true
 	})
-
 	// Set required env vars
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	cfg, err := Load()
