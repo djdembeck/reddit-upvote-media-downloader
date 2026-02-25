@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -47,6 +48,7 @@ type Config struct {
 	ClientSecret string
 	Username     string
 	Password     string
+	RefreshToken string
 	UserAgent    string
 }
 
@@ -202,43 +204,38 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if c.token != nil && c.token.RefreshToken != "" {
 		// Use oauth2.TokenSource to refresh the token
 		tokenSource := c.oauthConfig.TokenSource(ctx, c.token)
-		newToken, err := tokenSource.Token()
-		if err == nil && newToken != nil {
-			c.token = newToken
-
-			// Save token if store is available
-			if c.tokenStore != nil {
-				if err := c.tokenStore.SaveToken(c.token); err != nil {
-					// Log but don't fail if save fails
-					// fmt.Printf("warning: failed to save token: %v\n", err)
-				}
-			}
-
+		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
+			// Log the refresh failure with context before falling back
+			slog.Warn("Token refresh failed", "error", err, "source", "existing token source")
+		} else {
 			return nil
 		}
-		// If refresh fails, continue to password grant
 	}
 
-	// Fall back to password grant
-	// Create custom HTTP client for token request with proper User-Agent
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+	// Check if we have a refresh token in config (set via --auth or REDDIT_REFRESH_TOKEN)
+	if c.config.RefreshToken != "" {
+		// Use refresh token to get new access token
+		tokenSource := c.oauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: c.config.RefreshToken})
+		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
+			// Log the refresh failure with context before falling back
+			slog.Warn("Token refresh failed", "error", err, "source", "refresh token from config")
+		} else {
+			return nil
+		}
 	}
 
-	ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
-
-	// Use password grant for personal use script
-	// This requires username and password
+	// Fallback: password grant (for backward compatibility)
 	if c.config.Password == "" {
-		return errors.New("password is required for password grant")
+		return errors.New("password is required for password grant (use --auth to get a refresh token)")
 	}
 
 	// Build token request manually to include User-Agent header
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+
 	data := url.Values{}
 	data.Set("grant_type", "password")
 	data.Set("username", c.config.Username)
 	data.Set("password", c.config.Password)
-	data.Set("scope", "identity history read")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -277,6 +274,26 @@ func (c *Client) authenticate(ctx context.Context) error {
 		if err := c.tokenStore.SaveToken(c.token); err != nil {
 			// Log but don't fail if save fails
 			// fmt.Printf("warning: failed to save token: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// refreshAndSaveToken refreshes the token using the provided tokenSource and saves it.
+// It logs any save errors using slog for diagnostics.
+func (c *Client) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource) error {
+	newToken, err := ts.Token()
+	if err != nil {
+		return fmt.Errorf("refreshing token: %w", err)
+	}
+
+	c.token = newToken
+
+	// Save token if store is available and log any errors
+	if c.tokenStore != nil {
+		if err := c.tokenStore.SaveToken(c.token); err != nil {
+			slog.Warn("Failed to save token", "error", err, "source", "refresh")
 		}
 	}
 

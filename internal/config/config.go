@@ -22,6 +22,7 @@ type Config struct {
 	Migrate      MigrateConfig
 	Backoff      BackoffConfig
 	SmartPolling SmartPollingConfig
+	Auth         bool
 }
 
 // RedditConfig holds Reddit API credentials and settings
@@ -31,6 +32,7 @@ type RedditConfig struct {
 	UserAgent    string
 	Username     string
 	Password     string
+	RefreshToken string
 }
 
 // StorageConfig holds database and file storage settings
@@ -103,6 +105,7 @@ var (
 	flagBackoffBase    time.Duration
 	flagBackoffMax     time.Duration
 	flagSet            bool
+	flagAuth           bool
 )
 
 func init() {
@@ -116,6 +119,7 @@ func init() {
 	flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
 	flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
 	flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
+	flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
 }
 
 // flagWasSet returns true if a flag was explicitly provided on the command line
@@ -144,7 +148,9 @@ func Load() (*Config, error) {
 			UserAgent:    getEnv("REDDIT_USER_AGENT", ""),
 			Username:     getEnv("REDDIT_USERNAME", ""),
 			Password:     getEnv("REDDIT_PASSWORD", ""),
+			RefreshToken: getEnv("REDDIT_REFRESH_TOKEN", ""),
 		},
+
 		Storage: StorageConfig{
 			OutputDir: getEnv("OUTPUT_DIR", "./data/output"),
 			DBPath:    getEnv("DB_PATH", "./data/posts.db"),
@@ -201,6 +207,14 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Note: cfg.Auth is intentionally only set from CLI flags (--auth)
+	// to prevent accidental auth mode when running as daemon.
+	// Callers needing programmatic auth should call handleAuth() directly.
+	// The flagAuth value was already applied above when flagWasSet() returned true.
+	if flagWasSet() {
+		cfg.Auth = flagAuth
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -220,6 +234,14 @@ func (c *Config) Validate() error {
 	}
 	if c.Reddit.Username == "" {
 		missing = append(missing, "REDDIT_USERNAME")
+	}
+
+	// Skip password/refresh token check when in auth mode
+	if !c.Auth {
+		// Require either password or refresh token
+		if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
+			missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
+		}
 	}
 
 	if len(missing) > 0 {

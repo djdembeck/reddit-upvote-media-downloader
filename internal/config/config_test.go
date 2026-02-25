@@ -132,11 +132,13 @@ func TestValidationInvalidConcurrency(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("CONCURRENCY", "0")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("CONCURRENCY")
 	}()
 
@@ -144,17 +146,22 @@ func TestValidationInvalidConcurrency(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when CONCURRENCY is 0")
 	}
+	if err != nil && !strings.Contains(err.Error(), "CONCURRENCY") {
+		t.Errorf("Expected CONCURRENCY validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidFetchLimit(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("FETCH_LIMIT", "-1")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("FETCH_LIMIT")
 	}()
 
@@ -162,17 +169,22 @@ func TestValidationInvalidFetchLimit(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when FETCH_LIMIT is negative")
 	}
+	if err != nil && !strings.Contains(err.Error(), "FETCH_LIMIT") {
+		t.Errorf("Expected FETCH_LIMIT validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidLogLevel(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("LOG_LEVEL", "invalid")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("LOG_LEVEL")
 	}()
 
@@ -180,17 +192,22 @@ func TestValidationInvalidLogLevel(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when LOG_LEVEL is invalid")
 	}
+	if err != nil && !strings.Contains(err.Error(), "LOG_LEVEL") {
+		t.Errorf("Expected LOG_LEVEL validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidBackoffBase(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("BACKOFF_BASE", "0s")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("BACKOFF_BASE")
 	}()
 
@@ -198,17 +215,22 @@ func TestValidationInvalidBackoffBase(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when BACKOFF_BASE is 0")
 	}
+	if err != nil && !strings.Contains(err.Error(), "BACKOFF_BASE") {
+		t.Errorf("Expected BACKOFF_BASE validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidBackoffMax(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("BACKOFF_MAX", "0s")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("BACKOFF_MAX")
 	}()
 
@@ -216,18 +238,23 @@ func TestValidationInvalidBackoffMax(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when BACKOFF_MAX is 0")
 	}
+	if err != nil && !strings.Contains(err.Error(), "BACKOFF_MAX") {
+		t.Errorf("Expected BACKOFF_MAX validation error, got: %v", err)
+	}
 }
 
 func TestValidationBackoffBaseGreaterThanMax(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("BACKOFF_BASE", "60s")
 	os.Setenv("BACKOFF_MAX", "5s")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("BACKOFF_BASE")
 		os.Unsetenv("BACKOFF_MAX")
 	}()
@@ -236,17 +263,22 @@ func TestValidationBackoffBaseGreaterThanMax(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when BACKOFF_BASE > BACKOFF_MAX")
 	}
+	if err != nil && !strings.Contains(err.Error(), "BACKOFF_BASE") {
+		t.Errorf("Expected BACKOFF_BASE > BACKOFF_MAX validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidRetryThreshold(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("RETRY_THRESHOLD", "-1")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("RETRY_THRESHOLD")
 	}()
 
@@ -254,16 +286,20 @@ func TestValidationInvalidRetryThreshold(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when RETRY_THRESHOLD is negative")
 	}
+	if err != nil && !strings.Contains(err.Error(), "RETRY_THRESHOLD") {
+		t.Errorf("Expected RETRY_THRESHOLD validation error, got: %v", err)
+	}
 }
-
 func TestDefaultValues(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	cfg, err := Load()
@@ -402,16 +438,17 @@ func TestCLIFlagsOverrideEnvVars(t *testing.T) {
 	// Save original os.Args
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
-
 	// Set environment variables
 	os.Setenv("REDDIT_CLIENT_ID", "env-client-id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "env-client-secret")
 	os.Setenv("REDDIT_USERNAME", "env-user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	os.Setenv("CONCURRENCY", "5")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("CONCURRENCY")
 	}()
 
@@ -538,15 +575,16 @@ func TestFlagDefaults(t *testing.T) {
 	testFlagSet.Visit(func(f *flag.Flag) {
 		flagSet = true
 	})
-
 	// Set required env vars
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	cfg, err := Load()
@@ -566,5 +604,162 @@ func TestFlagDefaults(t *testing.T) {
 	}
 	if cfg.Backoff.Max != 60*time.Second {
 		t.Errorf("Expected default Backoff.Max 60s, got %v", cfg.Backoff.Max)
+	}
+}
+
+func TestAuthFlagSetsConfig(t *testing.T) {
+	// Save original os.Args
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	// Set required environment variables
+	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	os.Setenv("REDDIT_USERNAME", "test-user")
+	defer func() {
+		os.Unsetenv("REDDIT_CLIENT_ID")
+		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		os.Unsetenv("REDDIT_USERNAME")
+	}()
+
+	// Set CLI flag via os.Args
+	os.Args = []string{"program", "--auth"}
+
+	// Reset flag variables
+	flagSet = false
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if !cfg.Auth {
+		t.Errorf("Expected cfg.Auth to be true when --auth flag is provided")
+	}
+}
+
+func TestAuthModeSkipsCredentialValidation(t *testing.T) {
+	// Save original os.Args
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	// Set only client ID and secret (no password or refresh token)
+	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	os.Setenv("REDDIT_USERNAME", "test-user")
+	// Explicitly unset password and refresh token
+	os.Unsetenv("REDDIT_PASSWORD")
+	os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	defer func() {
+		os.Unsetenv("REDDIT_CLIENT_ID")
+		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		os.Unsetenv("REDDIT_USERNAME")
+	}()
+
+	// Set CLI flag via os.Args
+	os.Args = []string{"program", "--auth"}
+
+	// Reset flag variables
+	flagSet = false
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should not return error in auth mode without credentials: %v", err)
+	}
+
+	if !cfg.Auth {
+		t.Errorf("Expected cfg.Auth to be true")
+	}
+}
+
+func TestValidationRequiresPasswordOrRefreshToken(t *testing.T) {
+	// Save original os.Args
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	// Set required env vars but NOT password or refresh token
+	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	os.Setenv("REDDIT_USERNAME", "test-user")
+	os.Unsetenv("REDDIT_PASSWORD")
+	os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	defer func() {
+		os.Unsetenv("REDDIT_CLIENT_ID")
+		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		os.Unsetenv("REDDIT_USERNAME")
+	}()
+
+	// No --auth flag
+	os.Args = []string{"program"}
+
+	// Reset flag variables - must reset all flag values, not just flagSet
+	flagSet = false
+	flagAuth = false
+
+	_, err := Load()
+	if err == nil {
+		t.Error("Load() should return error when both password and refresh token are missing (without --auth flag)")
+	}
+}
+
+func TestValidationSucceedsWithPasswordOnly(t *testing.T) {
+	// Save original os.Args
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	// Set required env vars with password only
+	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	os.Setenv("REDDIT_USERNAME", "test-user")
+	os.Setenv("REDDIT_PASSWORD", "test-password")
+	os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	defer func() {
+		os.Unsetenv("REDDIT_CLIENT_ID")
+		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_PASSWORD")
+	}()
+
+	os.Args = []string{"program"}
+	flagSet = false
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should not return error with password only: %v", err)
+	}
+
+	if cfg.Reddit.Password != "test-password" {
+		t.Errorf("Expected Password 'test-password', got '%s'", cfg.Reddit.Password)
+	}
+}
+
+func TestValidationSucceedsWithRefreshTokenOnly(t *testing.T) {
+	// Save original os.Args
+	originalArgs := os.Args
+	defer func() { os.Args = originalArgs }()
+
+	// Set required env vars with refresh token only
+	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	os.Setenv("REDDIT_USERNAME", "test-user")
+	os.Unsetenv("REDDIT_PASSWORD")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
+	defer func() {
+		os.Unsetenv("REDDIT_CLIENT_ID")
+		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	}()
+
+	os.Args = []string{"program"}
+	flagSet = false
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() should not return error with refresh token only: %v", err)
+	}
+
+	if cfg.Reddit.RefreshToken != "test-refresh-token" {
+		t.Errorf("Expected RefreshToken 'test-refresh-token', got '%s'", cfg.Reddit.RefreshToken)
 	}
 }
