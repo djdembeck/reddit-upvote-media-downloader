@@ -97,7 +97,10 @@ func main() {
 
 	// Handle --auth flag: run OAuth2 code flow to get refresh token
 	if cfg.Auth {
-		handleAuth(cfg)
+		if err := handleAuth(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -439,11 +442,10 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 }
 
 // handleAuth runs the OAuth2 code flow to get a refresh token.
-func handleAuth(cfg *config.Config) {
+func handleAuth(cfg *config.Config) error {
 	// Validate we have the required credentials
 	if cfg.Reddit.ClientID == "" || cfg.Reddit.ClientSecret == "" {
-		fmt.Fprintf(os.Stderr, "Error: REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are required for authentication\n")
-		os.Exit(1)
+		return fmt.Errorf("REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET are required for authentication")
 	}
 
 	userAgent := cfg.Reddit.UserAgent
@@ -457,12 +459,11 @@ func handleAuth(cfg *config.Config) {
 
 	refreshToken, err := reddit.OAuth2CodeFlow(cfg.Reddit.ClientID, cfg.Reddit.ClientSecret, userAgent)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("OAuth2 code flow failed: %w", err)
 	}
 
 	// Mask token for display (show only last 4 characters)
-maskedToken := maskToken(refreshToken)
+	maskedToken := maskToken(refreshToken)
 
 	fmt.Println("")
 	fmt.Println("=== SETUP COMPLETE ===")
@@ -489,8 +490,8 @@ maskedToken := maskToken(refreshToken)
 	// Write token to a file for the user to retrieve
 	fmt.Println("Writing token to ./refresh_token.txt for retrieval...")
 	if err := os.WriteFile("./refresh_token.txt", []byte(refreshToken), 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to write token file: %v\n", err)
-	} else {
-		fmt.Println("Token written to ./refresh_token.txt - please secure this file!")
+		return fmt.Errorf("failed to write token file: %w", err)
 	}
+	fmt.Println("Token written to ./refresh_token.txt - please secure this file!")
+	return nil
 }

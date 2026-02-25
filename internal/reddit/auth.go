@@ -31,7 +31,7 @@ func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
 		lastErr = err
 		// If it's a port conflict, try next port
 		if !isPortConflict(err) {
-			break
+			return "", err
 		}
 		fmt.Printf("Port %d in use, trying next...\n", port)
 	}
@@ -54,9 +54,9 @@ func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, 
 			TokenURL: RedditOAuthEndpoint + "/access_token",
 			AuthURL:  RedditOAuthEndpoint + "/authorize",
 		},
-		RedirectURL: fmt.Sprintf("http://localhost:%d/callback", port),
+		RedirectURL: fmt.Sprintf("http://127.0.0.1:%d/callback", port),
 		Scopes:      []string{"identity", "history", "read", "save"},
-	}
+}
 
 	// Build the authorization URL with duration=permanent to get refresh tokens
 	authURL := oauthConfig.AuthCodeURL(state, oauth2.SetAuthURLParam("duration", "permanent"))
@@ -160,7 +160,7 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		resultChan <- token
 	})
 
-	addr := fmt.Sprintf(":%d", port)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	server := &http.Server{Addr: addr, Handler: mux}
 
 	// Start server in goroutine and capture errors
@@ -172,6 +172,7 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
+		_ = server.Close()
 		timer.Stop()
 	}()
 
@@ -185,9 +186,9 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	case err := <-errChan:
 		_ = server.Close()
 		return "", fmt.Errorf("server error: %w", err)
-	case <-time.After(5 * time.Minute):
+	case <-timer.C:
 		_ = server.Close()
-		return "", errors.New("timeout waiting for OAuth callback")
+		return "", errors.New("timeout waiting for OAuth callback (30 seconds)")
 	}
 }
 
