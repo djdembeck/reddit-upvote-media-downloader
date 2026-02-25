@@ -462,7 +462,7 @@ func handleAuth(cfg *config.Config) {
 	}
 
 	// Mask token for display (show only last 4 characters)
-	maskedToken := maskToken(refreshToken)
+maskedToken := maskToken(refreshToken)
 
 	fmt.Println("")
 	fmt.Println("=== SETUP COMPLETE ===")
@@ -473,14 +473,14 @@ func handleAuth(cfg *config.Config) {
 	fmt.Printf("Masked token for reference: %s\n", maskedToken)
 	fmt.Println("")
 	fmt.Println("Options to save your token:")
-	fmt.Println("1. Add to .env file: REDDIT_REFRESH_TOKEN=" + maskedToken)
-	fmt.Println("2. Copy full token to clipboard (manual): echo \"$REDDIT_REFRESH_TOKEN\" | xclip or similar")
+	fmt.Println("1. Add to .env file: REDDIT_REFRESH_TOKEN=<FULL_TOKEN_FROM_refresh_token.txt>")
+	fmt.Println("2. Copy full token from ./refresh_token.txt to your .env file")
 	fmt.Println("")
 	fmt.Println("To use with Docker, add this to your .env file:")
-	fmt.Printf("# REDDIT_REFRESH_TOKEN=%s\n", maskedToken)
+	fmt.Printf("# REDDIT_REFRESH_TOKEN=<FULL_TOKEN_FROM_refresh_token.txt>\n")
 	fmt.Println("")
 	fmt.Println("Or pass it via environment variable:")
-	fmt.Printf("# REDDIT_REFRESH_TOKEN=%s docker-compose up -d\n", maskedToken)
+	fmt.Printf("# REDDIT_REFRESH_TOKEN=<FULL_TOKEN_FROM_refresh_token.txt> docker-compose up -d\n")
 	fmt.Println("")
 	fmt.Println("Note: For security, the full token was saved to ./refresh_token.txt")
 	fmt.Println("Please copy it to your .env file manually.")

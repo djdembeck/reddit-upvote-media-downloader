@@ -205,6 +205,13 @@ func Load() (*Config, error) {
 		if flagRetryThreshold > 0 {
 			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
 		}
+	}
+
+	// Note: cfg.Auth is intentionally only set from CLI flags (--auth)
+	// to prevent accidental auth mode when running as daemon.
+	// Callers needing programmatic auth should call handleAuth() directly.
+	// The flagAuth value was already applied above when flagWasSet() returned true.
+	if flagWasSet() {
 		cfg.Auth = flagAuth
 	}
 

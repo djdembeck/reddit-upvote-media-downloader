@@ -205,7 +205,8 @@ func (c *Client) authenticate(ctx context.Context) error {
 		// Use oauth2.TokenSource to refresh the token
 		tokenSource := c.oauthConfig.TokenSource(ctx, c.token)
 		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
-			// If refresh fails, continue to password grant
+			// Log the refresh failure with context before falling back
+			slog.Warn("Token refresh failed", "error", err, "source", "existing token source")
 		} else {
 			return nil
 		}
@@ -216,13 +217,12 @@ func (c *Client) authenticate(ctx context.Context) error {
 		// Use refresh token to get new access token
 		tokenSource := c.oauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: c.config.RefreshToken})
 		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
-			// Refresh failed, continue to fallback
+			// Log the refresh failure with context before falling back
+			slog.Warn("Token refresh failed", "error", err, "source", "refresh token from config")
 		} else {
 			return nil
 		}
 	}
-
-	// Fallback: password grant (for backward compatibility)
 
 	// Fallback: password grant (for backward compatibility)
 	if c.config.Password == "" {

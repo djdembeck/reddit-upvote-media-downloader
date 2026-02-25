@@ -132,11 +132,13 @@ func TestValidationInvalidConcurrency(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("CONCURRENCY", "0")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("CONCURRENCY")
 	}()
 
@@ -144,17 +146,22 @@ func TestValidationInvalidConcurrency(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when CONCURRENCY is 0")
 	}
+	if err != nil && !strings.Contains(err.Error(), "CONCURRENCY") {
+		t.Errorf("Expected CONCURRENCY validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidFetchLimit(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("FETCH_LIMIT", "-1")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("FETCH_LIMIT")
 	}()
 
@@ -162,17 +169,22 @@ func TestValidationInvalidFetchLimit(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when FETCH_LIMIT is negative")
 	}
+	if err != nil && !strings.Contains(err.Error(), "FETCH_LIMIT") {
+		t.Errorf("Expected FETCH_LIMIT validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidLogLevel(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("LOG_LEVEL", "invalid")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("LOG_LEVEL")
 	}()
 
@@ -180,17 +192,22 @@ func TestValidationInvalidLogLevel(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when LOG_LEVEL is invalid")
 	}
+	if err != nil && !strings.Contains(err.Error(), "LOG_LEVEL") {
+		t.Errorf("Expected LOG_LEVEL validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidBackoffBase(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("BACKOFF_BASE", "0s")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("BACKOFF_BASE")
 	}()
 
@@ -198,17 +215,22 @@ func TestValidationInvalidBackoffBase(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when BACKOFF_BASE is 0")
 	}
+	if err != nil && !strings.Contains(err.Error(), "BACKOFF_BASE") {
+		t.Errorf("Expected BACKOFF_BASE validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidBackoffMax(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("BACKOFF_MAX", "0s")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("BACKOFF_MAX")
 	}()
 
@@ -216,18 +238,23 @@ func TestValidationInvalidBackoffMax(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when BACKOFF_MAX is 0")
 	}
+	if err != nil && !strings.Contains(err.Error(), "BACKOFF_MAX") {
+		t.Errorf("Expected BACKOFF_MAX validation error, got: %v", err)
+	}
 }
 
 func TestValidationBackoffBaseGreaterThanMax(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("BACKOFF_BASE", "60s")
 	os.Setenv("BACKOFF_MAX", "5s")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("BACKOFF_BASE")
 		os.Unsetenv("BACKOFF_MAX")
 	}()
@@ -236,23 +263,31 @@ func TestValidationBackoffBaseGreaterThanMax(t *testing.T) {
 	if err == nil {
 		t.Error("Load() should return error when BACKOFF_BASE > BACKOFF_MAX")
 	}
+	if err != nil && !strings.Contains(err.Error(), "BACKOFF_BASE") {
+		t.Errorf("Expected BACKOFF_BASE > BACKOFF_MAX validation error, got: %v", err)
+	}
 }
 
 func TestValidationInvalidRetryThreshold(t *testing.T) {
 	os.Setenv("REDDIT_CLIENT_ID", "id")
 	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	os.Setenv("REDDIT_USERNAME", "user")
+	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
 	os.Setenv("RETRY_THRESHOLD", "-1")
 	defer func() {
 		os.Unsetenv("REDDIT_CLIENT_ID")
 		os.Unsetenv("REDDIT_CLIENT_SECRET")
 		os.Unsetenv("REDDIT_USERNAME")
+		os.Unsetenv("REDDIT_REFRESH_TOKEN")
 		os.Unsetenv("RETRY_THRESHOLD")
 	}()
 
 	_, err := Load()
 	if err == nil {
 		t.Error("Load() should return error when RETRY_THRESHOLD is negative")
+	}
+	if err != nil && !strings.Contains(err.Error(), "RETRY_THRESHOLD") {
+		t.Errorf("Expected RETRY_THRESHOLD validation error, got: %v", err)
 	}
 }
 func TestDefaultValues(t *testing.T) {

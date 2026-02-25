@@ -9,7 +9,6 @@ import (
 	"html"
 	"math/big"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -55,7 +54,7 @@ func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, 
 			TokenURL: RedditOAuthEndpoint + "/access_token",
 			AuthURL:  RedditOAuthEndpoint + "/authorize",
 		},
-		RedirectURL: fmt.Sprintf("http://localhost:%d", port),
+		RedirectURL: fmt.Sprintf("http://localhost:%d/callback", port),
 		Scopes:      []string{"identity", "history", "read", "save"},
 	}
 
@@ -70,8 +69,8 @@ func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, 
 	}
 
 	// Start local server to receive callback
-	fmt.Printf("Waiting for Reddit callback on http://localhost:%d...\n", port)
-	refreshToken, err := waitForCallback(port, state, oauthConfig, clientSecret, userAgent)
+	fmt.Printf("Waiting for Reddit callback on http://localhost:%d/callback...\n", port)
+	refreshToken, err := waitForCallback(port, state, oauthConfig)
 	if err != nil {
 		return "", fmt.Errorf("waiting for callback: %w", err)
 	}
@@ -85,9 +84,11 @@ func isPortConflict(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "port") ||
-		strings.Contains(err.Error(), "address already in use") ||
-		strings.Contains(err.Error(), " Bind")
+	errLower := strings.ToLower(err.Error())
+	return strings.Contains(errLower, "address already in use") ||
+		strings.Contains(errLower, "bind: address already in use") ||
+		strings.Contains(errLower, "only one usage of each socket address") ||
+		strings.Contains(errLower, "eaddrinuse")
 }
 
 // generateRandomState generates a random string for OAuth state parameter.
@@ -121,19 +122,19 @@ func openURL(url string) error {
 }
 
 // waitForCallback starts an HTTP server and waits for the OAuth callback.
-func waitForCallback(port int, state string, oauthConfig *oauth2.Config, clientSecret, userAgent string) (string, error) {
+func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string, error) {
 	resultChan := make(chan string, 1)
 	errorChan := make(chan error, 1)
 
 	// Create local ServeMux to avoid global registration issues
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		// Check for error in query params - escape user input to prevent XSS
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			escapedErrMsg := html.EscapeString(errMsg)
 			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
 			fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
-			errorChan <- fmt.Errorf("oauth error: %s - %s", errMsg, r.URL.Query().Get("error_description"))
+			errorChan <- fmt.Errorf("oauth error: %s - %s", escapedErrMsg, escapedDesc)
 			return
 		}
 
@@ -146,25 +147,16 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config, clientS
 
 		// Exchange code for token
 		code := r.URL.Query().Get("code")
-		token, err := exchangeCodeForToken(code, oauthConfig, clientSecret, userAgent)
+		token, err := exchangeCodeForToken(code, oauthConfig)
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
 			fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
-			errorChan <- err
+			errorChan <- fmt.Errorf("exchanging code for token: %s", escapedErr)
 			return
 		}
 
 		// Success - show token
 		fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
-
-		// Write token to file for automation - handle error properly
-		err = os.WriteFile("./refresh_token.txt", []byte(token), 0600)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to write refresh token to file: %v\n", err)
-			errorChan <- fmt.Errorf("failed to write token file: %w", err)
-			return
-		}
-		fmt.Println("\nRefresh token saved to ./refresh_token.txt")
 		resultChan <- token
 	})
 
@@ -180,13 +172,7 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config, clientS
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
-		// Clean up token file after 30 seconds
 		timer.Stop()
-		if err := os.Remove("./refresh_token.txt"); err != nil && !os.IsNotExist(err) {
-			fmt.Printf("Note: Could not clean up token file: %v\n", err)
-		} else if err == nil {
-			fmt.Println("Token file cleanup: removed ./refresh_token.txt")
-		}
 	}()
 
 	select {
@@ -206,7 +192,7 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config, clientS
 }
 
 // exchangeCodeForToken exchanges an authorization code for a refresh token.
-func exchangeCodeForToken(code string, oauthConfig *oauth2.Config, clientSecret, userAgent string) (string, error) {
+func exchangeCodeForToken(code string, oauthConfig *oauth2.Config) (string, error) {
 	// Use oauth2.Config.Exchange with context
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
