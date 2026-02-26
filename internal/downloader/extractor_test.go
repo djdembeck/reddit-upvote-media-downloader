@@ -150,6 +150,109 @@ func TestExtractorPermalink(t *testing.T) {
 			},
 			wantNil: true,
 		},
+		{
+			name: "MediaMeta with empty Source.URL (no fallback)",
+			post: reddit.RedditPost{
+				ID:        "emptyurl",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/emptyurl/test/",
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {
+						Mime:   "image/jpeg",
+						Source: reddit.MediaMetadataImage{URL: ""},
+					},
+				},
+			},
+			wantNil: true,
+		},
+		{
+			name: "MediaMeta with empty Source.URL (fallback to preview)",
+			post: reddit.RedditPost{
+				ID:        "fallback",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/fallback/test/",
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {
+						Mime:   "image/jpeg",
+						Source: reddit.MediaMetadataImage{URL: ""},
+						Previews: []reddit.MediaMetadataImage{
+							{URL: "https://preview.redd.it/preview1.jpg"},
+						},
+					},
+				},
+			},
+			wantCount:     1,
+			wantURL:       "https://preview.redd.it/preview1.jpg",
+			wantFilename:  "Test Post_fallback.jpg",
+			wantMediaType: "image",
+		},
+		{
+			name: "MediaMeta with empty/unsupported Mime",
+			post: reddit.RedditPost{
+				ID:        "bademime",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/bademime/test/",
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {
+						Mime:   "",
+						Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/img.jpg"},
+					},
+				},
+			},
+			wantCount:     1,
+			wantURL:       "https://preview.redd.it/img.jpg",
+			wantFilename:  "Test Post_bademime.jpg",
+			wantMediaType: "image",
+		},
+		{
+			name: "Gallery with MediaID missing from MediaMeta",
+			post: reddit.RedditPost{
+				ID:        "galmiss",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/galmiss/test/",
+				GalleryData: &reddit.GalleryData{
+					Items: []reddit.GalleryItem{
+						{MediaID: "media1"},
+						{MediaID: "missing_media"},
+						{MediaID: "media2"},
+					},
+				},
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {Mime: "image/jpeg", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/a.jpg"}},
+					"media2": {Mime: "image/png", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/b.png"}},
+				},
+			},
+			wantCount:      2,
+			wantURL:        "https://preview.redd.it/a.jpg",
+			wantFilename:   "Test Post_1_galmiss.jpg",
+			wantMediaType:  "image",
+			wantURL2:       "https://preview.redd.it/b.png",
+			wantFilename2:  "Test Post_3_galmiss.png",
+			wantMediaType2: "image",
+		},
+		{
+			name: "Gallery with all MediaIDs missing from MediaMeta",
+			post: reddit.RedditPost{
+				ID:        "galallmiss",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/galallmiss/test/",
+				GalleryData: &reddit.GalleryData{
+					Items: []reddit.GalleryItem{
+						{MediaID: "missing1"},
+						{MediaID: "missing2"},
+					},
+				},
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {Mime: "image/jpeg", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/a.jpg"}},
+				},
+			},
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {
