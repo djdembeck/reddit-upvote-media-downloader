@@ -111,6 +111,31 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 		return e.extractGfycatRedgifs(ctx, post, sourceURL)
 	case isDirectMediaURL(parsed):
 		return e.buildDownloadables(post, []string{sourceURL}, "")
+	case isRedditPermalinkHost(host):
+		if post.IsVideo {
+			return e.extractRedditVideo(ctx, post, sourceURL)
+		}
+		// Check for gallery data
+		if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
+			e.logger.Debug("extracting gallery from permalink", "post_id", post.ID)
+			return e.extractGallery(post)
+		}
+		// Check URLOverride for Reddit image URLs
+		if override := strings.TrimSpace(post.URLOverride); override != "" {
+			overrideParsed, err := url.Parse(override)
+			if err == nil && isRedditImageHost(strings.ToLower(overrideParsed.Host)) {
+				e.logger.Debug("extracting from URLOverride", "post_id", post.ID, "url", override)
+				return e.buildDownloadables(post, []string{override}, "")
+			}
+		}
+		// Check MediaMeta for image data
+		if len(post.MediaMeta) > 0 {
+			e.logger.Debug("extracting from MediaMeta", "post_id", post.ID)
+			return e.extractImageFromMediaMeta(post)
+		}
+		// No media found - skip with debug log
+		e.logger.Debug("skipping permalink post without media", "post_id", post.ID, "url", sourceURL)
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported media host: %s", host)
 	}
@@ -587,6 +612,10 @@ func isRedditImageHost(host string) bool {
 
 func isRedditVideoHost(host string) bool {
 	return host == "v.redd.it"
+}
+
+func isRedditPermalinkHost(host string) bool {
+	return host == "www.reddit.com" || host == "reddit.com"
 }
 
 func isImgurHost(host string) bool {
