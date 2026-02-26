@@ -9,146 +9,145 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 )
 
-func TestExtractorPermalinkWithURLOverrideImage(t *testing.T) {
+func TestExtractorPermalink(t *testing.T) {
 	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
-		ID:          "url123",
-		Title:       "Test Post",
-		Subreddit:   "pics",
-		URL:         "https://www.reddit.com/r/pics/comments/url123/test/",
-		URLOverride: "https://i.redd.it/abc123.jpg",
-	}
 
-	items, err := extractor.Extract(context.Background(), post)
-	if err != nil {
-		t.Fatalf("Extract() error = %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("Extract() items = %d, want 1", len(items))
-	}
-	if items[0].URL != "https://i.redd.it/abc123.jpg" {
-		t.Errorf("URL = %s, want https://i.redd.it/abc123.jpg", items[0].URL)
-	}
-	if items[0].Filename != "Test Post_url123.jpg" {
-		t.Errorf("Filename = %s, want Test Post_url123.jpg", items[0].Filename)
-	}
-	if items[0].MediaType != "image" {
-		t.Errorf("MediaType = %s, want image", items[0].MediaType)
-	}
-}
-
-func TestExtractorPermalinkWithMediaMeta(t *testing.T) {
-	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
-		ID:        "meta123",
-		Title:     "Test Post",
-		Subreddit: "pics",
-		URL:       "https://www.reddit.com/r/pics/comments/meta123/test/",
-		MediaMeta: map[string]reddit.MediaMetadata{
-			"media1": {
-				Mime:   "image/jpeg",
-				Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/img1.jpg"},
+	tests := []struct {
+		name           string
+		post           reddit.RedditPost
+		wantCount      int
+		wantURL        string
+		wantFilename   string
+		wantMediaType  string
+		wantURL2       string
+		wantFilename2  string
+		wantMediaType2 string
+		wantNil        bool
+	}{
+		{
+			name: "URLOverride image",
+			post: reddit.RedditPost{
+				ID:          "url123",
+				Title:       "Test Post",
+				Subreddit:   "pics",
+				URL:         "https://www.reddit.com/r/pics/comments/url123/test/",
+				URLOverride: "https://i.redd.it/abc123.jpg",
 			},
+			wantCount:     1,
+			wantURL:       "https://i.redd.it/abc123.jpg",
+			wantFilename:  "Test Post_url123.jpg",
+			wantMediaType: "image",
 		},
-	}
-
-	items, err := extractor.Extract(context.Background(), post)
-	if err != nil {
-		t.Fatalf("Extract() error = %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("Extract() items = %d, want 1", len(items))
-	}
-	if items[0].URL != "https://preview.redd.it/img1.jpg" {
-		t.Errorf("URL = %s, want https://preview.redd.it/img1.jpg", items[0].URL)
-	}
-	if items[0].Filename != "Test Post_meta123.jpg" {
-		t.Errorf("Filename = %s, want Test Post_meta123.jpg", items[0].Filename)
-	}
-}
-
-func TestExtractorPermalinkWithGallery(t *testing.T) {
-	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
-		ID:        "gal123",
-		Title:     "Test Post",
-		Subreddit: "pics",
-		URL:       "https://www.reddit.com/r/pics/comments/gal123/test/",
-		GalleryData: &reddit.GalleryData{
-			Items: []reddit.GalleryItem{{MediaID: "media1"}, {MediaID: "media2"}},
-		},
-		MediaMeta: map[string]reddit.MediaMetadata{
-			"media1": {Mime: "image/jpeg", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/a.jpg"}},
-			"media2": {Mime: "image/png", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/b.png"}},
-		},
-	}
-
-	items, err := extractor.Extract(context.Background(), post)
-	if err != nil {
-		t.Fatalf("Extract() error = %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("Extract() items = %d, want 2", len(items))
-	}
-	if items[0].URL != "https://preview.redd.it/a.jpg" {
-		t.Errorf("URL = %s, want https://preview.redd.it/a.jpg", items[0].URL)
-	}
-	if items[0].Filename != "Test Post_gal123.jpg" {
-		t.Errorf("Filename = %s, want Test Post_gal123.jpg", items[0].Filename)
-	}
-	if items[1].URL != "https://preview.redd.it/b.png" {
-		t.Errorf("URL = %s, want https://preview.redd.it/b.png", items[1].URL)
-	}
-	if items[1].Filename != "Test Post_gal123.png" {
-		t.Errorf("Filename = %s, want Test Post_gal123.png", items[1].Filename)
-	}
-}
-
-func TestExtractorPermalinkVideoPriority(t *testing.T) {
-	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
-		ID:        "vid123",
-		Title:     "Test Video Post",
-		Subreddit: "videos",
-		URL:       "https://www.reddit.com/r/videos/comments/vid123/test/",
-		IsVideo:   true,
-		Media: &reddit.Media{
-			RedditVideo: &reddit.RedditVideo{
-				FallbackURL: "https://v.redd.it/vid123/DASH_720.mp4",
+		{
+			name: "MediaMeta",
+			post: reddit.RedditPost{
+				ID:        "meta123",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/meta123/test/",
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {
+						Mime:   "image/jpeg",
+						Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/img1.jpg"},
+					},
+				},
 			},
+			wantCount:     1,
+			wantURL:       "https://preview.redd.it/img1.jpg",
+			wantFilename:  "Test Post_meta123.jpg",
+			wantMediaType: "image",
+		},
+		{
+			name: "Gallery",
+			post: reddit.RedditPost{
+				ID:        "gal123",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/gal123/test/",
+				GalleryData: &reddit.GalleryData{
+					Items: []reddit.GalleryItem{{MediaID: "media1"}, {MediaID: "media2"}},
+				},
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {Mime: "image/jpeg", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/a.jpg"}},
+					"media2": {Mime: "image/png", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/b.png"}},
+				},
+			},
+			wantCount:      2,
+			wantURL:        "https://preview.redd.it/a.jpg",
+			wantFilename:   "Test Post_1_gal123.jpg",
+			wantMediaType:  "image",
+			wantURL2:       "https://preview.redd.it/b.png",
+			wantFilename2:  "Test Post_2_gal123.png",
+			wantMediaType2: "image",
+		},
+		{
+			name: "Video priority",
+			post: reddit.RedditPost{
+				ID:        "vid123",
+				Title:     "Test Video Post",
+				Subreddit: "videos",
+				URL:       "https://www.reddit.com/r/videos/comments/vid123/test/",
+				IsVideo:   true,
+				Media: &reddit.Media{
+					RedditVideo: &reddit.RedditVideo{
+						FallbackURL: "https://v.redd.it/vid123/DASH_720.mp4",
+					},
+				},
+			},
+			wantCount:     1,
+			wantURL:       "https://v.redd.it/vid123/DASH_720.mp4",
+			wantFilename:  "Test Video Post_vid123.mp4",
+			wantMediaType: "video",
+		},
+		{
+			name: "No media",
+			post: reddit.RedditPost{
+				ID:        "nomedia",
+				Title:     "Text Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/nomedia/test/",
+				IsSelf:    true,
+			},
+			wantNil: true,
 		},
 	}
 
-	items, err := extractor.Extract(context.Background(), post)
-	if err != nil {
-		t.Fatalf("Extract() error = %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("Extract() items = %d, want 1", len(items))
-	}
-	if items[0].URL != "https://v.redd.it/vid123/DASH_720.mp4" {
-		t.Errorf("URL = %s, want https://v.redd.it/vid123/DASH_720.mp4", items[0].URL)
-	}
-	if items[0].MediaType != "video" {
-		t.Errorf("MediaType = %s, want video", items[0].MediaType)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := extractor.Extract(context.Background(), tt.post)
+			if err != nil {
+				t.Fatalf("Extract() error = %v", err)
+			}
 
-func TestExtractorPermalinkNoMedia(t *testing.T) {
-	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
-		ID:        "nomedia",
-		Title:     "Text Post",
-		Subreddit: "pics",
-		URL:       "https://www.reddit.com/r/pics/comments/nomedia/test/",
-		IsSelf:    true,
-	}
+			if tt.wantNil {
+				if len(items) != 0 {
+					t.Fatalf("Extract() items = %v, want empty", items)
+				}
+				return
+			}
 
-	items, err := extractor.Extract(context.Background(), post)
-	if err != nil {
-		t.Fatalf("Extract() error = %v", err)
-	}
-	if items != nil {
-		t.Fatalf("Extract() items = %v, want nil", items)
+			if len(items) != tt.wantCount {
+				t.Fatalf("Extract() items = %d, want %d", len(items), tt.wantCount)
+			}
+
+			if tt.wantURL != "" && items[0].URL != tt.wantURL {
+				t.Errorf("URL = %s, want %s", items[0].URL, tt.wantURL)
+			}
+			if tt.wantFilename != "" && items[0].Filename != tt.wantFilename {
+				t.Errorf("Filename = %s, want %s", items[0].Filename, tt.wantFilename)
+			}
+			if tt.wantMediaType != "" && items[0].MediaType != tt.wantMediaType {
+				t.Errorf("MediaType = %s, want %s", items[0].MediaType, tt.wantMediaType)
+			}
+			if tt.wantURL2 != "" && items[1].URL != tt.wantURL2 {
+				t.Errorf("items[1].URL = %s, want %s", items[1].URL, tt.wantURL2)
+			}
+			if tt.wantFilename2 != "" && items[1].Filename != tt.wantFilename2 {
+				t.Errorf("items[1].Filename = %s, want %s", items[1].Filename, tt.wantFilename2)
+			}
+			if tt.wantMediaType2 != "" && items[1].MediaType != tt.wantMediaType2 {
+				t.Errorf("items[1].MediaType = %s, want %s", items[1].MediaType, tt.wantMediaType2)
+			}
+		})
 	}
 }

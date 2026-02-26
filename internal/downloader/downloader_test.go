@@ -125,11 +125,11 @@ func TestExtractorGallery(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("Extract() items = %d, want 2", len(items))
 	}
-	if items[0].Filename != "untitled_gal123.jpg" {
-		t.Errorf("Filename = %s, want untitled_gal123.jpg", items[0].Filename)
+	if items[0].Filename != "untitled_1_gal123.jpg" {
+		t.Errorf("Filename = %s, want untitled_1_gal123.jpg", items[0].Filename)
 	}
-	if items[1].Filename != "untitled_gal123.png" {
-		t.Errorf("Filename = %s, want untitled_gal123.png", items[1].Filename)
+	if items[1].Filename != "untitled_2_gal123.png" {
+		t.Errorf("Filename = %s, want untitled_2_gal123.png", items[1].Filename)
 	}
 }
 

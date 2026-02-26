@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -147,7 +148,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	}
 
 	items := make([]Downloadable, 0, len(post.GalleryData.Items))
-	for _, item := range post.GalleryData.Items {
+	for i, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
 			e.logger.Warn("gallery media metadata missing", "media_id", item.MediaID)
@@ -169,9 +170,13 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			return nil, err
 		}
 
-		// Sanitize title for filesystem and create filename in bdfr-html format: {TITLE}_{POSTID}.{ext}
 		sanitizedTitle := sanitizeFilename(post.Title)
-		filename := fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		var filename string
+		if len(post.GalleryData.Items) > 1 {
+			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
+		} else {
+			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -191,8 +196,16 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 
 	e.logger.Debug("extracting from MediaMeta", "post_id", post.ID, "count", len(post.MediaMeta))
 
+	// Collect and sort keys for deterministic iteration
+	keys := make([]string, 0, len(post.MediaMeta))
+	for k := range post.MediaMeta {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	items := make([]Downloadable, 0, len(post.MediaMeta))
-	for _, meta := range post.MediaMeta {
+	for i, key := range keys {
+		meta := post.MediaMeta[key]
 		mediaURL := strings.TrimSpace(meta.Source.URL)
 		if mediaURL == "" && len(meta.Previews) > 0 {
 			mediaURL = strings.TrimSpace(meta.Previews[0].URL)
@@ -209,7 +222,12 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 		}
 
 		sanitizedTitle := sanitizeFilename(post.Title)
-		filename := fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		var filename string
+		if len(keys) > 1 {
+			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
+		} else {
+			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -615,7 +633,7 @@ func isRedditVideoHost(host string) bool {
 }
 
 func isRedditPermalinkHost(host string) bool {
-	return host == "www.reddit.com" || host == "reddit.com"
+	return host == "www.reddit.com" || host == "reddit.com" || host == "old.reddit.com"
 }
 
 func isImgurHost(host string) bool {
