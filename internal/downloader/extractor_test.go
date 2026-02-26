@@ -53,6 +53,20 @@ func TestExtractorPermalink(t *testing.T) {
 			wantMediaType: "image",
 		},
 		{
+			name: "URLOverride image on reddit.com",
+			post: reddit.RedditPost{
+				ID:          "reddit123",
+				Title:       "Reddit Post",
+				Subreddit:   "pics",
+				URL:         "https://reddit.com/r/pics/comments/reddit123/test/",
+				URLOverride: "https://i.redd.it/reddit123.jpg",
+			},
+			wantCount:     1,
+			wantURL:       "https://i.redd.it/reddit123.jpg",
+			wantFilename:  "Reddit Post_reddit123.jpg",
+			wantMediaType: "image",
+		},
+		{
 			name: "MediaMeta",
 			post: reddit.RedditPost{
 				ID:        "meta123",
