@@ -159,6 +159,44 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	return items, nil
 }
 
+func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloadable, error) {
+	if post.MediaMeta == nil || len(post.MediaMeta) == 0 {
+		return nil, nil
+	}
+
+	e.logger.Debug("extracting from MediaMeta", "post_id", post.ID, "count", len(post.MediaMeta))
+
+	items := make([]Downloadable, 0, len(post.MediaMeta))
+	for _, meta := range post.MediaMeta {
+		mediaURL := strings.TrimSpace(meta.Source.URL)
+		if mediaURL == "" && len(meta.Previews) > 0 {
+			mediaURL = strings.TrimSpace(meta.Previews[0].URL)
+		}
+		if mediaURL == "" {
+			e.logger.Warn("media metadata URL missing", "post_id", post.ID)
+			continue
+		}
+
+		mediaURL = decodeMediaURL(mediaURL)
+		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
+		if err != nil {
+			return nil, err
+		}
+
+		sanitizedTitle := sanitizeFilename(post.Title)
+		filename := fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		items = append(items, Downloadable{
+			PostID:    post.ID,
+			URL:       mediaURL,
+			Filename:  filename,
+			MediaType: mediaType,
+			Subreddit: post.Subreddit,
+		})
+	}
+
+	return items, nil
+}
+
 func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	if post.Media != nil && post.Media.RedditVideo != nil {
 		fallback := strings.TrimSpace(post.Media.RedditVideo.FallbackURL)
