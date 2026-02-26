@@ -282,22 +282,41 @@ func (c *Client) authenticate(ctx context.Context) error {
 
 // refreshAndSaveToken refreshes the token using the provided tokenSource and saves it.
 // It logs any save errors using slog for diagnostics.
+// Includes retry with exponential backoff for transient errors (network issues, rate limits).
 func (c *Client) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource) error {
-	newToken, err := ts.Token()
-	if err != nil {
-		return fmt.Errorf("refreshing token: %w", err)
-	}
+	var lastErr error
+	maxRetries := 3
+	baseDelay := 1 * time.Second
 
-	c.token = newToken
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		newToken, err := ts.Token()
+		if err == nil {
+			c.token = newToken
 
-	// Save token if store is available and log any errors
-	if c.tokenStore != nil {
-		if err := c.tokenStore.SaveToken(c.token); err != nil {
-			slog.Warn("Failed to save token", "error", err, "source", "refresh")
+			// Save token if store is available and log any errors
+			if c.tokenStore != nil {
+				if err := c.tokenStore.SaveToken(c.token); err != nil {
+					slog.Warn("Failed to save token", "error", err, "source", "refresh")
+				}
+			}
+			return nil
+		}
+
+		// Check if it's a 429 error
+		lastErr = err
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<attempt) // Exponential backoff: 1s, 2s, 4s
+			slog.Warn("Token refresh attempt failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "delay", delay, "error", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+				continue
+			}
 		}
 	}
 
-	return nil
+	return fmt.Errorf("refreshing token after %d retries: %w", maxRetries, lastErr)
 }
 
 // ensureValidToken refreshes the token if it's expired.
