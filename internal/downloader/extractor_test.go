@@ -39,6 +39,20 @@ func TestExtractorPermalink(t *testing.T) {
 			wantMediaType: "image",
 		},
 		{
+			name: "URLOverride image on old.reddit.com",
+			post: reddit.RedditPost{
+				ID:          "old123",
+				Title:       "Old Reddit Post",
+				Subreddit:   "pics",
+				URL:         "https://old.reddit.com/r/pics/comments/old123/test/",
+				URLOverride: "https://i.redd.it/old123.jpg",
+			},
+			wantCount:     1,
+			wantURL:       "https://i.redd.it/old123.jpg",
+			wantFilename:  "Old Reddit Post_old123.jpg",
+			wantMediaType: "image",
+		},
+		{
 			name: "MediaMeta",
 			post: reddit.RedditPost{
 				ID:        "meta123",
@@ -56,6 +70,32 @@ func TestExtractorPermalink(t *testing.T) {
 			wantURL:       "https://preview.redd.it/img1.jpg",
 			wantFilename:  "Test Post_meta123.jpg",
 			wantMediaType: "image",
+		},
+		{
+			name: "MediaMeta multiple keys unsorted",
+			post: reddit.RedditPost{
+				ID:        "meta456",
+				Title:     "Test Post",
+				Subreddit: "pics",
+				URL:       "https://www.reddit.com/r/pics/comments/meta456/test/",
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"b_media": {
+						Mime:   "image/png",
+						Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/img2.png"},
+					},
+					"a_media": {
+						Mime:   "image/jpeg",
+						Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/img1.jpg"},
+					},
+				},
+			},
+			wantCount:      2,
+			wantURL:        "https://preview.redd.it/img1.jpg",
+			wantFilename:   "Test Post_1_meta456.jpg",
+			wantMediaType:  "image",
+			wantURL2:       "https://preview.redd.it/img2.png",
+			wantFilename2:  "Test Post_2_meta456.png",
+			wantMediaType2: "image",
 		},
 		{
 			name: "Gallery",
@@ -138,6 +178,12 @@ func TestExtractorPermalink(t *testing.T) {
 			}
 			if tt.wantMediaType != "" && items[0].MediaType != tt.wantMediaType {
 				t.Errorf("MediaType = %s, want %s", items[0].MediaType, tt.wantMediaType)
+			}
+			if tt.wantURL2 != "" || tt.wantFilename2 != "" || tt.wantMediaType2 != "" {
+				if len(items) <= 1 {
+					t.Fatalf("Expected second item for wantURL2=%q, wantFilename2=%q, wantMediaType2=%q, but got len(items)=%d",
+						tt.wantURL2, tt.wantFilename2, tt.wantMediaType2, len(items))
+				}
 			}
 			if tt.wantURL2 != "" && items[1].URL != tt.wantURL2 {
 				t.Errorf("items[1].URL = %s, want %s", items[1].URL, tt.wantURL2)
