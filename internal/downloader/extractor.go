@@ -83,6 +83,7 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 	}
 
 	if post.IsVideo {
+		sourceURL = decodeMediaURL(sourceURL)
 		return e.extractFromURL(ctx, post, sourceURL)
 	}
 
@@ -118,14 +119,6 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 	case isDirectMediaURL(parsed):
 		return e.buildDownloadables(post, []string{sourceURL}, "")
 	case isRedditPermalinkHost(host):
-		if post.IsVideo {
-			return e.extractRedditVideo(ctx, post, sourceURL)
-		}
-		// Check for gallery data
-		if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
-			e.logger.Debug("extracting gallery from permalink", "post_id", post.ID)
-			return e.extractGallery(post)
-		}
 		// Check MediaMeta for image data
 		if len(post.MediaMeta) > 0 {
 			e.logger.Debug("extracting from MediaMeta", "post_id", post.ID)
