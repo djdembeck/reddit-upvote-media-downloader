@@ -77,14 +77,19 @@ func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.
 }
 
 func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Downloadable, error) {
-	if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
-		return e.extractGallery(post)
+	if post.IsVideo {
+		return e.extractFromURL(ctx, post, post.URL)
 	}
 
 	sourceURL := strings.TrimSpace(post.URLOverride)
 	if sourceURL == "" {
 		sourceURL = strings.TrimSpace(post.URL)
 	}
+
+	if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
+		return e.extractGallery(post)
+	}
+
 	if sourceURL == "" {
 		return nil, errors.New("post URL is empty")
 	}

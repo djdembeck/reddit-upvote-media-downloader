@@ -2,16 +2,12 @@ package downloader
 
 import (
 	"context"
-	"net/http"
 	"testing"
-	"time"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 )
 
 func TestExtractorPermalink(t *testing.T) {
-	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-
 	tests := []struct {
 		name           string
 		post           reddit.RedditPost
@@ -154,6 +150,35 @@ func TestExtractorPermalink(t *testing.T) {
 			wantMediaType: "video",
 		},
 		{
+			name: "Video wins over others",
+			post: reddit.RedditPost{
+				ID:          "vidmix",
+				Title:       "Test Video Post",
+				Subreddit:   "videos",
+				URL:         "https://www.reddit.com/r/videos/comments/vidmix/test/",
+				URLOverride: "https://i.redd.it/override.jpg",
+				IsVideo:     true,
+				GalleryData: &reddit.GalleryData{
+					Items: []reddit.GalleryItem{{MediaID: "media1"}},
+				},
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {
+						Mime:   "image/jpeg",
+						Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/gallery.jpg"},
+					},
+				},
+				Media: &reddit.Media{
+					RedditVideo: &reddit.RedditVideo{
+						FallbackURL: "https://v.redd.it/vidmix/DASH_720.mp4",
+					},
+				},
+			},
+			wantCount:     1,
+			wantURL:       "https://v.redd.it/vidmix/DASH_720.mp4",
+			wantFilename:  "Test Video Post_vidmix.mp4",
+			wantMediaType: "video",
+		},
+		{
 			name: "No media",
 			post: reddit.RedditPost{
 				ID:        "nomedia",
@@ -271,6 +296,7 @@ func TestExtractorPermalink(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			extractor := NewExtractor(nil, "test-agent")
 			items, err := extractor.Extract(context.Background(), tt.post)
 			if err != nil {
 				t.Fatalf("Extract() error = %v", err)
