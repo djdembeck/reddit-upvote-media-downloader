@@ -107,10 +107,10 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 	host := strings.ToLower(parsed.Host)
 
 	switch {
-	case isRedditImageHost(host):
-		return e.buildDownloadables(post, []string{sourceURL}, "")
 	case isRedditVideoHost(host) || post.IsVideo:
 		return e.extractRedditVideo(ctx, post, sourceURL)
+	case isRedditImageHost(host):
+		return e.buildDownloadables(post, []string{sourceURL}, "")
 	case isImgurHost(host):
 		return e.extractImgur(ctx, post, sourceURL)
 	case isGfycatHost(host) || isRedgifsHost(host):
@@ -125,14 +125,6 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 		if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
 			e.logger.Debug("extracting gallery from permalink", "post_id", post.ID)
 			return e.extractGallery(post)
-		}
-		// Check URLOverride for Reddit image URLs
-		if override := strings.TrimSpace(post.URLOverride); override != "" {
-			overrideParsed, err := url.Parse(override)
-			if err == nil && isRedditImageHost(strings.ToLower(overrideParsed.Host)) {
-				e.logger.Debug("extracting from URLOverride", "post_id", post.ID, "url", override)
-				return e.buildDownloadables(post, []string{override}, "")
-			}
 		}
 		// Check MediaMeta for image data
 		if len(post.MediaMeta) > 0 {
@@ -216,7 +208,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 			mediaURL = strings.TrimSpace(meta.Previews[0].URL)
 		}
 		if mediaURL == "" {
-			e.logger.Warn("media metadata URL missing", "post_id", post.ID)
+			e.logger.Warn("media metadata URL missing", "post_id", post.ID, "media_id", key)
 			continue
 		}
 
