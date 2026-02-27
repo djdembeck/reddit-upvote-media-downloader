@@ -138,6 +138,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	}
 
 	items := make([]Downloadable, 0, len(post.GalleryData.Items))
+	sanitizedTitle := sanitizeFilename(post.Title)
 	for i, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
@@ -160,7 +161,6 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			return nil, fmt.Errorf("failed to determine extension/type for post=%v media_id=%v url=%v: %w", post.ID, item.MediaID, mediaURL, err)
 		}
 
-		sanitizedTitle := sanitizeFilename(post.Title)
 		var filename string
 		if len(post.GalleryData.Items) > 1 {
 			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
@@ -194,6 +194,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 	sort.Strings(keys)
 
 	items := make([]Downloadable, 0, len(post.MediaMeta))
+	sanitizedTitle := sanitizeFilename(post.Title)
 	for i, key := range keys {
 		meta := post.MediaMeta[key]
 		mediaURL := strings.TrimSpace(meta.Source.URL)
@@ -211,7 +212,6 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 			return nil, fmt.Errorf("failed to determine extension/type for post=%v key=%v url=%v: %w", post.ID, key, mediaURL, err)
 		}
 
-		sanitizedTitle := sanitizeFilename(post.Title)
 		var filename string
 		if len(keys) > 1 {
 			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
@@ -492,6 +492,7 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 
 func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, mediaType string) ([]Downloadable, error) {
 	items := make([]Downloadable, 0, len(urls))
+	sanitizedTitle := sanitizeFilename(post.Title)
 	for i, mediaURL := range urls {
 		ext, resolvedType, err := extensionAndType(mediaURL, "")
 		if err != nil {
@@ -500,7 +501,6 @@ func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, me
 		if mediaType != "" {
 			resolvedType = mediaType
 		}
-		sanitizedTitle := sanitizeFilename(post.Title)
 		var filename string
 		if len(urls) > 1 {
 			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
