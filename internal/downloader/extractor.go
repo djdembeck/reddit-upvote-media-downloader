@@ -77,13 +77,13 @@ func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.
 }
 
 func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Downloadable, error) {
-	if post.IsVideo {
-		return e.extractFromURL(ctx, post, post.URL)
-	}
-
 	sourceURL := strings.TrimSpace(post.URLOverride)
 	if sourceURL == "" {
 		sourceURL = strings.TrimSpace(post.URL)
+	}
+
+	if post.IsVideo {
+		return e.extractFromURL(ctx, post, sourceURL)
 	}
 
 	if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
@@ -172,7 +172,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 		mediaURL = decodeMediaURL(mediaURL)
 		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to determine extension/type for post=%v media_id=%v url=%v: %w", post.ID, item.MediaID, mediaURL, err)
 		}
 
 		sanitizedTitle := sanitizeFilename(post.Title)
@@ -223,7 +223,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 		mediaURL = decodeMediaURL(mediaURL)
 		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to determine extension/type for post=%v key=%v url=%v: %w", post.ID, key, mediaURL, err)
 		}
 
 		sanitizedTitle := sanitizeFilename(post.Title)
