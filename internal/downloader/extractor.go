@@ -161,12 +161,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			return nil, fmt.Errorf("failed to determine extension/type for post=%v media_id=%v url=%v: %w", post.ID, item.MediaID, mediaURL, err)
 		}
 
-		var filename string
-		if len(post.GalleryData.Items) > 1 {
-			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
-		} else {
-			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
-		}
+		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(post.GalleryData.Items))
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -210,12 +205,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 			return nil, fmt.Errorf("failed to determine extension/type for post=%v key=%v url=%v: %w", post.ID, key, mediaURL, err)
 		}
 
-		var filename string
-		if len(keys) > 1 {
-			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
-		} else {
-			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
-		}
+		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(keys))
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -499,12 +489,7 @@ func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, me
 		if mediaType != "" {
 			resolvedType = mediaType
 		}
-		var filename string
-		if len(urls) > 1 {
-			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
-		} else {
-			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
-		}
+		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(urls))
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -646,6 +631,16 @@ func isDirectMediaURL(parsed *url.URL) bool {
 func isSupportedExtension(ext string) bool {
 	_, ok := supportedExtensions[strings.ToLower(ext)]
 	return ok
+}
+
+// buildFilename generates a standardized filename based on the post title, ID, extension,
+// and item index. When totalItems > 1, it uses an indexed pattern (e.g., "title_1_postid.jpg");
+// otherwise, it uses a non-indexed pattern (e.g., "title_postid.jpg").
+func buildFilename(sanitizedTitle, postID, ext string, index, totalItems int) string {
+	if totalItems > 1 {
+		return fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, index, postID, ext)
+	}
+	return fmt.Sprintf("%s_%s%s", sanitizedTitle, postID, ext)
 }
 
 func sanitizeFilename(title string) string {
