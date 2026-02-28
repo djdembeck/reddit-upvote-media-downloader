@@ -184,8 +184,6 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 		return nil, nil
 	}
 
-	e.logger.Debug("extracting from MediaMeta", "post_id", post.ID, "count", len(post.MediaMeta))
-
 	// Collect and sort keys for deterministic iteration
 	keys := make([]string, 0, len(post.MediaMeta))
 	for k := range post.MediaMeta {
