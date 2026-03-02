@@ -434,6 +434,7 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 
 		params := url.Values{}
 		params.Set("limit", strconv.Itoa(fetchCount))
+		params.Set("sort", "new") // Ensure newest posts first
 		if after != nil {
 			params.Set("after", *after)
 		}
