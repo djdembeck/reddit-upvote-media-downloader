@@ -606,7 +606,7 @@ func isRedditVideoHost(host string) bool {
 }
 
 func isRedditPermalinkHost(host string) bool {
-	return host == "www.reddit.com" || host == "reddit.com" || host == "old.reddit.com"
+	return strings.HasSuffix(host, ".reddit.com") || host == "reddit.com"
 }
 
 func isImgurHost(host string) bool {
