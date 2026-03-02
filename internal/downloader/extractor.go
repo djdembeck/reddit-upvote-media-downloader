@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,14 +77,20 @@ func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.
 }
 
 func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Downloadable, error) {
-	if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
-		return e.extractGallery(post)
-	}
-
 	sourceURL := strings.TrimSpace(post.URLOverride)
 	if sourceURL == "" {
 		sourceURL = strings.TrimSpace(post.URL)
 	}
+
+	if post.IsVideo {
+		sourceURL = decodeMediaURL(sourceURL)
+		return e.extractFromURL(ctx, post, sourceURL)
+	}
+
+	if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
+		return e.extractGallery(post)
+	}
+
 	if sourceURL == "" {
 		return nil, errors.New("post URL is empty")
 	}
@@ -101,16 +108,25 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 	host := strings.ToLower(parsed.Host)
 
 	switch {
-	case isRedditImageHost(host):
-		return e.buildDownloadables(post, []string{sourceURL}, "")
 	case isRedditVideoHost(host) || post.IsVideo:
 		return e.extractRedditVideo(ctx, post, sourceURL)
+	case isRedditImageHost(host):
+		return e.buildDownloadables(post, []string{sourceURL}, "")
 	case isImgurHost(host):
 		return e.extractImgur(ctx, post, sourceURL)
 	case isGfycatHost(host) || isRedgifsHost(host):
 		return e.extractGfycatRedgifs(ctx, post, sourceURL)
 	case isDirectMediaURL(parsed):
 		return e.buildDownloadables(post, []string{sourceURL}, "")
+	case isRedditPermalinkHost(host):
+		// Check MediaMeta for image data
+		if len(post.MediaMeta) > 0 {
+			e.logger.Debug("extracting from MediaMeta", "post_id", post.ID)
+			return e.extractImageFromMediaMeta(post)
+		}
+		// No media found - skip with debug log
+		e.logger.Debug("skipping permalink post without media", "post_id", post.ID, "url", sourceURL)
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported media host: %s", host)
 	}
@@ -122,7 +138,8 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	}
 
 	items := make([]Downloadable, 0, len(post.GalleryData.Items))
-	for _, item := range post.GalleryData.Items {
+	sanitizedTitle := sanitizeFilename(post.Title)
+	for i, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
 			e.logger.Warn("gallery media metadata missing", "media_id", item.MediaID)
@@ -141,12 +158,54 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 		mediaURL = decodeMediaURL(mediaURL)
 		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to determine extension/type for post=%v media_id=%v url=%v: %w", post.ID, item.MediaID, mediaURL, err)
 		}
 
-		// Sanitize title for filesystem and create filename in bdfr-html format: {TITLE}_{POSTID}.{ext}
-		sanitizedTitle := sanitizeFilename(post.Title)
-		filename := fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
+		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(post.GalleryData.Items))
+		items = append(items, Downloadable{
+			PostID:    post.ID,
+			URL:       mediaURL,
+			Filename:  filename,
+			MediaType: mediaType,
+			Subreddit: post.Subreddit,
+		})
+	}
+
+	return items, nil
+}
+
+func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloadable, error) {
+	if post.MediaMeta == nil || len(post.MediaMeta) == 0 {
+		return nil, nil
+	}
+
+	// Collect and sort keys for deterministic iteration
+	keys := make([]string, 0, len(post.MediaMeta))
+	for k := range post.MediaMeta {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	items := make([]Downloadable, 0, len(post.MediaMeta))
+	sanitizedTitle := sanitizeFilename(post.Title)
+	for i, key := range keys {
+		meta := post.MediaMeta[key]
+		mediaURL := strings.TrimSpace(meta.Source.URL)
+		if mediaURL == "" && len(meta.Previews) > 0 {
+			mediaURL = strings.TrimSpace(meta.Previews[0].URL)
+		}
+		if mediaURL == "" {
+			e.logger.Warn("media metadata URL missing", "post_id", post.ID, "media_id", key)
+			continue
+		}
+
+		mediaURL = decodeMediaURL(mediaURL)
+		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine extension/type for post=%v key=%v url=%v: %w", post.ID, key, mediaURL, err)
+		}
+
+		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(keys))
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -421,6 +480,7 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 
 func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, mediaType string) ([]Downloadable, error) {
 	items := make([]Downloadable, 0, len(urls))
+	sanitizedTitle := sanitizeFilename(post.Title)
 	for i, mediaURL := range urls {
 		ext, resolvedType, err := extensionAndType(mediaURL, "")
 		if err != nil {
@@ -429,13 +489,7 @@ func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, me
 		if mediaType != "" {
 			resolvedType = mediaType
 		}
-		sanitizedTitle := sanitizeFilename(post.Title)
-		var filename string
-		if len(urls) > 1 {
-			filename = fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, i+1, post.ID, ext)
-		} else {
-			filename = fmt.Sprintf("%s_%s%s", sanitizedTitle, post.ID, ext)
-		}
+		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(urls))
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
@@ -551,6 +605,10 @@ func isRedditVideoHost(host string) bool {
 	return host == "v.redd.it"
 }
 
+func isRedditPermalinkHost(host string) bool {
+	return strings.HasSuffix(host, ".reddit.com") || host == "reddit.com"
+}
+
 func isImgurHost(host string) bool {
 	return host == "imgur.com" || strings.HasSuffix(host, ".imgur.com")
 }
@@ -573,6 +631,16 @@ func isDirectMediaURL(parsed *url.URL) bool {
 func isSupportedExtension(ext string) bool {
 	_, ok := supportedExtensions[strings.ToLower(ext)]
 	return ok
+}
+
+// buildFilename generates a standardized filename based on the post title, ID, extension,
+// and item index. When totalItems > 1, it uses an indexed pattern (e.g., "title_1_postid.jpg");
+// otherwise, it uses a non-indexed pattern (e.g., "title_postid.jpg").
+func buildFilename(sanitizedTitle, postID, ext string, index, totalItems int) string {
+	if totalItems > 1 {
+		return fmt.Sprintf("%s_%d_%s%s", sanitizedTitle, index, postID, ext)
+	}
+	return fmt.Sprintf("%s_%s%s", sanitizedTitle, postID, ext)
 }
 
 func sanitizeFilename(title string) string {
