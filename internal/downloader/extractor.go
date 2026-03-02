@@ -34,6 +34,7 @@ var supportedExtensions = map[string]string{
 	".jpeg": "image",
 	".png":  "image",
 	".gif":  "image",
+	".gifv": "video", // Imgur gifv is actually video (HTML wrapper)
 	".mp4":  "video",
 	".webm": "video",
 }
@@ -250,6 +251,14 @@ func (e *Extractor) extractImgur(ctx context.Context, post reddit.RedditPost, so
 	if err != nil {
 		return nil, fmt.Errorf("parse imgur URL: %w", err)
 	}
+
+	// Handle .gifv files - convert to direct MP4 URL
+	if strings.HasSuffix(strings.ToLower(parsed.Path), ".gifv") {
+		mediaID := path.Base(strings.TrimSuffix(parsed.Path, ".gifv"))
+		videoURL := fmt.Sprintf("https://i.imgur.com/%s.mp4", mediaID)
+		return e.buildDownloadables(post, []string{videoURL}, "video")
+	}
+
 	if strings.HasPrefix(strings.ToLower(parsed.Host), "i.imgur.com") {
 		return e.buildDownloadables(post, []string{sourceURL}, "")
 	}
@@ -304,12 +313,7 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 		return "", errors.New("missing media ID")
 	}
 
-	if isGfycatHost(host) {
-		apiURL := fmt.Sprintf("https://api.gfycat.com/v1/gfycats/%s", mediaID)
-		if mediaURL, err := e.fetchGfycatAPI(ctx, apiURL); err == nil {
-			return mediaURL, nil
-		}
-	}
+	// Try redgifs API (gfycat API was shut down in 2023)
 	if isRedgifsHost(host) {
 		apiURL := fmt.Sprintf("https://api.redgifs.com/v2/gifs/%s", mediaID)
 		if mediaURL, err := e.fetchRedgifsAPI(ctx, apiURL); err == nil {
@@ -317,6 +321,7 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 		}
 	}
 
+	// Fall back to page scraping for both gfycat and redgifs
 	body, err := e.fetchText(ctx, pageURL)
 	if err != nil {
 		return "", err

@@ -202,41 +202,6 @@ func TestExtractorImgurPage(t *testing.T) {
 	}
 }
 
-func TestExtractorGfycatAPI(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/v1/gfycats/") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		payload := map[string]map[string]interface{}{
-			"gfyItem": {
-				"mp4Url": "https://giant.gfycat.com/sample.mp4",
-			},
-		}
-		json.NewEncoder(w).Encode(payload)
-	}))
-	defer server.Close()
-
-	client := newRewriteClient(server, "api.gfycat.com")
-	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
-		ID:        "gfy1",
-		Subreddit: "gifs",
-		URL:       "https://gfycat.com/sample",
-	}
-
-	items, err := extractor.Extract(context.Background(), post)
-	if err != nil {
-		t.Fatalf("Extract() error = %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("Extract() items = %d, want 1", len(items))
-	}
-	if items[0].URL != "https://giant.gfycat.com/sample.mp4" {
-		t.Errorf("URL = %s, want https://giant.gfycat.com/sample.mp4", items[0].URL)
-	}
-}
-
 func TestExtractorRedgifsAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/v2/gifs/") {
