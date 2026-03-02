@@ -254,7 +254,22 @@ func (e *Extractor) extractImgur(ctx context.Context, post reddit.RedditPost, so
 
 	// Handle .gifv files - convert to direct MP4 URL
 	if strings.HasSuffix(strings.ToLower(parsed.Path), ".gifv") {
-		mediaID := path.Base(strings.TrimSuffix(parsed.Path, ".gifv"))
+		// Get base name and use case-insensitive suffix handling
+		base := path.Base(parsed.Path)
+		lowerBase := strings.ToLower(base)
+		lowerBase = strings.TrimSuffix(lowerBase, ".gifv")
+
+		// Validate the resulting mediaID
+		if lowerBase == "" || !isValidMediaID(lowerBase) {
+			e.logger.Debug("invalid mediaID from .gifv URL", "path", parsed.Path)
+			return nil, nil
+		}
+
+		// Use original-cased base but with .gifv removed
+		// Get the length of .gifv suffix in lower case to slice correctly
+		suffixLen := len(".gifv")
+		mediaID := base[:len(base)-suffixLen]
+
 		videoURL := fmt.Sprintf("https://i.imgur.com/%s.mp4", mediaID)
 		return e.buildDownloadables(post, []string{videoURL}, "video")
 	}
@@ -331,43 +346,6 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 	}
 
 	return "", errors.New("mp4 URL not found in gfycat/redgifs response")
-}
-
-func (e *Extractor) fetchGfycatAPI(ctx context.Context, apiURL string) (string, error) {
-	response, err := e.fetchJSON(ctx, apiURL)
-	if err != nil {
-		return "", err
-	}
-
-	var payload struct {
-		GfyItem struct {
-			Mp4URL     string `json:"mp4Url"`
-			ContentURL struct {
-				MP4 struct {
-					URL string `json:"url"`
-				} `json:"mp4"`
-				Mobile struct {
-					URL string `json:"url"`
-				} `json:"mobile"`
-			} `json:"content_urls"`
-		} `json:"gfyItem"`
-	}
-
-	if err := json.Unmarshal(response, &payload); err != nil {
-		return "", fmt.Errorf("decode gfycat API: %w", err)
-	}
-
-	if payload.GfyItem.Mp4URL != "" {
-		return payload.GfyItem.Mp4URL, nil
-	}
-	if payload.GfyItem.ContentURL.MP4.URL != "" {
-		return payload.GfyItem.ContentURL.MP4.URL, nil
-	}
-	if payload.GfyItem.ContentURL.Mobile.URL != "" {
-		return payload.GfyItem.ContentURL.Mobile.URL, nil
-	}
-
-	return "", errors.New("gfycat API did not return mp4 URL")
 }
 
 func (e *Extractor) fetchRedgifsAPI(ctx context.Context, apiURL string) (string, error) {
@@ -636,6 +614,12 @@ func isDirectMediaURL(parsed *url.URL) bool {
 func isSupportedExtension(ext string) bool {
 	_, ok := supportedExtensions[strings.ToLower(ext)]
 	return ok
+}
+
+var validMediaIDRegex = regexp.MustCompile(`^[a-zA-Z0-9]+$`)
+
+func isValidMediaID(id string) bool {
+	return validMediaIDRegex.MatchString(id)
 }
 
 // buildFilename generates a standardized filename based on the post title, ID, extension,
