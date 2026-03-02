@@ -18,6 +18,9 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 )
 
+// errGone indicates the resource has been permanently removed (HTTP 410)
+var errGone = errors.New("resource gone (410)")
+
 const (
 	defaultUserAgent = "reddit-media-downloader/1.0"
 )
@@ -27,6 +30,7 @@ var (
 	imgurOGImageRegex   = regexp.MustCompile(`property=["']og:image["']\s+content=["']([^"']+)["']`)
 	imgurMetaImageRegex = regexp.MustCompile(`name=["']twitter:image["']\s+content=["']([^"']+)["']`)
 	mp4URLRegex         = regexp.MustCompile(`https?://[^"'\s]+\.mp4`)
+	webmURLRegex        = regexp.MustCompile(`https?://[^"'\s]+\.webm`)
 )
 
 var supportedExtensions = map[string]string{
@@ -85,7 +89,11 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 
 	if post.IsVideo {
 		sourceURL = decodeMediaURL(sourceURL)
-		return e.extractFromURL(ctx, post, sourceURL)
+		items, err := e.extractFromURL(ctx, post, sourceURL)
+		if err != nil && errors.Is(err, errGone) {
+			return nil, nil
+		}
+		return items, err
 	}
 
 	if post.GalleryData != nil && len(post.GalleryData.Items) > 0 {
@@ -98,7 +106,11 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 
 	sourceURL = decodeMediaURL(sourceURL)
 
-	return e.extractFromURL(ctx, post, sourceURL)
+	items, err := e.extractFromURL(ctx, post, sourceURL)
+	if err != nil && errors.Is(err, errGone) {
+		return nil, nil
+	}
+	return items, err
 }
 
 func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
@@ -308,7 +320,11 @@ func (e *Extractor) fetchImgurImageURL(ctx context.Context, pageURL string) (str
 func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, errGone) {
+			return nil, nil
+		}
+		e.logger.Debug("gfycat/redgifs content unavailable (service shutdown)", "post_id", post.ID, "url", sourceURL)
+		return nil, nil
 	}
 
 	return e.buildDownloadables(post, []string{mediaURL}, "")
@@ -344,8 +360,11 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 	if match := mp4URLRegex.FindString(body); match != "" {
 		return match, nil
 	}
+	if match := webmURLRegex.FindString(body); match != "" {
+		return match, nil
+	}
 
-	return "", errors.New("mp4 URL not found in gfycat/redgifs response")
+	return "", errors.New("mp4/webm URL not found in gfycat/redgifs response")
 }
 
 func (e *Extractor) fetchRedgifsAPI(ctx context.Context, apiURL string) (string, error) {
@@ -391,6 +410,9 @@ func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusGone {
+		return "", errGone
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
@@ -417,6 +439,9 @@ func (e *Extractor) fetchJSON(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusGone {
+		return nil, errGone
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
