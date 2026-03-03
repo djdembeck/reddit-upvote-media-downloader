@@ -400,6 +400,7 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 		body             string
 		endpointPath     string
 		expectErr        bool
+		expectNil        bool
 		expectItemsCount int
 		expectItemURL    string
 	}{
@@ -410,6 +411,7 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 			body:             "",
 			endpointPath:     "/testid",
 			expectErr:        false,
+			expectNil:        true,
 			expectItemsCount: 0,
 			expectItemURL:    "",
 		},
@@ -448,7 +450,6 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tt.statusCode)
 				if tt.statusCode == http.StatusOK && tt.contentType != "" {
 					w.Header().Set("Content-Type", tt.contentType)
 					if tt.contentType == "application/json" {
@@ -469,7 +470,10 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 							http.Error(w, "HTTP handler failed to write response", http.StatusInternalServerError)
 							return
 						}
+						w.WriteHeader(tt.statusCode)
 					}
+				} else {
+					w.WriteHeader(tt.statusCode)
 				}
 			}))
 			defer server.Close()
@@ -489,7 +493,11 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 				}
 			}
 
-			if len(items) != tt.expectItemsCount {
+			if tt.expectNil {
+				if items != nil {
+					t.Errorf("items = %v, want nil", items)
+				}
+			} else if len(items) != tt.expectItemsCount {
 				t.Errorf("items length = %d, want %d", len(items), tt.expectItemsCount)
 			}
 
