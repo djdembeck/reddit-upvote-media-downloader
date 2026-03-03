@@ -24,6 +24,10 @@ func TestExtractPostID(t *testing.T) {
 		{"I couldn't post this_1r0z7xp.jpeg", "1r0z7xp", false},
 		{"Going all the way_1r4m3qf.mp4", "1r4m3qf", false},
 		{"Celebrating 2 years_1r42ye0_1.jpg", "1r42ye0", false},
+		{"1lgwfyg.jpg", "1lgwfyg", false},
+		{"188x0kd.png", "188x0kd", false},
+		{"1r0z7xp.jpeg", "1r0z7xp", false},
+		{"1r4m3qf.mp4", "1r4m3qf", false},
 		{"test_file.jpg", "", true},
 		{"test.jpg", "", true},
 	}
