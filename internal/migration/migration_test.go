@@ -221,12 +221,19 @@ func TestMigratorOrphaned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(testFile); err != nil {
-		t.Error("Orphaned file should remain")
+	// Assert: file moved to dest/unknown/{filename}
+	destFile := filepath.Join(destDir, "unknown", "Orphaned_xyz789.jpg")
+	if _, err := os.Stat(destFile); err != nil {
+		t.Errorf("Orphaned file should be moved to dest/unknown/: %v", err)
 	}
 
-	if migrator.Log.SkippedCount != 1 {
-		t.Errorf("SkippedCount = %d, want 1", migrator.Log.SkippedCount)
+	// Assert: source file removed
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Error("Source file should be removed")
+	}
+
+	if migrator.Log.MovedCount != 1 {
+		t.Errorf("MovedCount = %d, want 1", migrator.Log.MovedCount)
 	}
 }
 
