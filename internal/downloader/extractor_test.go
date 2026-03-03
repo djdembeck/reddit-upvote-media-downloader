@@ -2,6 +2,10 @@ package downloader
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
@@ -336,6 +340,169 @@ func TestExtractorPermalink(t *testing.T) {
 			}
 			if tt.wantMediaType2 != "" && items[1].MediaType != tt.wantMediaType2 {
 				t.Errorf("items[1].MediaType = %s, want %s", items[1].MediaType, tt.wantMediaType2)
+			}
+		})
+	}
+}
+
+func TestFetchTextAndJSONErrorHandling(t *testing.T) {
+	tests := []struct {
+		name               string
+		method             string
+		statusCode         int
+		expectErrIsErrGone bool
+	}{
+		{
+			name:               "fetchText returns errGone on 410",
+			method:             "text",
+			statusCode:         http.StatusGone,
+			expectErrIsErrGone: true,
+		},
+		{
+			name:               "fetchJSON returns errGone on 410",
+			method:             "json",
+			statusCode:         http.StatusGone,
+			expectErrIsErrGone: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+			}))
+			defer server.Close()
+
+			extractor := NewExtractor(server.Client(), "test-agent")
+
+			var err error
+			if tt.method == "text" {
+				_, err = extractor.fetchText(context.Background(), server.URL)
+			} else {
+				_, err = extractor.fetchJSON(context.Background(), server.URL)
+			}
+
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if errors.Is(err, errGone) != tt.expectErrIsErrGone {
+				t.Errorf("errors.Is(err, errGone) = %v, want %v", errors.Is(err, errGone), tt.expectErrIsErrGone)
+			}
+		})
+	}
+}
+
+func TestExtractGfycatRedgifsScenarios(t *testing.T) {
+	tests := []struct {
+		name             string
+		statusCode       int
+		contentType      string
+		body             string
+		endpointPath     string
+		expectErr        bool
+		expectNil        bool
+		expectItemsCount int
+		expectItemURL    string
+	}{
+		{
+			name:             "skips on 410 gone",
+			statusCode:       http.StatusGone,
+			contentType:      "",
+			body:             "",
+			endpointPath:     "/testid",
+			expectErr:        false,
+			expectNil:        true,
+			expectItemsCount: 0,
+			expectItemURL:    "",
+		},
+		{
+			name:             "returns error on 503 service unavailable",
+			statusCode:       http.StatusServiceUnavailable,
+			contentType:      "",
+			body:             "",
+			endpointPath:     "/testid",
+			expectErr:        true,
+			expectItemsCount: 0,
+			expectItemURL:    "",
+		},
+		{
+			name:             "webm fallback on HTML response",
+			statusCode:       http.StatusOK,
+			contentType:      "text/html",
+			body:             `<html><body><video><source src="https://giant.gfycat.com/test.webm" type="video/webm"></video></body></html>`,
+			endpointPath:     "/testid",
+			expectErr:        false,
+			expectItemsCount: 1,
+			expectItemURL:    "https://giant.gfycat.com/test.webm",
+		},
+		{
+			name:             "JSON API success returns HD URL",
+			statusCode:       http.StatusOK,
+			contentType:      "application/json",
+			body:             "",
+			endpointPath:     "/watch/testid",
+			expectErr:        false,
+			expectItemsCount: 1,
+			expectItemURL:    "https://redgifs.com/get/HD.mp4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.statusCode == http.StatusOK && tt.contentType != "" {
+					w.Header().Set("Content-Type", tt.contentType)
+					if tt.contentType == "application/json" {
+						resp := map[string]interface{}{
+							"gif": map[string]interface{}{
+								"urls": map[string]string{
+									"hd": "https://redgifs.com/get/HD.mp4",
+									"sd": "https://redgifs.com/get/SD.mp4",
+								},
+							},
+						}
+						if err := json.NewEncoder(w).Encode(resp); err != nil {
+							http.Error(w, "failed to encode response", http.StatusInternalServerError)
+							return
+						}
+					} else if tt.body != "" {
+						if _, err := w.Write([]byte(tt.body)); err != nil {
+							http.Error(w, "HTTP handler failed to write response", http.StatusInternalServerError)
+							return
+						}
+						w.WriteHeader(tt.statusCode)
+					}
+				} else {
+					w.WriteHeader(tt.statusCode)
+				}
+			}))
+			defer server.Close()
+
+			extractor := NewExtractor(server.Client(), "test-agent")
+			post := reddit.RedditPost{ID: "test123", Title: "Test", Subreddit: "test"}
+
+			items, err := extractor.extractGfycatRedgifs(context.Background(), post, server.URL+tt.endpointPath)
+
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+
+			if tt.expectNil {
+				if items != nil {
+					t.Errorf("items = %v, want nil", items)
+				}
+			} else if len(items) != tt.expectItemsCount {
+				t.Errorf("items length = %d, want %d", len(items), tt.expectItemsCount)
+			}
+
+			if tt.expectItemURL != "" && len(items) > 0 && items[0].URL != tt.expectItemURL {
+				t.Errorf("items[0].URL = %s, want %s", items[0].URL, tt.expectItemURL)
 			}
 		})
 	}
