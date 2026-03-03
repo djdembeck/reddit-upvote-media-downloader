@@ -13,6 +13,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// assertHasDuplicateSkip is a test helper that asserts operations contain a duplicate skip.
+func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
+	t.Helper()
+	for _, op := range operations {
+		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+			return
+		}
+	}
+	t.Error("Expected to find duplicate skip in operations, but none was found")
+}
+
 func TestExtractPostID(t *testing.T) {
 	tests := []struct {
 		filename string
@@ -361,17 +372,6 @@ func TestRollbackMissingFile(t *testing.T) {
 	}
 }
 
-// assertHasDuplicateSkip is a test helper that asserts operations contain a duplicate skip.
-func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
-	t.Helper()
-	for _, op := range operations {
-		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
-			return
-		}
-	}
-	t.Error("Expected to find duplicate skip in operations, but none was found")
-}
-
 func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
 	tmpDir := t.TempDir()
 	sourceDir = filepath.Join(tmpDir, "source")
@@ -691,12 +691,12 @@ func TestParseHTMLFilesWithCorrupted(t *testing.T) {
 
 func TestParseHTMLFile(t *testing.T) {
 	tests := []struct {
-		name          string
-		htmlContent   string
-		filename      string
-		wantPostID    string
-		wantSubreddit string
-		wantUsername  string
+		name           string
+		htmlContent    string
+		filename       string
+		wantPostID     string
+		wantSubreddit  string
+		wantUsername   string
 		wantIsUserPost bool
 	}{
 		{
@@ -707,10 +707,10 @@ func TestParseHTMLFile(t *testing.T) {
     <span class="user">u/testuser</span>
 </div>
 </body></html>`,
-			filename:      "1r4wjj5.html",
-			wantPostID:    "1r4wjj5",
-			wantSubreddit: "TestSub",
-			wantUsername:  "testuser",
+			filename:       "1r4wjj5.html",
+			wantPostID:     "1r4wjj5",
+			wantSubreddit:  "TestSub",
+			wantUsername:   "testuser",
 			wantIsUserPost: false,
 		},
 		{
@@ -721,10 +721,10 @@ func TestParseHTMLFile(t *testing.T) {
     <span class="user">u/exampleuser</span>
 </div>
 </body></html>`,
-			filename:      "1r0z7xp.html",
-			wantPostID:    "1r0z7xp",
-			wantSubreddit: "u_exampleuser",
-			wantUsername:  "exampleuser",
+			filename:       "1r0z7xp.html",
+			wantPostID:     "1r0z7xp",
+			wantSubreddit:  "u_exampleuser",
+			wantUsername:   "exampleuser",
 			wantIsUserPost: true,
 		},
 		{
@@ -734,10 +734,10 @@ func TestParseHTMLFile(t *testing.T) {
     <span class="subreddit">r/TestSub</span>
 </div>
 </body></html>`,
-			filename:      "1abc123.html",
-			wantPostID:    "1abc123",
-			wantSubreddit: "TestSub",
-			wantUsername:  "",
+			filename:       "1abc123.html",
+			wantPostID:     "1abc123",
+			wantSubreddit:  "TestSub",
+			wantUsername:   "",
 			wantIsUserPost: false,
 		},
 	}
