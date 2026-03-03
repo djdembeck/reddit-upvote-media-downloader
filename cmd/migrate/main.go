@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 func main() {
@@ -82,8 +83,22 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
+	// Initialize DB if DB_PATH is set and not in dry-run mode
+	var db *storage.DB
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath != "" && !dryRun {
+		fmt.Printf("Initializing database: %s\n", dbPath)
+		var err error
+		db, err = storage.NewDB(dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+	}
+
 	// Execute
-	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, dryRun)
+	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
 	if err := migrator.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

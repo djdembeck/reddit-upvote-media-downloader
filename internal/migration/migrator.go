@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/zeebo/blake3"
 )
 
@@ -19,6 +20,7 @@ type Migrator struct {
 	PostMap   map[string]PostInfo
 	DryRun    bool
 	Log       *MigrationLog
+	DB        *storage.DB
 	// Hash tracking for duplicate detection
 	seenHashes map[string]FileHashInfo
 }
@@ -29,12 +31,13 @@ type FileHashInfo struct {
 	Timestamp  time.Time
 }
 
-func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool) *Migrator {
+func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB) *Migrator {
 	m := &Migrator{
 		SourceDir: sourceDir,
 		DestDir:   destDir,
 		PostMap:   postMap,
 		DryRun:    dryRun,
+		DB:        db,
 		Log: &MigrationLog{
 			Version:    "1.0",
 			Timestamp:  time.Now(),

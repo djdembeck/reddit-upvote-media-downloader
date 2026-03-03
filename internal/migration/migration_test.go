@@ -156,7 +156,7 @@ func TestMigratorDryRun(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, true)
+	migrator := NewMigrator(sourceDir, destDir, postMap, true, nil)
 	if err := migrator.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestMigratorActualMove(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	if err := migrator.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestMigratorOrphaned(t *testing.T) {
 
 	postMap := map[string]PostInfo{}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	if err := migrator.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestMigratorUserRouting(t *testing.T) {
 		"1r0z7xp": {PostID: "1r0z7xp", Subreddit: "u_example_user", Username: "example_user", IsUserPost: true},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	if err := migrator.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestDuplicateHandling(t *testing.T) {
 				file2 = newFile2
 			}
 
-			migrator := NewMigrator(sourceDir, destDir, postMap, false)
+			migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
 			ext := ".jpg"
@@ -473,12 +473,12 @@ func TestIdempotentReRun(t *testing.T) {
 	}
 
 	// First run
-	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator1.Execute())
 	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
 
 	// Second run with existing log - source file is gone, so it should skip
-	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
 	require.NoError(t, migrator2.Execute())
 
@@ -492,7 +492,7 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	logPath := filepath.Join(filepath.Dir(sourceDir), "migration_log.json")
 
 	// First run - should move file1, skip file2 as duplicate
-	migrator1 := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator1.Execute())
 	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
 
@@ -506,7 +506,7 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	assert.NoError(t, err, "Duplicate source file should remain")
 
 	// Second run - should skip file2 because hash is already in log
-	migrator2 := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
 	require.NoError(t, migrator2.Execute())
 
@@ -546,7 +546,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 		"mmmmmm": {PostID: "mmmmmm", Subreddit: "pics", Username: "user3", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
 	// All files should be moved
@@ -591,7 +591,7 @@ func TestMigration_HashLogging(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
 	// Verify hash was recorded in log
@@ -794,7 +794,7 @@ func TestMigratorUnknownFiles(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	if err := migrator.Execute(); err != nil {
 		t.Fatal(err)
 	}
