@@ -597,3 +597,218 @@ func TestMigration_HashLogging(t *testing.T) {
 	require.NoError(t, err, "Hash should be valid hex string")
 	assert.Len(t, decoded, 32, "BLAKE3-256 should produce 32 bytes")
 }
+
+func TestParseHTMLFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create 3 valid HTML files
+	htmlContent := `<html><body>
+<div class="post">
+    <span class="subreddit">r/TestSub1</span>
+    <span class="user">u/testuser1</span>
+</div>
+</body></html>`
+
+	for i := 1; i <= 3; i++ {
+		filePath := filepath.Join(tmpDir, fmt.Sprintf("post%d.html", i))
+		if err := os.WriteFile(filePath, []byte(htmlContent), 0644); err != nil {
+			t.Fatalf("Failed to write HTML file: %v", err)
+		}
+	}
+
+	parser := NewHTMLParser()
+	if err := parser.ParseHTMLFiles(tmpDir); err != nil {
+		t.Fatalf("ParseHTMLFiles failed: %v", err)
+	}
+
+	// Assert: len(parser.PostMap) == 3
+	if len(parser.PostMap) != 3 {
+		t.Errorf("Expected 3 posts in PostMap, got %d", len(parser.PostMap))
+	}
+
+	// Verify all posts were parsed
+	for i := 1; i <= 3; i++ {
+		postID := fmt.Sprintf("post%d", i)
+		if _, ok := parser.PostMap[postID]; !ok {
+			t.Errorf("Missing post %s in PostMap", postID)
+		}
+	}
+}
+
+func TestParseHTMLFilesWithCorrupted(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	validHTML := `<html><body>
+<div class="post">
+    <span class="subreddit">r/TestSub</span>
+    <span class="user">u/testuser</span>
+</div>
+</body></html>`
+
+	for i := 1; i <= 2; i++ {
+		filePath := filepath.Join(tmpDir, fmt.Sprintf("valid%d.html", i))
+		if err := os.WriteFile(filePath, []byte(validHTML), 0644); err != nil {
+			t.Fatalf("Failed to write valid HTML file: %v", err)
+		}
+	}
+
+	corruptedPath := filepath.Join(tmpDir, "corrupted.html")
+	if err := os.WriteFile(corruptedPath, []byte("invalid html content"), 0644); err != nil {
+		t.Fatalf("Failed to write corrupted HTML file: %v", err)
+	}
+
+	parser := NewHTMLParser()
+	if err := parser.ParseHTMLFiles(tmpDir); err != nil {
+		t.Fatalf("ParseHTMLFiles failed: %v", err)
+	}
+
+	if len(parser.PostMap) != 3 {
+		t.Errorf("Expected 3 posts in PostMap (2 valid + 1 corrupted with empty metadata), got %d", len(parser.PostMap))
+	}
+
+	for i := 1; i <= 2; i++ {
+		postID := fmt.Sprintf("valid%d", i)
+		if _, ok := parser.PostMap[postID]; !ok {
+			t.Errorf("Missing valid post %s in PostMap", postID)
+		}
+	}
+
+	if _, ok := parser.PostMap["corrupted"]; !ok {
+		t.Error("Corrupted file should be parsed with empty metadata")
+	}
+}
+
+func TestParseHTMLFile(t *testing.T) {
+	tests := []struct {
+		name          string
+		htmlContent   string
+		filename      string
+		wantPostID    string
+		wantSubreddit string
+		wantUsername  string
+		wantIsUserPost bool
+	}{
+		{
+			name: "regular_post",
+			htmlContent: `<html><body>
+<div class="post">
+    <span class="subreddit">r/TestSub</span>
+    <span class="user">u/testuser</span>
+</div>
+</body></html>`,
+			filename:      "1r4wjj5.html",
+			wantPostID:    "1r4wjj5",
+			wantSubreddit: "TestSub",
+			wantUsername:  "testuser",
+			wantIsUserPost: false,
+		},
+		{
+			name: "user_post",
+			htmlContent: `<html><body>
+<div class="post">
+    <span class="subreddit">r/u_exampleuser</span>
+    <span class="user">u/exampleuser</span>
+</div>
+</body></html>`,
+			filename:      "1r0z7xp.html",
+			wantPostID:    "1r0z7xp",
+			wantSubreddit: "u_exampleuser",
+			wantUsername:  "exampleuser",
+			wantIsUserPost: true,
+		},
+		{
+			name: "missing_username",
+			htmlContent: `<html><body>
+<div class="post">
+    <span class="subreddit">r/TestSub</span>
+</div>
+</body></html>`,
+			filename:      "1abc123.html",
+			wantPostID:    "1abc123",
+			wantSubreddit: "TestSub",
+			wantUsername:  "",
+			wantIsUserPost: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			filePath := filepath.Join(tmpDir, tt.filename)
+
+			if err := os.WriteFile(filePath, []byte(tt.htmlContent), 0644); err != nil {
+				t.Fatalf("Failed to write HTML file: %v", err)
+			}
+
+			parser := NewHTMLParser()
+			postInfo, err := parser.ParseHTMLFile(filePath)
+
+			if err != nil {
+				t.Fatalf("ParseHTMLFile failed: %v", err)
+			}
+
+			if postInfo.PostID != tt.wantPostID {
+				t.Errorf("PostID = %s, want %s", postInfo.PostID, tt.wantPostID)
+			}
+			if postInfo.Subreddit != tt.wantSubreddit {
+				t.Errorf("Subreddit = %s, want %s", postInfo.Subreddit, tt.wantSubreddit)
+			}
+			if postInfo.Username != tt.wantUsername {
+				t.Errorf("Username = %s, want %s", postInfo.Username, tt.wantUsername)
+			}
+			if postInfo.IsUserPost != tt.wantIsUserPost {
+				t.Errorf("IsUserPost = %v, want %v", postInfo.IsUserPost, tt.wantIsUserPost)
+			}
+		})
+	}
+}
+
+func TestMigratorUnknownFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
+
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+
+	// Create a file with POSTID that's NOT in PostMap
+	testFile := filepath.Join(sourceDir, "Test_missing123.jpg")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	// PostMap missing the POSTID "missing123"
+	postMap := map[string]PostInfo{
+		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	}
+
+	migrator := NewMigrator(sourceDir, destDir, postMap, false)
+	if err := migrator.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: file moved to dest/unknown/{filename}
+	destFile := filepath.Join(destDir, "unknown", "Test_missing123.jpg")
+	if _, err := os.Stat(destFile); err != nil {
+		t.Errorf("File should be moved to dest/unknown/: %v", err)
+	}
+
+	// Assert: source file removed
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Error("Source file should be removed")
+	}
+
+	// Assert: Log shows status="moved" with subreddit="unknown"
+	if len(migrator.Log.Operations) != 1 {
+		t.Fatalf("Expected 1 operation, got %d", len(migrator.Log.Operations))
+	}
+
+	op := migrator.Log.Operations[0]
+	if op.Status != "moved" {
+		t.Errorf("Status = %s, want moved", op.Status)
+	}
+	if op.Subreddit != "unknown" {
+		t.Errorf("Subreddit = %s, want unknown", op.Subreddit)
+	}
+}
