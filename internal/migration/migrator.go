@@ -126,8 +126,11 @@ func (m *Migrator) processFile(filename string) {
 	// Lookup in PostMap
 	postInfo, exists := m.PostMap[postID]
 	if !exists {
-		m.recordSkipped(filename, postID, "no matching POSTID in index.html")
-		return
+		postInfo = PostInfo{
+			Subreddit:  "unknown",
+			Username:   "",
+			IsUserPost: false,
+		}
 	}
 
 	// Build destination

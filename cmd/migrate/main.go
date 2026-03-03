@@ -15,6 +15,7 @@ func main() {
 		sourceDir = flag.String("source", "", "Source media directory (required)")
 		destDir   = flag.String("dest", "", "Destination output directory (required)")
 		indexPath = flag.String("index", "", "Path to index.html (required)")
+		htmlDir   = flag.String("html-dir", "", "Path to directory containing HTML files (alternative to --index)")
 		dryRun    = flag.Bool("dry-run", false, "Preview mode")
 		rollback  = flag.Bool("rollback", false, "Rollback mode")
 		logFile   = flag.String("log-file", "", "Migration log path")
@@ -31,32 +32,53 @@ func main() {
 	}
 
 	// Validate
-	if *sourceDir == "" || *destDir == "" || *indexPath == "" {
-		fmt.Fprintln(os.Stderr, "Usage: migrate --source <dir> --dest <dir> --index <file> [--dry-run]")
+	if *sourceDir == "" || *destDir == "" {
+		fmt.Fprintln(os.Stderr, "Error: --source and --dest are required")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+	if *indexPath == "" && *htmlDir == "" {
+		fmt.Fprintln(os.Stderr, "Error: either --index or --html-dir is required")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+	if *indexPath != "" && *htmlDir != "" {
+		fmt.Fprintln(os.Stderr, "Error: cannot use both --index and --html-dir")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
 
-	runMigration(*sourceDir, *destDir, *indexPath, *logFile, *dryRun)
+	runMigration(*sourceDir, *destDir, *indexPath, *htmlDir, *logFile, *dryRun)
 }
 
-func runMigration(sourceDir, destDir, indexPath, logFile string, dryRun bool) {
+func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun bool) {
 	fmt.Println("Reddit Media Migration Tool")
 	fmt.Println("==========================")
 	fmt.Printf("Source: %s\n", sourceDir)
 	fmt.Printf("Destination: %s\n", destDir)
-	fmt.Printf("Index: %s\n", indexPath)
+	if htmlDir != "" {
+		fmt.Printf("HTML Directory: %s\n", htmlDir)
+	} else {
+		fmt.Printf("Index: %s\n", indexPath)
+	}
 	if dryRun {
 		fmt.Println("Mode: DRY RUN")
 	}
 	fmt.Println()
 
-	// Parse index
-	fmt.Println("Parsing index.html...")
 	parser := migration.NewHTMLParser()
-	if err := parser.ParseIndexHTML(indexPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if htmlDir != "" {
+		fmt.Println("Parsing HTML files...")
+		if err := parser.ParseHTMLFiles(htmlDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println("Parsing index.html...")
+		if err := parser.ParseIndexHTML(indexPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
