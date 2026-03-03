@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
@@ -160,6 +162,19 @@ func (m *Migrator) processFile(filename string) {
 		return
 	}
 
+	// Check if hash exists in database (if DB is available and not dry-run)
+	if m.DB != nil && !m.DryRun {
+		exists, dbErr := m.DB.HashExists(context.Background(), fileHash)
+		if dbErr != nil {
+			m.recordError(filename, postID, "check_hash_exists", dbErr)
+			return
+		}
+		if exists {
+			m.recordSkipped(filename, postID, "duplicate hash (exists in database)")
+			return
+		}
+	}
+
 	// Check if destination exists
 	if _, err := os.Stat(destPath); err == nil {
 		m.recordSkipped(filename, postID, "destination already exists")
@@ -175,6 +190,41 @@ func (m *Migrator) processFile(filename string) {
 	if err := m.moveFile(sourcePath, destPath); err != nil {
 		m.recordError(filename, postID, "move_file", err)
 		return
+	}
+
+	// Save post to database (if DB is available and not dry-run)
+	if m.DB != nil && !m.DryRun {
+		// Detect media type from file extension
+		ext := strings.ToLower(filepath.Ext(filename))
+		mediaType := "unknown"
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+			mediaType = "image"
+		case ".mp4", ".webm", ".mov", ".avi", ".mkv":
+			mediaType = "video"
+		case ".gifv":
+			mediaType = "gif"
+		}
+
+		post := &storage.Post{
+			ID:           postID,
+			Title:        "Migrated from bdfr-html",
+			Subreddit:    "migrated",
+			Author:       "unknown",
+			URL:          "",
+			Permalink:    "",
+			CreatedAt:    fileInfo.ModTime(),
+			DownloadedAt: time.Now(),
+			MediaType:    mediaType,
+			FilePath:     destPath,
+			Source:       "migrated",
+			Hash:         fileHash,
+		}
+
+		if saveErr := m.DB.SavePost(context.Background(), post); saveErr != nil {
+			// Log error but don't fail migration - file was already moved successfully
+			m.recordError(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
+		}
 	}
 
 	// Record hash as seen
