@@ -418,7 +418,9 @@ func TestExtractGfycatRedgifsReturnsErrorOnNetworkFailure(t *testing.T) {
 func TestExtractGfycatRedgifsWebMFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<html><body><video><source src="https://giant.gfycat.com/test.webm" type="video/webm"></video></body></html>`))
+		if _, err := w.Write([]byte(`<html><body><video><source src="https://giant.gfycat.com/test.webm" type="video/webm"></video></body></html>`)); err != nil {
+			t.Fatalf("TestExtractGfycatRedgifsWebMFallback: HTTP handler failed to write response: %v", err)
+		}
 	}))
 	defer server.Close()
 
