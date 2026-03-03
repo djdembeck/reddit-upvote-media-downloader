@@ -928,6 +928,29 @@ func (db *DB) GetRetryCount(ctx context.Context, postID string) (int, error) {
 	return retryCount, nil
 }
 
+// DeletePost removes a post from the database.
+// Returns nil if the post doesn't exist (idempotent).
+func (db *DB) DeletePost(ctx context.Context, id string) error {
+	query := `DELETE FROM posts WHERE id = ?`
+
+	result, err := db.conn.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete post: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// Return nil if post doesn't exist (idempotent)
+	if rowsAffected == 0 {
+		return nil
+	}
+
+	return nil
+}
+
 // GetPostsToRetry returns post IDs that are eligible for retry based on backoff settings.
 // It considers posts where:
 // - retry_count < threshold (not permanently skipped)

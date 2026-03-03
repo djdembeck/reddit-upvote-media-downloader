@@ -138,7 +138,20 @@ func runRollback(logPath string) {
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
 
-	rb := migration.NewRollback(logPath)
+	var db *storage.DB
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath != "" {
+		fmt.Printf("Initializing database: %s\n", dbPath)
+		var err error
+		db, err = storage.NewDB(dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.Close()
+	}
+
+	rb := migration.NewRollback(logPath, db)
 	rollbackLog, err := rb.Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

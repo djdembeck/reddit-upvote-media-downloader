@@ -321,7 +321,7 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath)
+	rb := NewRollback(logPath, nil)
 	rollbackLog, err := rb.Execute()
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +361,7 @@ func TestRollbackMissingFile(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath)
+	rb := NewRollback(logPath, nil)
 	rollbackLog, err := rb.Execute()
 	if err != nil {
 		t.Fatal(err)
