@@ -323,8 +323,8 @@ func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Reddit
 		if errors.Is(err, errGone) {
 			return nil, nil
 		}
-		e.logger.Debug("gfycat/redgifs content unavailable (service shutdown)", "post_id", post.ID, "url", sourceURL)
-		return nil, nil
+		e.logger.Debug("gfycat/redgifs fetch failed", "post_id", post.ID, "url", sourceURL, "error", err)
+		return nil, err
 	}
 
 	return e.buildDownloadables(post, []string{mediaURL}, "")

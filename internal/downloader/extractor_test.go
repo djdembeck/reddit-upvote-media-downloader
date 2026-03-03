@@ -2,6 +2,10 @@ package downloader
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
@@ -338,5 +342,127 @@ func TestExtractorPermalink(t *testing.T) {
 				t.Errorf("items[1].MediaType = %s, want %s", items[1].MediaType, tt.wantMediaType2)
 			}
 		})
+	}
+}
+
+func TestFetchTextReturnsErrGoneOn410(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer server.Close()
+
+	extractor := NewExtractor(server.Client(), "test-agent")
+
+	_, err := extractor.fetchText(context.Background(), server.URL)
+	if err == nil {
+		t.Fatal("fetchText() expected error, got nil")
+	}
+	if !errors.Is(err, errGone) {
+		t.Errorf("fetchText() error = %v, want errGone", err)
+	}
+}
+
+func TestFetchJSONReturnsErrGoneOn410(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer server.Close()
+
+	extractor := NewExtractor(server.Client(), "test-agent")
+
+	_, err := extractor.fetchJSON(context.Background(), server.URL)
+	if err == nil {
+		t.Fatal("fetchJSON() expected error, got nil")
+	}
+	if !errors.Is(err, errGone) {
+		t.Errorf("fetchJSON() error = %v, want errGone", err)
+	}
+}
+
+func TestExtractGfycatRedgifsSkipsOnGone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer server.Close()
+
+	extractor := NewExtractor(server.Client(), "test-agent")
+	post := reddit.RedditPost{ID: "test123", Title: "Test", Subreddit: "test"}
+
+	items, err := extractor.extractGfycatRedgifs(context.Background(), post, server.URL+"/testid")
+	if err != nil {
+		t.Errorf("extractGfycatRedgifs() error = %v, want nil", err)
+	}
+	if items != nil {
+		t.Errorf("extractGfycatRedgifs() items = %v, want nil", items)
+	}
+}
+
+func TestExtractGfycatRedgifsReturnsErrorOnNetworkFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	extractor := NewExtractor(server.Client(), "test-agent")
+	post := reddit.RedditPost{ID: "test123", Title: "Test", Subreddit: "test"}
+
+	items, err := extractor.extractGfycatRedgifs(context.Background(), post, server.URL)
+	if err == nil {
+		t.Fatal("extractGfycatRedgifs() expected error on 503, got nil")
+	}
+	if items != nil {
+		t.Errorf("extractGfycatRedgifs() items = %v, want nil", items)
+	}
+}
+
+func TestExtractGfycatRedgifsWebMFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><body><video><source src="https://giant.gfycat.com/test.webm" type="video/webm"></video></body></html>`))
+	}))
+	defer server.Close()
+
+	extractor := NewExtractor(server.Client(), "test-agent")
+	post := reddit.RedditPost{ID: "test123", Title: "Test", Subreddit: "test"}
+
+	items, err := extractor.extractGfycatRedgifs(context.Background(), post, server.URL+"/testid")
+	if err != nil {
+		t.Fatalf("extractGfycatRedgifs() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("extractGfycatRedgifs() returned %d items, want 1", len(items))
+	}
+	if items[0].URL != "https://giant.gfycat.com/test.webm" {
+		t.Errorf("extractGfycatRedgifs() URL = %s, want https://giant.gfycat.com/test.webm", items[0].URL)
+	}
+}
+
+func TestExtractGfycatRedgifsRedgifsAPISuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"gif": map[string]interface{}{
+				"urls": map[string]string{
+					"hd": "https://redgifs.com/get/HD.mp4",
+					"sd": "https://redgifs.com/get/SD.mp4",
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	extractor := NewExtractor(server.Client(), "test-agent")
+	post := reddit.RedditPost{ID: "test123", Title: "Test", Subreddit: "test"}
+
+	items, err := extractor.extractGfycatRedgifs(context.Background(), post, server.URL+"/watch/testid")
+	if err != nil {
+		t.Fatalf("extractGfycatRedgifs() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("extractGfycatRedgifs() returned %d items, want 1", len(items))
+	}
+	if items[0].URL != "https://redgifs.com/get/HD.mp4" {
+		t.Errorf("extractGfycatRedgifs() URL = %s, want HD URL", items[0].URL)
 	}
 }
