@@ -156,6 +156,7 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 	if r.DB != nil {
 		if err := r.DB.DeletePost(context.Background(), op.PostID); err != nil {
 			if err.Error() != "post not found" {
+				record.Status = "failed"
 				record.Error = fmt.Sprintf("db delete failed: %v", err)
 			}
 		}
