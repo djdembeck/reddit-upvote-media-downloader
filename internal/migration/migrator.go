@@ -222,8 +222,8 @@ func (m *Migrator) processFile(filename string) {
 		}
 
 		if saveErr := m.DB.SavePost(context.Background(), post); saveErr != nil {
-			// Log error but don't fail migration - file was already moved successfully
-			m.recordError(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
+			// Log warning but don't fail migration - file was already moved successfully
+			m.recordWarning(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
 		}
 	}
 
@@ -354,6 +354,17 @@ func (m *Migrator) recordError(filename, postID, operation string, err error) {
 		Timestamp:  time.Now(),
 	})
 	m.Log.ErrorCount++
+}
+
+func (m *Migrator) recordWarning(filename, postID, operation string, err error) {
+	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+		PostID:     postID,
+		SourcePath: filepath.Join(m.SourceDir, filename),
+		Status:     "moved",
+		Error:      fmt.Sprintf("warning: %s: %v", operation, err),
+		Timestamp:  time.Now(),
+	})
+	m.Log.WarningCount++
 }
 
 func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64, hash string) {
