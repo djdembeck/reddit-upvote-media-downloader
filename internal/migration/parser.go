@@ -139,13 +139,16 @@ func (p *HTMLParser) addPost(postID, subreddit, username string) {
 // Returns error for file read failures or invalid filenames.
 // Uses empty string if subreddit or username is missing (does not fail).
 func (p *HTMLParser) ParseHTMLFile(filePath string) (PostInfo, error) {
-	// Extract POSTID from filename
 	filename := filepath.Base(filePath)
-	postID := strings.TrimSuffix(filename, ".html")
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != ".html" {
+		return PostInfo{}, fmt.Errorf("invalid file extension: %s", filename)
+	}
+	postID := strings.TrimSuffix(filename, filepath.Ext(filename))
 
-	// Validate POSTID (should be alphanumeric)
-	if postID == "" || postID == filename {
-		return PostInfo{}, fmt.Errorf("invalid filename: %s", filename)
+	postIDPattern := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	if postID == "" || !postIDPattern.MatchString(postID) {
+		return PostInfo{}, fmt.Errorf("invalid postID %q in filename: %s", postID, filename)
 	}
 
 	// Read HTML content
@@ -193,6 +196,7 @@ func (p *HTMLParser) ParseHTMLFile(filePath string) (PostInfo, error) {
 //
 // Returns error only if the directory cannot be read.
 func (p *HTMLParser) ParseHTMLFiles(htmlDir string) error {
+	p.PostMap = make(map[string]PostInfo)
 	fileCount := 0
 
 	err := filepath.Walk(htmlDir, func(path string, info os.FileInfo, err error) error {
