@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,11 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// assertHasDuplicateSkip is a test helper that asserts operations contain a duplicate skip.
 func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
 	t.Helper()
 	for _, op := range operations {
-		if op.Status == "skipped" && op.Error != "" && op.Error != "no matching POSTID in index.html" {
+		if op.Status == "skipped" &&
+			strings.Contains(op.Error, "duplicate") &&
+			strings.Contains(op.Error, "hash") {
 			return
 		}
 	}
@@ -611,46 +613,26 @@ func TestMigration_HashLogging(t *testing.T) {
 	assert.Len(t, decoded, 32, "BLAKE3-256 should produce 32 bytes")
 }
 
-func TestParseHTMLFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create 3 valid HTML files
-	htmlContent := `<html><body>
-<div class="post">
-    <span class="subreddit">r/TestSub1</span>
-    <span class="user">u/testuser1</span>
-</div>
-</body></html>`
-
-	for i := 1; i <= 3; i++ {
-		filePath := filepath.Join(tmpDir, fmt.Sprintf("post%d.html", i))
-		if err := os.WriteFile(filePath, []byte(htmlContent), 0644); err != nil {
-			t.Fatalf("Failed to write HTML file: %v", err)
-		}
-	}
-
-	parser := NewHTMLParser()
-	if err := parser.ParseHTMLFiles(tmpDir); err != nil {
-		t.Fatalf("ParseHTMLFiles failed: %v", err)
-	}
-
-	// Assert: len(parser.PostMap) == 3
-	if len(parser.PostMap) != 3 {
-		t.Errorf("Expected 3 posts in PostMap, got %d", len(parser.PostMap))
-	}
-
-	// Verify all posts were parsed
-	for i := 1; i <= 3; i++ {
-		postID := fmt.Sprintf("post%d", i)
-		if _, ok := parser.PostMap[postID]; !ok {
-			t.Errorf("Missing post %s in PostMap", postID)
+func writeFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("Failed to write file %s: %v", name, err)
 		}
 	}
 }
 
-func TestParseHTMLFilesWithCorrupted(t *testing.T) {
-	tmpDir := t.TempDir()
+func assertPostMapContains(t *testing.T, parser *HTMLParser, expectedIDs []string) {
+	t.Helper()
+	for _, id := range expectedIDs {
+		if _, ok := parser.PostMap[id]; !ok {
+			t.Errorf("Missing post %s in PostMap", id)
+		}
+	}
+}
 
+func TestParseHTMLFiles_TableDriven(t *testing.T) {
 	validHTML := `<html><body>
 <div class="post">
     <span class="subreddit">r/TestSub</span>
@@ -658,36 +640,50 @@ func TestParseHTMLFilesWithCorrupted(t *testing.T) {
 </div>
 </body></html>`
 
-	for i := 1; i <= 2; i++ {
-		filePath := filepath.Join(tmpDir, fmt.Sprintf("valid%d.html", i))
-		if err := os.WriteFile(filePath, []byte(validHTML), 0644); err != nil {
-			t.Fatalf("Failed to write valid HTML file: %v", err)
-		}
+	tests := []struct {
+		name            string
+		files           map[string]string
+		expectedLen     int
+		expectedPostIDs []string
+	}{
+		{
+			name: "valid_files_only",
+			files: map[string]string{
+				"post1.html": validHTML,
+				"post2.html": validHTML,
+				"post3.html": validHTML,
+			},
+			expectedLen:     3,
+			expectedPostIDs: []string{"post1", "post2", "post3"},
+		},
+		{
+			name: "with_corrupted_file",
+			files: map[string]string{
+				"valid1.html":    validHTML,
+				"valid2.html":    validHTML,
+				"corrupted.html": "invalid html content",
+			},
+			expectedLen:     3,
+			expectedPostIDs: []string{"valid1", "valid2", "corrupted"},
+		},
 	}
 
-	corruptedPath := filepath.Join(tmpDir, "corrupted.html")
-	if err := os.WriteFile(corruptedPath, []byte("invalid html content"), 0644); err != nil {
-		t.Fatalf("Failed to write corrupted HTML file: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			writeFiles(t, tmpDir, tt.files)
 
-	parser := NewHTMLParser()
-	if err := parser.ParseHTMLFiles(tmpDir); err != nil {
-		t.Fatalf("ParseHTMLFiles failed: %v", err)
-	}
+			parser := NewHTMLParser()
+			if err := parser.ParseHTMLFiles(tmpDir); err != nil {
+				t.Fatalf("ParseHTMLFiles failed: %v", err)
+			}
 
-	if len(parser.PostMap) != 3 {
-		t.Errorf("Expected 3 posts in PostMap (2 valid + 1 corrupted with empty metadata), got %d", len(parser.PostMap))
-	}
+			if len(parser.PostMap) != tt.expectedLen {
+				t.Errorf("Expected %d posts in PostMap, got %d", tt.expectedLen, len(parser.PostMap))
+			}
 
-	for i := 1; i <= 2; i++ {
-		postID := fmt.Sprintf("valid%d", i)
-		if _, ok := parser.PostMap[postID]; !ok {
-			t.Errorf("Missing valid post %s in PostMap", postID)
-		}
-	}
-
-	if _, ok := parser.PostMap["corrupted"]; !ok {
-		t.Error("Corrupted file should be parsed with empty metadata")
+			assertPostMapContains(t, parser, tt.expectedPostIDs)
+		})
 	}
 }
 
