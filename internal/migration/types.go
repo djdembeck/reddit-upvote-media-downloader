@@ -33,5 +33,6 @@ type MigrationLog struct {
 	MovedCount   int               `json:"moved_count"`
 	SkippedCount int               `json:"skipped_count"`
 	ErrorCount   int               `json:"error_count"`
+	WarningCount int               `json:"warning_count"`
 	Operations   []MigrationRecord `json:"operations"`
 }

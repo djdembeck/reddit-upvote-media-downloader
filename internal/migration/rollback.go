@@ -1,15 +1,19 @@
 package migration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 type Rollback struct {
 	LogPath string
+	DB      *storage.DB
 }
 
 type RollbackLog struct {
@@ -29,8 +33,8 @@ type RollbackRecord struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
-func NewRollback(logPath string) *Rollback {
-	return &Rollback{LogPath: logPath}
+func NewRollback(logPath string, db *storage.DB) *Rollback {
+	return &Rollback{LogPath: logPath, DB: db}
 }
 
 func (r *Rollback) Execute() (*RollbackLog, error) {
@@ -55,7 +59,7 @@ func (r *Rollback) Execute() (*RollbackLog, error) {
 	// Process in reverse order
 	for i := len(migLog.Operations) - 1; i >= 0; i-- {
 		op := migLog.Operations[i]
-		if op.Status != "moved" {
+		if op.Status != "moved" && op.Status != "moved_with_warning" {
 			continue
 		}
 
@@ -148,6 +152,14 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 	}
 
 	record.Status = "success"
+
+	if r.DB != nil {
+		if err := r.DB.DeletePost(context.Background(), op.PostID); err != nil {
+			record.Status = "failed"
+			record.Error = fmt.Sprintf("db delete failed: %v", err)
+		}
+	}
+
 	return record
 }
 

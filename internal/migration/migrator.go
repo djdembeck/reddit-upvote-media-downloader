@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -8,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/zeebo/blake3"
 )
 
@@ -19,6 +22,7 @@ type Migrator struct {
 	PostMap   map[string]PostInfo
 	DryRun    bool
 	Log       *MigrationLog
+	DB        *storage.DB
 	// Hash tracking for duplicate detection
 	seenHashes map[string]FileHashInfo
 }
@@ -29,12 +33,13 @@ type FileHashInfo struct {
 	Timestamp  time.Time
 }
 
-func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool) *Migrator {
+func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB) *Migrator {
 	m := &Migrator{
 		SourceDir: sourceDir,
 		DestDir:   destDir,
 		PostMap:   postMap,
 		DryRun:    dryRun,
+		DB:        db,
 		Log: &MigrationLog{
 			Version:    "1.0",
 			Timestamp:  time.Now(),
@@ -63,7 +68,7 @@ func (m *Migrator) LoadExistingLog(logPath string) error {
 	}
 
 	for _, op := range existingLog.Operations {
-		if op.Hash != "" && op.Status == "moved" {
+		if op.Hash != "" && (op.Status == "moved" || op.Status == "moved_with_warning") {
 			m.seenHashes[op.Hash] = FileHashInfo{
 				PostID:     op.PostID,
 				SourcePath: op.SourcePath,
@@ -126,8 +131,11 @@ func (m *Migrator) processFile(filename string) {
 	// Lookup in PostMap
 	postInfo, exists := m.PostMap[postID]
 	if !exists {
-		m.recordSkipped(filename, postID, "no matching POSTID in index.html")
-		return
+		postInfo = PostInfo{
+			Subreddit:  "unknown",
+			Username:   "",
+			IsUserPost: false,
+		}
 	}
 
 	// Build destination
@@ -154,6 +162,19 @@ func (m *Migrator) processFile(filename string) {
 		return
 	}
 
+	// Check if hash exists in database (if DB is available and not dry-run)
+	if m.DB != nil && !m.DryRun {
+		exists, dbErr := m.DB.HashExists(context.Background(), fileHash)
+		if dbErr != nil {
+			m.recordError(filename, postID, "check_hash_exists", dbErr)
+			return
+		}
+		if exists {
+			m.recordSkipped(filename, postID, "duplicate hash (exists in database)")
+			return
+		}
+	}
+
 	// Check if destination exists
 	if _, err := os.Stat(destPath); err == nil {
 		m.recordSkipped(filename, postID, "destination already exists")
@@ -169,6 +190,51 @@ func (m *Migrator) processFile(filename string) {
 	if err := m.moveFile(sourcePath, destPath); err != nil {
 		m.recordError(filename, postID, "move_file", err)
 		return
+	}
+
+	// Save post to database (if DB is available and not dry-run)
+	if m.DB != nil && !m.DryRun {
+		// Detect media type from file extension
+		ext := strings.ToLower(filepath.Ext(filename))
+		mediaType := "unknown"
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+			mediaType = "image"
+		case ".mp4", ".webm", ".mov", ".avi", ".mkv":
+			mediaType = "video"
+		case ".gifv":
+			mediaType = "gif"
+		}
+
+		// Use parsed metadata with fallbacks for empty values
+		subreddit := postInfo.Subreddit
+		if subreddit == "" {
+			subreddit = "migrated"
+		}
+		author := postInfo.Username
+		if author == "" {
+			author = "unknown"
+		}
+
+		post := &storage.Post{
+			ID:           postID,
+			Title:        "Migrated from bdfr-html",
+			Subreddit:    subreddit,
+			Author:       author,
+			URL:          "",
+			Permalink:    "",
+			CreatedAt:    fileInfo.ModTime(),
+			DownloadedAt: time.Now(),
+			MediaType:    mediaType,
+			FilePath:     destPath,
+			Source:       "migrated",
+			Hash:         fileHash,
+		}
+
+		if saveErr := m.DB.SavePost(context.Background(), post); saveErr != nil {
+			// Log warning but don't fail migration - file was already moved successfully
+			m.recordWarning(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
+		}
 	}
 
 	// Record hash as seen
@@ -298,6 +364,17 @@ func (m *Migrator) recordError(filename, postID, operation string, err error) {
 		Timestamp:  time.Now(),
 	})
 	m.Log.ErrorCount++
+}
+
+func (m *Migrator) recordWarning(filename, postID, operation string, err error) {
+	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+		PostID:     postID,
+		SourcePath: filepath.Join(m.SourceDir, filename),
+		Status:     "moved_with_warning",
+		Error:      fmt.Sprintf("warning: %s: %v", operation, err),
+		Timestamp:  time.Now(),
+	})
+	m.Log.WarningCount++
 }
 
 func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64, hash string) {
