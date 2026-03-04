@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -591,7 +592,14 @@ func TestMigration_HashLogging(t *testing.T) {
 
 func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
-	for name, content := range files {
+	keys := make([]string, 0, len(files))
+	for name := range files {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	for _, name := range keys {
+		content := files[name]
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			t.Fatalf("Failed to write file %s: %v", name, err)
@@ -966,7 +974,14 @@ func TestMigrationSuite(t *testing.T) {
 
 			require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
-			for filename, content := range tt.files {
+			keys := make([]string, 0, len(tt.files))
+			for filename := range tt.files {
+				keys = append(keys, filename)
+			}
+			sort.Strings(keys)
+
+			for _, filename := range keys {
+				content := tt.files[filename]
 				path := filepath.Join(sourceDir, filename)
 				require.NoError(t, os.WriteFile(path, []byte(content), 0644), "Failed to write %s", filename)
 			}
