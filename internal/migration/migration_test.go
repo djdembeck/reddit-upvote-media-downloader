@@ -112,7 +112,6 @@ func TestHTMLParser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Regular post
 	if info, ok := parser.PostMap["1r4wjj5"]; !ok {
 		t.Error("Missing regular post")
 	} else {
@@ -127,7 +126,6 @@ func TestHTMLParser(t *testing.T) {
 		}
 	}
 
-	// User post
 	if info, ok := parser.PostMap["1r0z7xp"]; !ok {
 		t.Error("Missing user post")
 	} else {
@@ -165,12 +163,10 @@ func TestMigratorDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// File should still exist in dry-run
 	if _, err := os.Stat(testFile); err != nil {
 		t.Error("Source file should exist in dry-run")
 	}
 
-	// Should have dry_run status
 	if len(migrator.Log.Operations) != 1 {
 		t.Fatalf("Expected 1 operation, got %d", len(migrator.Log.Operations))
 	}
@@ -240,13 +236,11 @@ func TestMigratorOrphaned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Assert: file moved to dest/unknown/{filename}
 	destFile := filepath.Join(destDir, "unknown", "Orphaned_xyz789.jpg")
 	if _, err := os.Stat(destFile); err != nil {
 		t.Errorf("Orphaned file should be moved to dest/unknown/: %v", err)
 	}
 
-	// Assert: source file removed
 	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
 		t.Error("Source file should be removed")
 	}
@@ -476,17 +470,14 @@ func TestIdempotentReRun(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	// First run
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator1.Execute())
 	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
 
-	// Second run with existing log - source file is gone, so it should skip
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
 	require.NoError(t, migrator2.Execute())
 
-	// Second run should have no operations since source file is gone
 	assert.Equal(t, 0, migrator2.Log.TotalFiles, "Second run should have no files to process")
 }
 
@@ -495,26 +486,21 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, content)
 	logPath := filepath.Join(filepath.Dir(sourceDir), "migration_log.json")
 
-	// First run - should move file1, skip file2 as duplicate
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator1.Execute())
 	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
 
-	// Verify first run results
 	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
 	_, err := os.Stat(destFile1)
 	assert.NoError(t, err, "First file should be moved")
 
-	// file2 should still exist as duplicate
 	_, err = os.Stat(file2)
 	assert.NoError(t, err, "Duplicate source file should remain")
 
-	// Second run - should skip file2 because hash is already in log
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
 	require.NoError(t, migrator2.Execute())
 
-	// Second run should skip file2 as duplicate (hash already in log)
 	assert.Equal(t, 1, migrator2.Log.SkippedCount, "Second run should skip duplicate")
 
 	assertHasDuplicateSkip(t, migrator2.Log.Operations)
@@ -527,18 +513,15 @@ func TestMigration_SortsByModTime(t *testing.T) {
 
 	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
-	// Create files with different modification times
 	// PostIDs chosen so they are NOT alphabetically ordered with mod-times
 	fileOldest := filepath.Join(sourceDir, "Oldest_zzzzzz.jpg")
 	fileMiddle := filepath.Join(sourceDir, "Middle_aaaaaa.jpg")
 	fileNewest := filepath.Join(sourceDir, "Newest_mmmmmm.jpg")
 
-	// Write in order with small delays to ensure different mod times
 	require.NoError(t, os.WriteFile(fileOldest, []byte("oldest content"), 0644), "Failed to write fileOldest")
 	require.NoError(t, os.WriteFile(fileMiddle, []byte("middle content"), 0644), "Failed to write fileMiddle")
 	require.NoError(t, os.WriteFile(fileNewest, []byte("newest content"), 0644), "Failed to write fileNewest")
 
-	// Set deterministic modification times
 	baseTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, os.Chtimes(fileOldest, baseTime, baseTime), "Failed to set fileOldest time")
 	require.NoError(t, os.Chtimes(fileMiddle, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set fileMiddle time")
@@ -553,10 +536,8 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
-	// All files should be moved
 	require.Equal(t, 3, migrator.Log.MovedCount, "Expected 3 moved files")
 
-	// Verify all destination files exist
 	for _, postID := range []string{"zzzzzz", "aaaaaa", "mmmmmm"} {
 		destFile := filepath.Join(destDir, "pics", fmt.Sprintf("%s_%s.jpg", map[string]string{
 			"zzzzzz": "Oldest",
@@ -567,7 +548,6 @@ func TestMigration_SortsByModTime(t *testing.T) {
 		assert.NoError(t, err, "Dest file should exist for %s", postID)
 	}
 
-	// Verify operations are sorted by modification time (not PostID)
 	var opPostIDs []string
 	for _, op := range migrator.Log.Operations {
 		if op.Status == "moved" || op.Status == "moved_with_warning" {
@@ -575,7 +555,6 @@ func TestMigration_SortsByModTime(t *testing.T) {
 		}
 	}
 
-	// Files should be processed in mod-time order: Oldest (zzzzzz), Middle (aaaaaa), Newest (mmmmmm)
 	expectedOrder := []string{"zzzzzz", "aaaaaa", "mmmmmm"}
 	assert.Equal(t, expectedOrder, opPostIDs, "Operations should process files by modification time")
 }
@@ -598,14 +577,11 @@ func TestMigration_HashLogging(t *testing.T) {
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
 
-	// Verify hash was recorded in log
 	require.Len(t, migrator.Log.Operations, 1, "Expected 1 operation")
 
 	op := migrator.Log.Operations[0]
 	assert.Equal(t, "moved", op.Status, "Expected status 'moved'")
 	assert.NotEmpty(t, op.Hash, "Hash should be recorded in migration log")
-
-	// Verify hash is valid hex (64 characters for BLAKE3-256)
 	assert.Len(t, op.Hash, 64, "Expected hash length 64")
 
 	decoded, err := hex.DecodeString(op.Hash)
@@ -781,13 +757,11 @@ func TestMigratorUnknownFiles(t *testing.T) {
 		t.Fatalf("Failed to create source directory: %v", err)
 	}
 
-	// Create a file with POSTID that's NOT in PostMap
 	testFile := filepath.Join(sourceDir, "Test_missing123.jpg")
 	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	// PostMap missing the POSTID "missing123"
 	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
@@ -797,18 +771,15 @@ func TestMigratorUnknownFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Assert: file moved to dest/unknown/{filename}
 	destFile := filepath.Join(destDir, "unknown", "Test_missing123.jpg")
 	if _, err := os.Stat(destFile); err != nil {
 		t.Errorf("File should be moved to dest/unknown/: %v", err)
 	}
 
-	// Assert: source file removed
 	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
 		t.Error("Source file should be removed")
 	}
 
-	// Assert: Log shows status="moved" with subreddit="unknown"
 	if len(migrator.Log.Operations) != 1 {
 		t.Fatalf("Expected 1 operation, got %d", len(migrator.Log.Operations))
 	}
@@ -822,297 +793,257 @@ func TestMigratorUnknownFiles(t *testing.T) {
 	}
 }
 
-func TestMigrationWithDB(t *testing.T) {
+func TestMigrationSuite(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
-
-	// Create test file with known content
-	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	content := []byte("test content for hashing")
-	require.NoError(t, os.WriteFile(testFile, content, 0644), "Failed to write test file")
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	type testCase struct {
+		name                    string
+		files                   map[string]string
+		postMap                 map[string]PostInfo
+		prePopulateDB           func(t *testing.T, db *storage.DB, sourceDir string)
+		wantMoved               int
+		wantSkipped             int
+		wantDestFiles           []string
+		wantSourceRemoved       []string
+		wantSourceRemain        []string
+		wantDBPostIDs           []string
+		wantDBCheck             func(t *testing.T, db *storage.DB)
+		runRollback             bool
+		wantRollbackSuccess     int
+		wantRollbackError       int
+		wantPostRollbackDBCheck func(t *testing.T, db *storage.DB)
+		checkLog                func(t *testing.T, migrator *Migrator)
 	}
 
-	// Create DB
-	db, err := storage.NewDB(dbPath)
-	require.NoError(t, err, "Failed to create database")
-	defer db.Close()
-
-	// Run migration with DB
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, db)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
-
-	// Verify file was moved
-	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
-	_, err = os.Stat(destFile)
-	require.NoError(t, err, "Dest file should exist")
-
-	_, err = os.Stat(testFile)
-	assert.True(t, os.IsNotExist(err), "Source file should be removed")
-
-	// Verify DB entry was created
-	ctx := context.Background()
-	post, err := db.GetPost(ctx, "abc123")
-	require.NoError(t, err, "Failed to get post from DB")
-	require.NotNil(t, post, "Post should exist in DB")
-
-	// Verify hash was calculated and stored
-	assert.NotEmpty(t, post.Hash, "Hash should be stored in DB")
-	assert.Len(t, post.Hash, 64, "Hash should be 64 characters (BLAKE3-256 hex)")
-
-	// Verify hash matches expected BLAKE3 hash of content
-	expectedHash := "527c58ca1bc0f681d553bef8b6c88bf5c4486829a524272c9a6026ba0658d739"
-	assert.Equal(t, expectedHash, post.Hash, "Hash should match expected BLAKE3 hash")
-
-	// Verify other fields
-	assert.Equal(t, "Migrated from bdfr-html", post.Title, "Title should be placeholder")
-	assert.Equal(t, "pics", post.Subreddit, "Subreddit should use value from postInfo")
-	assert.Equal(t, "user", post.Author, "Author should use value from postInfo")
-	assert.Equal(t, "migrated", post.Source, "Source should be 'migrated'")
-	assert.Equal(t, "image", post.MediaType, "MediaType should be 'image'")
-}
-
-func TestMigrationHashExists(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
-
-	// Create test file with known content
-	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	content := []byte("duplicate content")
-	require.NoError(t, os.WriteFile(testFile, content, 0644), "Failed to write test file")
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+	tests := []testCase{
+		{
+			name: "basic_migration_with_db",
+			files: map[string]string{
+				"Test_abc123.jpg": "test content for hashing",
+			},
+			postMap: map[string]PostInfo{
+				"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+			},
+			wantMoved:         1,
+			wantSkipped:       0,
+			wantDestFiles:     []string{"pics/Test_abc123.jpg"},
+			wantSourceRemoved: []string{"Test_abc123.jpg"},
+			wantDBPostIDs:     []string{"abc123"},
+			wantDBCheck: func(t *testing.T, db *storage.DB) {
+				ctx := context.Background()
+				post, err := db.GetPost(ctx, "abc123")
+				require.NoError(t, err)
+				require.NotNil(t, post)
+				assert.Equal(t, "527c58ca1bc0f681d553bef8b6c88bf5c4486829a524272c9a6026ba0658d739", post.Hash)
+				assert.Equal(t, "Migrated from bdfr-html", post.Title)
+				assert.Equal(t, "pics", post.Subreddit)
+				assert.Equal(t, "user", post.Author)
+				assert.Equal(t, "migrated", post.Source)
+				assert.Equal(t, "image", post.MediaType)
+			},
+		},
+		{
+			name: "hash_exists_in_db_skips_file",
+			files: map[string]string{
+				"Test_abc123.jpg": "duplicate content",
+			},
+			postMap: map[string]PostInfo{
+				"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+			},
+			prePopulateDB: func(t *testing.T, db *storage.DB, sourceDir string) {
+				testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
+				hash, err := calculateHash(testFile)
+				require.NoError(t, err)
+				ctx := context.Background()
+				existingPost := &storage.Post{
+					ID:           "existing123",
+					Title:        "Existing Post",
+					Subreddit:    "existing",
+					Author:       "existing_user",
+					DownloadedAt: time.Now(),
+					Source:       "migrated",
+					Hash:         hash,
+				}
+				require.NoError(t, db.SavePost(ctx, existingPost))
+			},
+			wantMoved:        0,
+			wantSkipped:      1,
+			wantDestFiles:    nil,
+			wantSourceRemain: []string{"Test_abc123.jpg"},
+			checkLog: func(t *testing.T, migrator *Migrator) {
+				assert.Equal(t, 1, migrator.Log.SkippedCount)
+				assert.Equal(t, 0, migrator.Log.MovedCount)
+				require.Len(t, migrator.Log.Operations, 1)
+				assert.Equal(t, "skipped", migrator.Log.Operations[0].Status)
+				assert.Contains(t, migrator.Log.Operations[0].Error, "duplicate hash")
+			},
+		},
+		{
+			name: "skip_duplicate_files_same_migration",
+			files: map[string]string{
+				"File1_abc123.jpg": "identical duplicate content",
+				"File2_def456.jpg": "identical duplicate content",
+			},
+			postMap: map[string]PostInfo{
+				"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
+				"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
+			},
+			wantMoved:         1,
+			wantSkipped:       1,
+			wantDestFiles:     []string{"pics/File1_abc123.jpg"},
+			wantSourceRemoved: []string{"File1_abc123.jpg"},
+			wantSourceRemain:  []string{"File2_def456.jpg"},
+			wantDBPostIDs:     []string{"abc123"},
+			checkLog: func(t *testing.T, migrator *Migrator) {
+				assert.Equal(t, 1, migrator.Log.MovedCount)
+				assert.Equal(t, 1, migrator.Log.SkippedCount)
+				assertHasDuplicateSkip(t, migrator.Log.Operations)
+			},
+		},
+		{
+			name: "placeholder_values_in_db",
+			files: map[string]string{
+				"Test_abc123.jpg": "test content",
+			},
+			postMap: map[string]PostInfo{
+				"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+			},
+			wantMoved:         1,
+			wantSkipped:       0,
+			wantDestFiles:     []string{"pics/Test_abc123.jpg"},
+			wantSourceRemoved: []string{"Test_abc123.jpg"},
+			wantDBPostIDs:     []string{"abc123"},
+			wantDBCheck: func(t *testing.T, db *storage.DB) {
+				ctx := context.Background()
+				post, err := db.GetPost(ctx, "abc123")
+				require.NoError(t, err)
+				require.NotNil(t, post)
+				assert.Equal(t, "Migrated from bdfr-html", post.Title)
+				assert.Equal(t, "pics", post.Subreddit)
+				assert.Equal(t, "user", post.Author)
+				assert.Equal(t, "migrated", post.Source)
+				assert.Equal(t, "abc123", post.ID)
+				assert.Equal(t, "image", post.MediaType)
+				assert.NotEmpty(t, post.FilePath)
+				assert.NotEmpty(t, post.Hash)
+				assert.False(t, post.DownloadedAt.IsZero())
+			},
+		},
+		{
+			name: "rollback_removes_db_entry",
+			files: map[string]string{
+				"Test_abc123.jpg": "test content",
+			},
+			postMap: map[string]PostInfo{
+				"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
+			},
+			wantMoved:           1,
+			wantSkipped:         0,
+			wantDestFiles:       []string{"pics/Test_abc123.jpg"},
+			wantSourceRemoved:   []string{"Test_abc123.jpg"},
+			wantDBPostIDs:       []string{"abc123"},
+			runRollback:         true,
+			wantRollbackSuccess: 1,
+			wantRollbackError:   0,
+			wantPostRollbackDBCheck: func(t *testing.T, db *storage.DB) {
+				ctx := context.Background()
+				post, err := db.GetPost(ctx, "abc123")
+				require.NoError(t, err)
+				assert.Nil(t, post)
+			},
+		},
 	}
 
-	// Create DB
-	db, err := storage.NewDB(dbPath)
-	require.NoError(t, err, "Failed to create database")
-	defer db.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Pre-populate DB with a post that has the same hash
-	ctx := context.Background()
-	// Calculate hash of "duplicate content" to ensure it matches
-	hasher, err := calculateHash(testFile)
-	require.NoError(t, err, "Failed to calculate hash")
-	existingPost := &storage.Post{
-		ID:           "existing123",
-		Title:        "Existing Post",
-		Subreddit:    "existing",
-		Author:       "existing_user",
-		DownloadedAt: time.Now(),
-		Source:       "migrated",
-		Hash:         hasher,
+			tmpDir := t.TempDir()
+			sourceDir := filepath.Join(tmpDir, "source")
+			destDir := filepath.Join(tmpDir, "dest")
+			dbPath := filepath.Join(tmpDir, "test.db")
+			logPath := filepath.Join(tmpDir, "migration_log.json")
+
+			require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
+
+			for filename, content := range tt.files {
+				path := filepath.Join(sourceDir, filename)
+				require.NoError(t, os.WriteFile(path, []byte(content), 0644), "Failed to write %s", filename)
+			}
+
+			db, err := storage.NewDB(dbPath)
+			require.NoError(t, err, "Failed to create database")
+			defer db.Close()
+
+			if tt.prePopulateDB != nil {
+				tt.prePopulateDB(t, db, sourceDir)
+			}
+
+			migrator := NewMigrator(sourceDir, destDir, tt.postMap, false, db)
+			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+
+			assert.Equal(t, tt.wantMoved, migrator.Log.MovedCount, "Moved count mismatch")
+			assert.Equal(t, tt.wantSkipped, migrator.Log.SkippedCount, "Skipped count mismatch")
+
+			for _, relPath := range tt.wantDestFiles {
+				destFile := filepath.Join(destDir, relPath)
+				_, err := os.Stat(destFile)
+				assert.NoError(t, err, "Dest file should exist: %s", relPath)
+			}
+
+			for _, filename := range tt.wantSourceRemoved {
+				srcFile := filepath.Join(sourceDir, filename)
+				_, err := os.Stat(srcFile)
+				assert.True(t, os.IsNotExist(err), "Source file should be removed: %s", filename)
+			}
+
+			for _, filename := range tt.wantSourceRemain {
+				srcFile := filepath.Join(sourceDir, filename)
+				_, err := os.Stat(srcFile)
+				assert.NoError(t, err, "Source file should remain: %s", filename)
+			}
+
+			ctx := context.Background()
+			for _, postID := range tt.wantDBPostIDs {
+				post, err := db.GetPost(ctx, postID)
+				require.NoError(t, err, "Failed to get post %s from DB", postID)
+				require.NotNil(t, post, "Post %s should exist in DB", postID)
+			}
+
+			if tt.wantDBCheck != nil {
+				tt.wantDBCheck(t, db)
+			}
+
+			if tt.checkLog != nil {
+				tt.checkLog(t, migrator)
+			}
+
+			if tt.runRollback {
+				require.NoError(t, migrator.SaveLog(logPath), "Failed to save log")
+
+				rb := NewRollback(logPath, db)
+				rollbackLog, err := rb.Execute()
+				require.NoError(t, err, "Rollback failed")
+
+				assert.Equal(t, tt.wantRollbackSuccess, rollbackLog.SuccessCount, "Rollback success count mismatch")
+				assert.Equal(t, tt.wantRollbackError, rollbackLog.ErrorCount, "Rollback error count mismatch")
+
+				for _, filename := range tt.wantSourceRemoved {
+					srcFile := filepath.Join(sourceDir, filename)
+					_, err := os.Stat(srcFile)
+					assert.NoError(t, err, "Source file should be restored: %s", filename)
+				}
+
+				for _, relPath := range tt.wantDestFiles {
+					destFile := filepath.Join(destDir, relPath)
+					_, err := os.Stat(destFile)
+					assert.True(t, os.IsNotExist(err), "Dest file should be removed: %s", relPath)
+				}
+
+				if tt.wantPostRollbackDBCheck != nil {
+					tt.wantPostRollbackDBCheck(t, db)
+				}
+			}
+		})
 	}
-	require.NoError(t, db.SavePost(ctx, existingPost), "Failed to save existing post")
-
-	// Run migration with DB
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, db)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
-
-	// Verify file was skipped (not moved)
-	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
-	_, err = os.Stat(destFile)
-	assert.True(t, os.IsNotExist(err), "Dest file should not exist (duplicate skipped)")
-
-	_, err = os.Stat(testFile)
-	require.NoError(t, err, "Source file should remain (duplicate skipped)")
-
-	// Verify log shows skipped operation
-	assert.Equal(t, 1, migrator.Log.SkippedCount, "Should have 1 skipped file")
-	assert.Equal(t, 0, migrator.Log.MovedCount, "Should have 0 moved files")
-
-	// Verify skip reason mentions duplicate hash
-	require.Len(t, migrator.Log.Operations, 1, "Should have 1 operation")
-	op := migrator.Log.Operations[0]
-	assert.Equal(t, "skipped", op.Status, "Status should be 'skipped'")
-	assert.Contains(t, op.Error, "duplicate hash", "Error should mention duplicate hash")
-}
-
-func TestMigrationSkipDuplicate(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
-
-	// Create two files with identical content (duplicates)
-	file1 := filepath.Join(sourceDir, "File1_abc123.jpg")
-	file2 := filepath.Join(sourceDir, "File2_def456.jpg")
-	content := []byte("identical duplicate content")
-	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
-	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
-		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
-	}
-
-	// Create DB
-	db, err := storage.NewDB(dbPath)
-	require.NoError(t, err, "Failed to create database")
-	defer db.Close()
-
-	// Run migration with DB
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, db)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
-
-	// Verify first file was moved
-	destFile1 := filepath.Join(destDir, "pics", "File1_abc123.jpg")
-	_, err = os.Stat(destFile1)
-	require.NoError(t, err, "First file should be moved")
-
-	// Verify second file was skipped (duplicate)
-	destFile2 := filepath.Join(destDir, "pics", "File2_def456.jpg")
-	_, err = os.Stat(destFile2)
-	assert.True(t, os.IsNotExist(err), "Duplicate file should not be moved")
-
-	// Verify source file2 still exists
-	_, err = os.Stat(file2)
-	require.NoError(t, err, "Duplicate source file should remain")
-
-	// Verify log shows one moved, one skipped
-	assert.Equal(t, 1, migrator.Log.MovedCount, "Should have 1 moved file")
-	assert.Equal(t, 1, migrator.Log.SkippedCount, "Should have 1 skipped file")
-
-	// Verify skip operation
-	var skippedOp *MigrationRecord
-	for _, op := range migrator.Log.Operations {
-		if op.Status == "skipped" {
-			skippedOp = &op
-			break
-		}
-	}
-	require.NotNil(t, skippedOp, "Should have a skipped operation")
-	assert.Contains(t, skippedOp.Error, "duplicate hash", "Skip reason should mention duplicate hash")
-
-	// Verify only one file exists in destination
-	entries, err := os.ReadDir(filepath.Join(destDir, "pics"))
-	require.NoError(t, err, "Failed to read dest directory")
-	assert.Len(t, entries, 1, "Should have exactly 1 file in destination")
-}
-
-func TestMigrationPlaceholderValues(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
-
-	// Create test file
-	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	content := []byte("test content")
-	require.NoError(t, os.WriteFile(testFile, content, 0644), "Failed to write test file")
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
-	}
-
-	// Create DB
-	db, err := storage.NewDB(dbPath)
-	require.NoError(t, err, "Failed to create database")
-	defer db.Close()
-
-	// Run migration with DB
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, db)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
-
-	// Query DB for migrated post
-	ctx := context.Background()
-	post, err := db.GetPost(ctx, "abc123")
-	require.NoError(t, err, "Failed to get post from DB")
-	require.NotNil(t, post, "Post should exist in DB")
-
-	// Verify metadata values use postInfo data
-	assert.Equal(t, "Migrated from bdfr-html", post.Title, "Title should be 'Migrated from bdfr-html'")
-	assert.Equal(t, "pics", post.Subreddit, "Subreddit should use value from postInfo")
-	assert.Equal(t, "user", post.Author, "Author should use value from postInfo")
-	assert.Equal(t, "migrated", post.Source, "Source should be 'migrated'")
-
-	// Verify other expected fields
-	assert.Equal(t, "abc123", post.ID, "ID should match")
-	assert.Equal(t, "image", post.MediaType, "MediaType should be 'image'")
-	assert.NotEmpty(t, post.FilePath, "FilePath should be set")
-	assert.NotEmpty(t, post.Hash, "Hash should be set")
-	assert.False(t, post.DownloadedAt.IsZero(), "DownloadedAt should be set")
-}
-
-func TestRollbackRemovesDBEntry(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	destDir := filepath.Join(tmpDir, "dest")
-	logPath := filepath.Join(tmpDir, "migration_log.json")
-	dbPath := filepath.Join(tmpDir, "test.db")
-
-	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
-
-	// Create test file
-	testFile := filepath.Join(sourceDir, "Test_abc123.jpg")
-	content := []byte("test content")
-	require.NoError(t, os.WriteFile(testFile, content, 0644), "Failed to write test file")
-
-	postMap := map[string]PostInfo{
-		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
-	}
-
-	// Create DB
-	db, err := storage.NewDB(dbPath)
-	require.NoError(t, err, "Failed to create database")
-	defer db.Close()
-
-	// Run migration with DB
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, db)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
-	require.NoError(t, migrator.SaveLog(logPath), "Failed to save log")
-
-	// Verify DB entry was created
-	ctx := context.Background()
-	post, err := db.GetPost(ctx, "abc123")
-	require.NoError(t, err, "Failed to get post from DB")
-	require.NotNil(t, post, "Post should exist in DB after migration")
-
-	// Run rollback
-	rb := NewRollback(logPath, db)
-	rollbackLog, err := rb.Execute()
-	require.NoError(t, err, "Rollback failed")
-
-	// Verify rollback succeeded
-	assert.Equal(t, 1, rollbackLog.SuccessCount, "Should have 1 successful rollback")
-	assert.Equal(t, 0, rollbackLog.ErrorCount, "Should have 0 errors")
-
-	// Verify DB entry was removed
-	post, err = db.GetPost(ctx, "abc123")
-	require.NoError(t, err, "Failed to get post from DB after rollback")
-	assert.Nil(t, post, "Post should be removed from DB after rollback")
-
-	// Verify file was restored
-	_, err = os.Stat(testFile)
-	require.NoError(t, err, "Source file should be restored")
-
-	// Verify dest file was removed
-	destFile := filepath.Join(destDir, "pics", "Test_abc123.jpg")
-	_, err = os.Stat(destFile)
-	assert.True(t, os.IsNotExist(err), "Dest file should be removed")
 }
