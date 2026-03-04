@@ -570,7 +570,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	// Verify operations are sorted by modification time (not PostID)
 	var opPostIDs []string
 	for _, op := range migrator.Log.Operations {
-		if op.Status == "moved" {
+		if op.Status == "moved" || op.Status == "moved_with_warning" {
 			opPostIDs = append(opPostIDs, op.PostID)
 		}
 	}
@@ -874,8 +874,8 @@ func TestMigrationWithDB(t *testing.T) {
 
 	// Verify other fields
 	assert.Equal(t, "Migrated from bdfr-html", post.Title, "Title should be placeholder")
-	assert.Equal(t, "migrated", post.Subreddit, "Subreddit should be 'migrated'")
-	assert.Equal(t, "unknown", post.Author, "Author should be 'unknown'")
+	assert.Equal(t, "pics", post.Subreddit, "Subreddit should use value from postInfo")
+	assert.Equal(t, "user", post.Author, "Author should use value from postInfo")
 	assert.Equal(t, "migrated", post.Source, "Source should be 'migrated'")
 	assert.Equal(t, "image", post.MediaType, "MediaType should be 'image'")
 }
@@ -1043,10 +1043,10 @@ func TestMigrationPlaceholderValues(t *testing.T) {
 	require.NoError(t, err, "Failed to get post from DB")
 	require.NotNil(t, post, "Post should exist in DB")
 
-	// Verify placeholder metadata values
+	// Verify metadata values use postInfo data
 	assert.Equal(t, "Migrated from bdfr-html", post.Title, "Title should be 'Migrated from bdfr-html'")
-	assert.Equal(t, "migrated", post.Subreddit, "Subreddit should be 'migrated'")
-	assert.Equal(t, "unknown", post.Author, "Author should be 'unknown'")
+	assert.Equal(t, "pics", post.Subreddit, "Subreddit should use value from postInfo")
+	assert.Equal(t, "user", post.Author, "Author should use value from postInfo")
 	assert.Equal(t, "migrated", post.Source, "Source should be 'migrated'")
 
 	// Verify other expected fields
