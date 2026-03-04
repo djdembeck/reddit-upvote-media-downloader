@@ -97,16 +97,26 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		defer db.Close()
 	}
 
+	if !dryRun {
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating destination directory: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if logFile == "" {
+		logFile = filepath.Join(destDir, ".migration_log.json")
+	}
+
 	// Execute
 	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
+	if err := migrator.LoadExistingLog(logFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading existing log: %v\n", err)
+		os.Exit(1)
+	}
 	if err := migrator.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Set default log path after destDir is guaranteed to exist (created by migrator.Execute())
-	if logFile == "" {
-		logFile = filepath.Join(destDir, ".migration_log.json")
 	}
 
 	// Save log
