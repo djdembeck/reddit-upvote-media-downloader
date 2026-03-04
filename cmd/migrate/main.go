@@ -105,7 +105,11 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	if logFile == "" {
-		logFile = filepath.Join(destDir, ".migration_log.json")
+		if dryRun {
+			logFile = filepath.Join(os.TempDir(), ".migration_log.json")
+		} else {
+			logFile = filepath.Join(destDir, ".migration_log.json")
+		}
 	}
 
 	// Execute
@@ -131,6 +135,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	fmt.Printf("Total: %d\n", migrator.Log.TotalFiles)
 	fmt.Printf("Moved: %d\n", migrator.Log.MovedCount)
 	fmt.Printf("Skipped: %d\n", migrator.Log.SkippedCount)
+	fmt.Printf("Warnings: %d\n", migrator.Log.WarningCount)
 	fmt.Printf("Errors: %d\n", migrator.Log.ErrorCount)
 	fmt.Printf("Log: %s\n", logFile)
 
