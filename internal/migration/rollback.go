@@ -59,7 +59,7 @@ func (r *Rollback) Execute() (*RollbackLog, error) {
 	// Process in reverse order
 	for i := len(migLog.Operations) - 1; i >= 0; i-- {
 		op := migLog.Operations[i]
-		if op.Status != "moved" {
+		if op.Status != "moved" && op.Status != "moved_with_warning" {
 			continue
 		}
 
@@ -155,10 +155,8 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 
 	if r.DB != nil {
 		if err := r.DB.DeletePost(context.Background(), op.PostID); err != nil {
-			if err.Error() != "post not found" {
-				record.Status = "failed"
-				record.Error = fmt.Sprintf("db delete failed: %v", err)
-			}
+			record.Status = "failed"
+			record.Error = fmt.Sprintf("db delete failed: %v", err)
 		}
 	}
 

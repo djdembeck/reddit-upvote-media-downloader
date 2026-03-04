@@ -68,7 +68,7 @@ func (m *Migrator) LoadExistingLog(logPath string) error {
 	}
 
 	for _, op := range existingLog.Operations {
-		if op.Hash != "" && op.Status == "moved" {
+		if op.Hash != "" && (op.Status == "moved" || op.Status == "moved_with_warning") {
 			m.seenHashes[op.Hash] = FileHashInfo{
 				PostID:     op.PostID,
 				SourcePath: op.SourcePath,
@@ -206,11 +206,21 @@ func (m *Migrator) processFile(filename string) {
 			mediaType = "gif"
 		}
 
+		// Use parsed metadata with fallbacks for empty values
+		subreddit := postInfo.Subreddit
+		if subreddit == "" {
+			subreddit = "migrated"
+		}
+		author := postInfo.Username
+		if author == "" {
+			author = "unknown"
+		}
+
 		post := &storage.Post{
 			ID:           postID,
 			Title:        "Migrated from bdfr-html",
-			Subreddit:    "migrated",
-			Author:       "unknown",
+			Subreddit:    subreddit,
+			Author:       author,
 			URL:          "",
 			Permalink:    "",
 			CreatedAt:    fileInfo.ModTime(),
@@ -360,7 +370,7 @@ func (m *Migrator) recordWarning(filename, postID, operation string, err error) 
 	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
-		Status:     "moved",
+		Status:     "moved_with_warning",
 		Error:      fmt.Sprintf("warning: %s: %v", operation, err),
 		Timestamp:  time.Now(),
 	})
