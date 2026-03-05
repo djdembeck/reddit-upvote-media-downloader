@@ -945,7 +945,15 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 		t.Fatalf("Failed to create idList.txt: %v", err)
 	}
 
-	err = runAutoMigration(ctx, db, outputDir)
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			OutputDir: outputDir,
+		},
+		Migrate: config.MigrateConfig{
+			ReorganizeEnabled: false,
+		},
+	}
+	err = runAutoMigration(ctx, db, cfg)
 	if err != nil {
 		t.Fatalf("Auto-migration failed: %v", err)
 	}
