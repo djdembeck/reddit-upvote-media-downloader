@@ -259,7 +259,10 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 		return nil
 	}
 
-	if cfg.Migrate.ReorganizeEnabled && cfg.Migrate.SourceDir != "" {
+	if cfg.Migrate.ReorganizeEnabled {
+		if cfg.Migrate.SourceDir == "" {
+			return fmt.Errorf("migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; set MIGRATE_SOURCE_DIR environment variable")
+		}
 		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
 			return fmt.Errorf("file reorganization failed: %w", err)
 		}
