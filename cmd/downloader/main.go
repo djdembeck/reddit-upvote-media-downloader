@@ -142,7 +142,8 @@ func main() {
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
 		if err := runAutoMigration(ctx, db, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Migration failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error: Migration failed: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -259,7 +260,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	}
 
 	if cfg.Migrate.ReorganizeEnabled && cfg.Migrate.SourceDir != "" {
-		if err := runFileReorganization(cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
+		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
 			return fmt.Errorf("file reorganization failed: %w", err)
 		}
 	}
@@ -289,7 +290,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	return nil
 }
 
-func runFileReorganization(sourceDir, destDir, htmlDir string, db *storage.DB) error {
+func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB) error {
 	fmt.Println("===================")
 	fmt.Println("File Reorganization")
 	fmt.Println("===================")
@@ -298,8 +299,15 @@ func runFileReorganization(sourceDir, destDir, htmlDir string, db *storage.DB) e
 	fmt.Printf("HTML Directory: %s\n", htmlDir)
 	fmt.Println()
 
-	if _, err := os.Stat(sourceDir); os.IsNotExist(err) {
-		return fmt.Errorf("source directory does not exist: %s", sourceDir)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(sourceDir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("source directory does not exist: %s", sourceDir)
+		}
+		return fmt.Errorf("checking source directory %s: %w", sourceDir, err)
 	}
 
 	parser := migration.NewHTMLParser()
@@ -314,19 +322,30 @@ func runFileReorganization(sourceDir, destDir, htmlDir string, db *storage.DB) e
 			filepath.Join(sourceDir, "index.html"),
 		}
 		for _, indexPath := range indexPaths {
-			if _, err := os.Stat(indexPath); err == nil {
-				fmt.Printf("Parsing index.html at %s...\n", indexPath)
-				if err := parser.ParseIndexHTML(indexPath); err != nil {
-					return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
-				}
-				break
+			if err := ctx.Err(); err != nil {
+				return err
 			}
+			if _, err := os.Stat(indexPath); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
+			}
+			fmt.Printf("Parsing index.html at %s...\n", indexPath)
+			if err := parser.ParseIndexHTML(indexPath); err != nil {
+				return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
+			}
+			break
 		}
 		if len(parser.PostMap) == 0 {
 			fmt.Println("Warning: No index.html found. Files will be organized as 'unknown' subreddit.")
 		}
 	}
 	fmt.Printf("Found %d posts in HTML metadata\n\n", len(parser.PostMap))
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
