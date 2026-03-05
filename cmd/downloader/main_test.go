@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -968,6 +969,101 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 	}
 
 	t.Log("Migration correctly skipped when migration_complete flag is set")
+}
+
+func TestRunFileReorganization(t *testing.T) {
+	ctx := context.Background()
+
+	tempDir := t.TempDir()
+	sourceDir := filepath.Join(tempDir, "source")
+	destDir := filepath.Join(tempDir, "output")
+	dbPath := filepath.Join(tempDir, "posts.db")
+
+	// Create source directory with test files
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatalf("Failed to create source dir: %v", err)
+	}
+
+	// Create a test file with POSTID in name
+	testFile := filepath.Join(sourceDir, "test_post_1r4wjj5.jpg")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Create index.html with post metadata
+	indexContent := `<!DOCTYPE html>
+<html>
+<body>
+<div class="post">
+<a href="1r4wjj5.html">Post</a>
+<span class="subreddit">r/testsubreddit</span>
+<span class="user">u/testuser</span>
+</div>
+</body>
+</html>`
+	indexPath := filepath.Join(tempDir, "index.html")
+	if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
+		t.Fatalf("Failed to create index.html: %v", err)
+	}
+
+	db, err := storage.NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Run reorganization
+	if err := runFileReorganization(sourceDir, destDir, "", db); err != nil {
+		t.Fatalf("runFileReorganization failed: %v", err)
+	}
+
+	// Verify file was moved to subreddit folder
+	expectedPath := filepath.Join(destDir, "testsubreddit", "test_post_1r4wjj5.jpg")
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Errorf("Expected file at %s to exist, but it does not", expectedPath)
+	}
+
+	// Verify file was removed from source
+	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+		t.Errorf("Expected file at %s to be removed from source, but it still exists", testFile)
+	}
+
+	// Verify database entry was created
+	post, err := db.GetPost(ctx, "1r4wjj5")
+	if err != nil {
+		t.Fatalf("Failed to get post: %v", err)
+	}
+	if post == nil {
+		t.Errorf("Expected post 1r4wjj5 to exist in database")
+	} else if post.Subreddit != "testsubreddit" {
+		t.Errorf("Expected subreddit 'testsubreddit', got '%s'", post.Subreddit)
+	}
+
+	t.Log("File reorganization completed successfully")
+}
+
+func TestRunFileReorganization_MissingSourceDir(t *testing.T) {
+	tempDir := t.TempDir()
+	destDir := filepath.Join(tempDir, "output")
+	dbPath := filepath.Join(tempDir, "posts.db")
+
+	db, err := storage.NewDB(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Try to reorganize from non-existent source
+	nonExistentDir := filepath.Join(tempDir, "nonexistent")
+	err = runFileReorganization(nonExistentDir, destDir, "", db)
+	if err == nil {
+		t.Errorf("Expected error for non-existent source directory, got nil")
+	}
+
+	expectedMsg := "source directory does not exist"
+	if err != nil && !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error containing '%s', got: %v", expectedMsg, err)
+	}
 }
 
 func TestE2E_ReCheckMissingFiles(t *testing.T) {
