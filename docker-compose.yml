@@ -16,6 +16,9 @@ services:
       - FETCH_LIMIT=${FETCH_LIMIT:-100}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - MIGRATE_ON_START=${MIGRATE_ON_START:-true}
+      - MIGRATE_REORGANIZE=${MIGRATE_REORGANIZE:-false}
+      - MIGRATE_SOURCE_DIR=${MIGRATE_SOURCE_DIR:-}
+      - MIGRATE_HTML_DIR=${MIGRATE_HTML_DIR:-}
     volumes:
       - ./data:/data
       - ./.env:/.env:ro
