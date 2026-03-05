@@ -285,8 +285,11 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate migration configuration
-	if c.Migrate.ReorganizeEnabled && c.Migrate.SourceDir == "" {
-		return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
+	if c.Migrate.ReorganizeEnabled {
+		src := strings.TrimSpace(c.Migrate.SourceDir)
+		if src == "" {
+			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
+		}
 	}
 
 	return nil
