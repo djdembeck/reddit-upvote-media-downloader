@@ -260,7 +260,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 
 	if cfg.Migrate.ReorganizeEnabled && cfg.Migrate.SourceDir != "" {
 		if err := runFileReorganization(cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
-			fmt.Printf("Warning: File reorganization failed: %v\n", err)
+			return fmt.Errorf("file reorganization failed: %w", err)
 		}
 	}
 
@@ -313,19 +313,16 @@ func runFileReorganization(sourceDir, destDir, htmlDir string, db *storage.DB) e
 			filepath.Join(filepath.Dir(sourceDir), "index.html"),
 			filepath.Join(sourceDir, "index.html"),
 		}
-		var indexFound bool
 		for _, indexPath := range indexPaths {
 			if _, err := os.Stat(indexPath); err == nil {
 				fmt.Printf("Parsing index.html at %s...\n", indexPath)
 				if err := parser.ParseIndexHTML(indexPath); err != nil {
-					fmt.Printf("Warning: Failed to parse %s: %v\n", indexPath, err)
-					continue
+					return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
 				}
-				indexFound = true
 				break
 			}
 		}
-		if !indexFound {
+		if len(parser.PostMap) == 0 {
 			fmt.Println("Warning: No index.html found. Files will be organized as 'unknown' subreddit.")
 		}
 	}

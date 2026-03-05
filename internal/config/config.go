@@ -284,6 +284,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
 	}
 
+	// Validate migration configuration
+	if c.Migrate.ReorganizeEnabled && c.Migrate.SourceDir == "" {
+		return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
+	}
+
 	return nil
 }
 
