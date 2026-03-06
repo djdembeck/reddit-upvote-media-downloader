@@ -319,14 +319,39 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 
 	parser := migration.NewHTMLParser()
 
-	htmlDirToParse := htmlDir
-	if htmlDirToParse == "" {
-		htmlDirToParse = sourceDir
-	}
+	if htmlDir != "" {
+		fmt.Printf("Parsing HTML files from %s...\n", htmlDir)
+		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
+			return fmt.Errorf("parsing HTML files: %w", err)
+		}
+	} else {
+		fmt.Printf("Parsing HTML files from %s...\n", sourceDir)
+		if err := parser.ParseHTMLFiles(ctx, sourceDir); err != nil {
+			return fmt.Errorf("parsing HTML files: %w", err)
+		}
 
-	fmt.Printf("Parsing HTML files from %s...\n", htmlDirToParse)
-	if err := parser.ParseHTMLFiles(ctx, htmlDirToParse); err != nil {
-		return fmt.Errorf("parsing HTML files: %w", err)
+		if len(parser.PostMap) == 0 {
+			indexPaths := []string{
+				filepath.Join(filepath.Dir(sourceDir), "index.html"),
+				filepath.Join(sourceDir, "index.html"),
+			}
+			for _, indexPath := range indexPaths {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if _, err := os.Stat(indexPath); err != nil {
+					if os.IsNotExist(err) {
+						continue
+					}
+					return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
+				}
+				fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", indexPath)
+				if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
+					return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
+				}
+				break
+			}
+		}
 	}
 
 	if len(parser.PostMap) == 0 {

@@ -1025,6 +1025,48 @@ func TestRunFileReorganization_Table(t *testing.T) {
 			expectedDBPost:  "1r4wjj5",
 		},
 		{
+			name: "fallback to index.html when no individual HTML files",
+			setupFunc: func(tempDir string) (string, string, string, *storage.DB, func()) {
+				sourceDir := filepath.Join(tempDir, "source")
+				destDir := filepath.Join(tempDir, "output")
+				dbPath := filepath.Join(tempDir, "posts.db")
+
+				if err := os.MkdirAll(sourceDir, 0755); err != nil {
+					t.Fatalf("Failed to create source dir: %v", err)
+				}
+
+				testFile := filepath.Join(sourceDir, "test_post_1r4wjj5.jpg")
+				if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+
+				indexContent := `<!DOCTYPE html>
+<html>
+<body>
+<div class="post">
+<a href="1r4wjj5.html">Post</a>
+<span class="subreddit">r/testsubreddit</span>
+<span class="user">u/testuser</span>
+</div>
+</body>
+</html>`
+				indexPath := filepath.Join(tempDir, "index.html")
+				if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
+					t.Fatalf("Failed to create index.html: %v", err)
+				}
+
+				db, err := storage.NewDB(dbPath)
+				if err != nil {
+					t.Fatalf("Failed to create database: %v", err)
+				}
+
+				return sourceDir, destDir, "", db, func() { db.Close() }
+			},
+			expectError:     false,
+			expectMovedPath: "testsubreddit/test_post_1r4wjj5.jpg",
+			expectedDBPost:  "1r4wjj5",
+		},
+		{
 			name: "missing source directory",
 			setupFunc: func(tempDir string) (string, string, string, *storage.DB, func()) {
 				destDir := filepath.Join(tempDir, "output")
