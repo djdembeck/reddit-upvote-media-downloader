@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -53,6 +54,8 @@ func main() {
 }
 
 func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun bool) {
+	ctx := context.Background()
+
 	fmt.Println("Reddit Media Migration Tool")
 	fmt.Println("==========================")
 	fmt.Printf("Source: %s\n", sourceDir)
@@ -70,13 +73,13 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	parser := migration.NewHTMLParser()
 	if htmlDir != "" {
 		fmt.Println("Parsing HTML files...")
-		if err := parser.ParseHTMLFiles(htmlDir); err != nil {
+		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
 		fmt.Println("Parsing index.html...")
-		if err := parser.ParseIndexHTML(indexPath); err != nil {
+		if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -114,17 +117,17 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 
 	// Execute
 	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
-	if err := migrator.LoadExistingLog(logFile); err != nil {
+	if err := migrator.LoadExistingLog(ctx, logFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading existing log: %v\n", err)
 		os.Exit(1)
 	}
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Save log
-	if err := migrator.SaveLog(logFile); err != nil {
+	if err := migrator.SaveLog(ctx, logFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving log: %v\n", err)
 		os.Exit(1)
 	}

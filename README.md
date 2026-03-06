@@ -115,6 +115,9 @@ The application reads all configuration from environment variables. These can be
 | `FULL_SYNC_ONCE` | `true` | First run after migration fetches all posts |
 | `LOG_LEVEL` | `info` | Logging level: `debug`, `info`, `warn`, `error` |
 | `MIGRATE_ON_START` | `true` | Auto-import existing bdfr-html data on first run |
+| `MIGRATE_REORGANIZE` | `false` | Reorganize files into subreddit folders during migration |
+| `MIGRATE_SOURCE_DIR` | *(empty)* | Source directory containing files to reorganize |
+| `MIGRATE_HTML_DIR` | *(empty)* | Directory with bdfr-html files for metadata (optional) |
 
 ### Example `.env` File
 
@@ -215,8 +218,36 @@ cp -r /path/to/bdfr-html/output/* ./data/output/
 cp /path/to/bdfr-html/output/idList.txt ./data/
 ```
 
-1. Start the downloader with `MIGRATE_ON_START=true`
-2. Logs will show: *"Migrated X existing posts from bdfr-html"*
+2. Start the downloader with `MIGRATE_ON_START=true`
+3. Logs will show: *"Migrated X existing posts from bdfr-html"*
+
+### Automatic File Reorganization
+
+If your media files are in a flat structure (e.g., all files in one folder), you can automatically reorganize them into subreddit-based folders during migration:
+
+```bash
+# Enable reorganization and set source directory
+MIGRATE_REORGANIZE=true
+MIGRATE_SOURCE_DIR=/path/to/flat/media/directory
+MIGRATE_HTML_DIR=/path/to/bdfr-html/output  # Optional: for metadata extraction
+```
+
+**How it works:**
+1. Files are moved from `MIGRATE_SOURCE_DIR` to `OUTPUT_DIR` organized by subreddit
+2. HTML metadata is extracted to map POSTIDs to subreddits
+3. Database is populated with reorganized file paths
+4. Migration log is saved for rollback if needed
+
+**Example Docker setup:**
+```yaml
+environment:
+  - MIGRATE_ON_START=true
+  - MIGRATE_REORGANIZE=true
+  - MIGRATE_SOURCE_DIR=/data/old_media
+volumes:
+  - ./data:/data
+  - /path/to/old/bdfr-html/output:/data/old_media:ro
+```
 
 ### Full Sync Behavior
 

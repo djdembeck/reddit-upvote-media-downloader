@@ -14,6 +14,7 @@ import (
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/downloader"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
@@ -140,8 +141,9 @@ func main() {
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
-		if err := runAutoMigration(ctx, db, cfg.Storage.OutputDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Migration failed: %v\n", err)
+		if err := runAutoMigration(ctx, db, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Migration failed: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -233,14 +235,11 @@ func main() {
 	}
 }
 
-// runAutoMigration imports existing bdfr-html data
-func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) error {
-	// Check if migration has already been completed using metadata
-	// This check is backward compatible - if metadata doesn't exist or key not found,
-	// migration will proceed normally
+func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) error {
+	outputDir := cfg.Storage.OutputDir
+
 	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
 	if err != nil {
-		// Log warning but don't fail - proceed with migration for backward compatibility
 		fmt.Printf("Warning: Could not check migration_complete metadata: %v\n", err)
 	}
 	if migrationComplete == "true" {
@@ -248,13 +247,11 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 		return nil
 	}
 
-	// Check if database is empty (legacy check for backward compatibility)
 	stats, err := db.GetStats(ctx)
 	if err != nil {
 		return fmt.Errorf("getting stats: %w", err)
 	}
 	if stats.TotalPosts > 0 {
-		// Database already has data, mark migration as complete and skip
 		fmt.Printf("Database has %d posts, marking migration as complete\n", stats.TotalPosts)
 		if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 			return fmt.Errorf("setting migration_complete metadata: %w", err)
@@ -262,7 +259,15 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 		return nil
 	}
 
-	// Look for idList.txt
+	if cfg.Migrate.ReorganizeEnabled {
+		if cfg.Migrate.SourceDir == "" {
+			return fmt.Errorf("migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; set MIGRATE_SOURCE_DIR environment variable")
+		}
+		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
+			return fmt.Errorf("file reorganization failed: %w", err)
+		}
+	}
+
 	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
 	if _, err := os.Stat(idListPath); err == nil {
 		fmt.Printf("Migrating existing data from %s...\n", idListPath)
@@ -273,7 +278,6 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 		fmt.Printf("Migrated %d posts from idList.txt\n", count)
 	}
 
-	// Scan existing media files
 	count, err := db.ImportFromDirectory(ctx, outputDir)
 	if err != nil {
 		return fmt.Errorf("importing media directory: %w", err)
@@ -281,6 +285,103 @@ func runAutoMigration(ctx context.Context, db *storage.DB, outputDir string) err
 	if count > 0 {
 		fmt.Printf("Migrated %d posts from media directory\n", count)
 	}
+
+	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
+		return fmt.Errorf("setting migration_complete metadata: %w", err)
+	}
+
+	return nil
+}
+
+func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB) error {
+	fmt.Println("===================")
+	fmt.Println("File Reorganization")
+	fmt.Println("===================")
+	fmt.Printf("Source: %s\n", sourceDir)
+	fmt.Printf("Destination: %s\n", destDir)
+	fmt.Printf("HTML Directory: %s\n", htmlDir)
+	fmt.Println()
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	info, err := os.Stat(sourceDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("source directory does not exist: %s", sourceDir)
+		}
+		return fmt.Errorf("checking source directory %s: %w", sourceDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source path is not a directory: %s", sourceDir)
+	}
+
+	parser := migration.NewHTMLParser()
+	if htmlDir != "" {
+		fmt.Println("Parsing HTML files...")
+		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
+			return fmt.Errorf("parsing HTML files: %w", err)
+		}
+	} else {
+		indexPaths := []string{
+			filepath.Join(filepath.Dir(sourceDir), "index.html"),
+			filepath.Join(sourceDir, "index.html"),
+		}
+		for _, indexPath := range indexPaths {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if _, err := os.Stat(indexPath); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
+			}
+			fmt.Printf("Parsing index.html at %s...\n", indexPath)
+			if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
+				return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
+			}
+			if len(parser.PostMap) > 0 {
+				break
+			}
+		}
+		if len(parser.PostMap) == 0 {
+			fmt.Println("Warning: No index.html found. Files will be organized as 'unknown' subreddit.")
+		}
+	}
+	fmt.Printf("Found %d posts in HTML metadata\n\n", len(parser.PostMap))
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("creating destination directory: %w", err)
+	}
+
+	logPath := filepath.Join(destDir, ".migration_log.json")
+	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db)
+	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
+		return fmt.Errorf("loading existing log: %w", err)
+	}
+	if err := migrator.Execute(ctx); err != nil {
+		return fmt.Errorf("executing migration: %w", err)
+	}
+
+	if err := migrator.SaveLog(ctx, logPath); err != nil {
+		return fmt.Errorf("saving migration log: %w", err)
+	}
+
+	fmt.Println("\nReorganization Summary")
+	fmt.Println("======================")
+	fmt.Printf("Total: %d\n", migrator.Log.TotalFiles)
+	fmt.Printf("Moved: %d\n", migrator.Log.MovedCount)
+	fmt.Printf("Skipped: %d\n", migrator.Log.SkippedCount)
+	fmt.Printf("Warnings: %d\n", migrator.Log.WarningCount)
+	fmt.Printf("Errors: %d\n", migrator.Log.ErrorCount)
+	fmt.Printf("Log: %s\n", logPath)
+	fmt.Println()
 
 	return nil
 }

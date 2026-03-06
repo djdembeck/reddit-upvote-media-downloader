@@ -55,8 +55,11 @@ type LogConfig struct {
 
 // MigrateConfig holds migration settings
 type MigrateConfig struct {
-	OnStart      bool
-	FullSyncOnce bool
+	OnStart           bool
+	FullSyncOnce      bool
+	SourceDir         string // Source directory containing media files to reorganize
+	HTMLDir           string // Directory containing bdfr-html HTML files for metadata
+	ReorganizeEnabled bool   // Enable file reorganization into subreddit folders
 }
 
 // BackoffConfig holds exponential backoff settings for retries
@@ -164,8 +167,11 @@ func Load() (*Config, error) {
 			Level: getEnv("LOG_LEVEL", "info"),
 		},
 		Migrate: MigrateConfig{
-			OnStart:      getEnvBool("MIGRATE_ON_START", true),
-			FullSyncOnce: getEnvBool("FULL_SYNC_ONCE", true),
+			OnStart:           getEnvBool("MIGRATE_ON_START", true),
+			FullSyncOnce:      getEnvBool("FULL_SYNC_ONCE", true),
+			SourceDir:         getEnv("MIGRATE_SOURCE_DIR", ""),
+			HTMLDir:           getEnv("MIGRATE_HTML_DIR", ""),
+			ReorganizeEnabled: getEnvBool("MIGRATE_REORGANIZE", false),
 		},
 		Backoff: BackoffConfig{
 			Base: getEnvDuration("BACKOFF_BASE", 5*time.Second),
@@ -276,6 +282,14 @@ func (c *Config) Validate() error {
 	// Validate retry threshold
 	if c.SmartPolling.RetryThreshold < 0 {
 		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
+	}
+
+	// Validate migration configuration
+	if c.Migrate.ReorganizeEnabled {
+		src := strings.TrimSpace(c.Migrate.SourceDir)
+		if src == "" {
+			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
+		}
 	}
 
 	return nil

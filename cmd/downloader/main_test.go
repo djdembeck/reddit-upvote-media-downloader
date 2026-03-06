@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -945,7 +946,15 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 		t.Fatalf("Failed to create idList.txt: %v", err)
 	}
 
-	err = runAutoMigration(ctx, db, outputDir)
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			OutputDir: outputDir,
+		},
+		Migrate: config.MigrateConfig{
+			ReorganizeEnabled: false,
+		},
+	}
+	err = runAutoMigration(ctx, db, cfg)
 	if err != nil {
 		t.Fatalf("Auto-migration failed: %v", err)
 	}
@@ -960,6 +969,124 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 	}
 
 	t.Log("Migration correctly skipped when migration_complete flag is set")
+}
+
+func TestRunFileReorganization_Table(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		name            string
+		setupFunc       func(tempDir string) (string, string, string, *storage.DB, func())
+		expectError     bool
+		expectErrMsg    string
+		expectMovedPath string
+		expectedDBPost  string
+	}{
+		{
+			name: "successful reorganization",
+			setupFunc: func(tempDir string) (string, string, string, *storage.DB, func()) {
+				sourceDir := filepath.Join(tempDir, "source")
+				destDir := filepath.Join(tempDir, "output")
+				dbPath := filepath.Join(tempDir, "posts.db")
+
+				// Create source directory with test files
+				if err := os.MkdirAll(sourceDir, 0755); err != nil {
+					t.Fatalf("Failed to create source dir: %v", err)
+				}
+
+				// Create a test file with POSTID in name
+				testFile := filepath.Join(sourceDir, "test_post_1r4wjj5.jpg")
+				if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+
+				// Create index.html with post metadata
+				indexContent := `<!DOCTYPE html>
+<html>
+<body>
+<div class="post">
+<a href="1r4wjj5.html">Post</a>
+<span class="subreddit">r/testsubreddit</span>
+<span class="user">u/testuser</span>
+</div>
+</body>
+</html>`
+				indexPath := filepath.Join(tempDir, "index.html")
+				if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
+					t.Fatalf("Failed to create index.html: %v", err)
+				}
+
+				db, err := storage.NewDB(dbPath)
+				if err != nil {
+					t.Fatalf("Failed to create database: %v", err)
+				}
+
+				return sourceDir, destDir, "", db, func() { db.Close() }
+			},
+			expectError:     false,
+			expectMovedPath: "testsubreddit/test_post_1r4wjj5.jpg",
+			expectedDBPost:  "1r4wjj5",
+		},
+		{
+			name: "missing source directory",
+			setupFunc: func(tempDir string) (string, string, string, *storage.DB, func()) {
+				destDir := filepath.Join(tempDir, "output")
+				dbPath := filepath.Join(tempDir, "posts.db")
+
+				db, err := storage.NewDB(dbPath)
+				if err != nil {
+					t.Fatalf("Failed to create database: %v", err)
+				}
+
+				nonExistentDir := filepath.Join(tempDir, "nonexistent")
+				return nonExistentDir, destDir, "", db, func() { db.Close() }
+			},
+			expectError:  true,
+			expectErrMsg: "source directory does not exist",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			sourceDir, destDir, htmlDir, db, cleanup := tc.setupFunc(tempDir)
+			defer cleanup()
+
+			err := runFileReorganization(ctx, sourceDir, destDir, htmlDir, db)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error, got nil")
+				} else if tc.expectErrMsg != "" && !strings.Contains(err.Error(), tc.expectErrMsg) {
+					t.Errorf("Expected error containing '%s', got: %v", tc.expectErrMsg, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("runFileReorganization failed: %v", err)
+			}
+
+			if tc.expectMovedPath != "" {
+				expectedPath := filepath.Join(destDir, tc.expectMovedPath)
+				if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+					t.Errorf("Expected file at %s to exist, but it does not", expectedPath)
+				}
+			}
+
+			if tc.expectedDBPost != "" {
+				post, err := db.GetPost(ctx, tc.expectedDBPost)
+				if err != nil {
+					t.Fatalf("Failed to get post: %v", err)
+				}
+				if post == nil {
+					t.Errorf("Expected post %s to exist in database", tc.expectedDBPost)
+				} else if post.Subreddit != "testsubreddit" {
+					t.Errorf("Expected subreddit 'testsubreddit', got '%s'", post.Subreddit)
+				}
+			}
+		})
+	}
 }
 
 func TestE2E_ReCheckMissingFiles(t *testing.T) {
