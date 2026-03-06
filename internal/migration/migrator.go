@@ -113,6 +113,9 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		if entry.IsDir() {
 			continue
 		}
+		if strings.HasSuffix(strings.ToLower(entry.Name()), ".html") {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			m.recordError(entry.Name(), "", "stat_file", err)
