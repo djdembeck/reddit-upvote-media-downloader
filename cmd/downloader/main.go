@@ -306,11 +306,15 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		return err
 	}
 
-	if _, err := os.Stat(sourceDir); err != nil {
+	info, err := os.Stat(sourceDir)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("source directory does not exist: %s", sourceDir)
 		}
 		return fmt.Errorf("checking source directory %s: %w", sourceDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("source path is not a directory: %s", sourceDir)
 	}
 
 	parser := migration.NewHTMLParser()
@@ -338,7 +342,9 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 			if err := parser.ParseIndexHTML(indexPath); err != nil {
 				return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
 			}
-			break
+			if len(parser.PostMap) > 0 {
+				break
+			}
 		}
 		if len(parser.PostMap) == 0 {
 			fmt.Println("Warning: No index.html found. Files will be organized as 'unknown' subreddit.")
