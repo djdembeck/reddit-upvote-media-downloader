@@ -318,39 +318,21 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	}
 
 	parser := migration.NewHTMLParser()
-	if htmlDir != "" {
-		fmt.Println("Parsing HTML files...")
-		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
-			return fmt.Errorf("parsing HTML files: %w", err)
-		}
-	} else {
-		indexPaths := []string{
-			filepath.Join(filepath.Dir(sourceDir), "index.html"),
-			filepath.Join(sourceDir, "index.html"),
-		}
-		for _, indexPath := range indexPaths {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if _, err := os.Stat(indexPath); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
-			}
-			fmt.Printf("Parsing index.html at %s...\n", indexPath)
-			if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
-				return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
-			}
-			if len(parser.PostMap) > 0 {
-				break
-			}
-		}
-		if len(parser.PostMap) == 0 {
-			fmt.Println("Warning: No index.html found. Files will be organized as 'unknown' subreddit.")
-		}
+
+	htmlDirToParse := htmlDir
+	if htmlDirToParse == "" {
+		htmlDirToParse = sourceDir
 	}
-	fmt.Printf("Found %d posts in HTML metadata\n\n", len(parser.PostMap))
+
+	fmt.Printf("Parsing HTML files from %s...\n", htmlDirToParse)
+	if err := parser.ParseHTMLFiles(ctx, htmlDirToParse); err != nil {
+		return fmt.Errorf("parsing HTML files: %w", err)
+	}
+
+	if len(parser.PostMap) == 0 {
+		fmt.Println("Warning: No HTML metadata found. Files will be organized as 'unknown' subreddit.")
+	}
+	fmt.Printf("Total: %d posts in HTML metadata\n\n", len(parser.PostMap))
 
 	if err := ctx.Err(); err != nil {
 		return err

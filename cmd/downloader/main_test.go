@@ -1000,20 +1000,17 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create test file: %v", err)
 				}
 
-				// Create index.html with post metadata
-				indexContent := `<!DOCTYPE html>
+				// Create individual HTML file with post metadata
+				htmlContent := `<!DOCTYPE html>
 <html>
 <body>
-<div class="post">
-<a href="1r4wjj5.html">Post</a>
 <span class="subreddit">r/testsubreddit</span>
 <span class="user">u/testuser</span>
-</div>
 </body>
 </html>`
-				indexPath := filepath.Join(tempDir, "index.html")
-				if err := os.WriteFile(indexPath, []byte(indexContent), 0644); err != nil {
-					t.Fatalf("Failed to create index.html: %v", err)
+				htmlPath := filepath.Join(sourceDir, "1r4wjj5.html")
+				if err := os.WriteFile(htmlPath, []byte(htmlContent), 0644); err != nil {
+					t.Fatalf("Failed to create HTML file: %v", err)
 				}
 
 				db, err := storage.NewDB(dbPath)
