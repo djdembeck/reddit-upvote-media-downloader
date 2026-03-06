@@ -109,7 +109,7 @@ func TestHTMLParser(t *testing.T) {
 	}
 
 	parser := NewHTMLParser()
-	if err := parser.ParseIndexHTML(indexPath); err != nil {
+	if err := parser.ParseIndexHTML(context.Background(), indexPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +160,7 @@ func TestMigratorDryRun(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, true, nil)
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,7 +195,7 @@ func TestMigratorActualMove(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,7 +233,7 @@ func TestMigratorOrphaned(t *testing.T) {
 	postMap := map[string]PostInfo{}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -269,7 +269,7 @@ func TestMigratorUserRouting(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -431,7 +431,7 @@ func TestDuplicateHandling(t *testing.T) {
 			}
 
 			migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+			require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 			ext := ".jpg"
 			if tt.name == "different_extension" {
@@ -472,12 +472,12 @@ func TestIdempotentReRun(t *testing.T) {
 	}
 
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	require.NoError(t, migrator1.Execute())
-	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
+	require.NoError(t, migrator1.Execute(context.Background()))
+	require.NoError(t, migrator1.SaveLog(context.Background(), logPath), "Failed to save log")
 
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
-	require.NoError(t, migrator2.Execute())
+	require.NoError(t, migrator2.LoadExistingLog(context.Background(), logPath), "Failed to load existing log")
+	require.NoError(t, migrator2.Execute(context.Background()))
 
 	assert.Equal(t, 0, migrator2.Log.TotalFiles, "Second run should have no files to process")
 }
@@ -488,8 +488,8 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	logPath := filepath.Join(filepath.Dir(sourceDir), "migration_log.json")
 
 	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	require.NoError(t, migrator1.Execute())
-	require.NoError(t, migrator1.SaveLog(logPath), "Failed to save log")
+	require.NoError(t, migrator1.Execute(context.Background()))
+	require.NoError(t, migrator1.SaveLog(context.Background(), logPath), "Failed to save log")
 
 	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
 	_, err := os.Stat(destFile1)
@@ -499,8 +499,8 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	assert.NoError(t, err, "Duplicate source file should remain")
 
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	require.NoError(t, migrator2.LoadExistingLog(logPath), "Failed to load existing log")
-	require.NoError(t, migrator2.Execute())
+	require.NoError(t, migrator2.LoadExistingLog(context.Background(), logPath), "Failed to load existing log")
+	require.NoError(t, migrator2.Execute(context.Background()))
 
 	assert.Equal(t, 1, migrator2.Log.SkippedCount, "Second run should skip duplicate")
 
@@ -535,7 +535,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+	require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 	require.Equal(t, 3, migrator.Log.MovedCount, "Expected 3 moved files")
 
@@ -576,7 +576,7 @@ func TestMigration_HashLogging(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+	require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 	require.Len(t, migrator.Log.Operations, 1, "Expected 1 operation")
 
@@ -658,7 +658,7 @@ func TestParseHTMLFiles_TableDriven(t *testing.T) {
 			writeFiles(t, tmpDir, tt.files)
 
 			parser := NewHTMLParser()
-			if err := parser.ParseHTMLFiles(tmpDir); err != nil {
+			if err := parser.ParseHTMLFiles(context.Background(), tmpDir); err != nil {
 				t.Fatalf("ParseHTMLFiles failed: %v", err)
 			}
 
@@ -734,7 +734,7 @@ func TestParseHTMLFile(t *testing.T) {
 			}
 
 			parser := NewHTMLParser()
-			postInfo, err := parser.ParseHTMLFile(filePath)
+			postInfo, err := parser.ParseHTMLFile(context.Background(), filePath)
 
 			if err != nil {
 				t.Fatalf("ParseHTMLFile failed: %v", err)
@@ -775,7 +775,7 @@ func TestMigratorUnknownFiles(t *testing.T) {
 	}
 
 	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -995,7 +995,7 @@ func TestMigrationSuite(t *testing.T) {
 			}
 
 			migrator := NewMigrator(sourceDir, destDir, tt.postMap, false, db)
-			require.NoError(t, migrator.Execute(), "migrator.Execute failed")
+			require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 			assert.Equal(t, tt.wantMoved, migrator.Log.MovedCount, "Moved count mismatch")
 			assert.Equal(t, tt.wantSkipped, migrator.Log.SkippedCount, "Skipped count mismatch")
@@ -1034,7 +1034,7 @@ func TestMigrationSuite(t *testing.T) {
 			}
 
 			if tt.runRollback {
-				require.NoError(t, migrator.SaveLog(logPath), "Failed to save log")
+				require.NoError(t, migrator.SaveLog(context.Background(), logPath), "Failed to save log")
 
 				rb := NewRollback(logPath, db)
 				rollbackLog, err := rb.Execute()

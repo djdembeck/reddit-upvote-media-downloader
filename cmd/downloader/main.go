@@ -320,7 +320,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	parser := migration.NewHTMLParser()
 	if htmlDir != "" {
 		fmt.Println("Parsing HTML files...")
-		if err := parser.ParseHTMLFiles(htmlDir); err != nil {
+		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
 			return fmt.Errorf("parsing HTML files: %w", err)
 		}
 	} else {
@@ -339,7 +339,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 				return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
 			}
 			fmt.Printf("Parsing index.html at %s...\n", indexPath)
-			if err := parser.ParseIndexHTML(indexPath); err != nil {
+			if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
 				return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
 			}
 			if len(parser.PostMap) > 0 {
@@ -362,14 +362,14 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 
 	logPath := filepath.Join(destDir, ".migration_log.json")
 	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db)
-	if err := migrator.LoadExistingLog(logPath); err != nil {
+	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
 		return fmt.Errorf("loading existing log: %w", err)
 	}
-	if err := migrator.Execute(); err != nil {
+	if err := migrator.Execute(ctx); err != nil {
 		return fmt.Errorf("executing migration: %w", err)
 	}
 
-	if err := migrator.SaveLog(logPath); err != nil {
+	if err := migrator.SaveLog(ctx, logPath); err != nil {
 		return fmt.Errorf("saving migration log: %w", err)
 	}
 

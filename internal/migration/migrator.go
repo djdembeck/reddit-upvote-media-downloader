@@ -16,6 +16,15 @@ import (
 	"github.com/zeebo/blake3"
 )
 
+func contextChecker(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 type Migrator struct {
 	SourceDir string
 	DestDir   string
@@ -53,7 +62,11 @@ func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun 
 }
 
 // LoadExistingLog populates seenHashes from an existing migration log for idempotent re-runs
-func (m *Migrator) LoadExistingLog(logPath string) error {
+func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
+	if err := contextChecker(ctx); err != nil {
+		return err
+	}
+
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -80,7 +93,11 @@ func (m *Migrator) LoadExistingLog(logPath string) error {
 	return nil
 }
 
-func (m *Migrator) Execute() error {
+func (m *Migrator) Execute(ctx context.Context) error {
+	if err := contextChecker(ctx); err != nil {
+		return err
+	}
+
 	entries, err := os.ReadDir(m.SourceDir)
 	if err != nil {
 		return fmt.Errorf("read source directory: %w", err)
@@ -113,12 +130,15 @@ func (m *Migrator) Execute() error {
 	})
 
 	for _, f := range files {
-		m.processFile(f.name)
+		if err := contextChecker(ctx); err != nil {
+			return err
+		}
+		m.processFile(ctx, f.name)
 	}
 	return nil
 }
 
-func (m *Migrator) processFile(filename string) {
+func (m *Migrator) processFile(ctx context.Context, filename string) {
 	m.Log.TotalFiles++
 
 	// Extract POSTID
@@ -164,7 +184,7 @@ func (m *Migrator) processFile(filename string) {
 
 	// Check if hash exists in database (if DB is available and not dry-run)
 	if m.DB != nil && !m.DryRun {
-		exists, dbErr := m.DB.HashExists(context.Background(), fileHash)
+		exists, dbErr := m.DB.HashExists(ctx, fileHash)
 		if dbErr != nil {
 			m.recordError(filename, postID, "check_hash_exists", dbErr)
 			return
@@ -231,7 +251,7 @@ func (m *Migrator) processFile(filename string) {
 			Hash:         fileHash,
 		}
 
-		if saveErr := m.DB.SavePost(context.Background(), post); saveErr != nil {
+		if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
 			// Log warning but don't fail migration - file was already moved successfully
 			m.recordWarning(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
 		}
@@ -315,7 +335,11 @@ func copyFile(src, dst string) error {
 	return destFile.Sync()
 }
 
-func (m *Migrator) SaveLog(logPath string) error {
+func (m *Migrator) SaveLog(ctx context.Context, logPath string) error {
+	if err := contextChecker(ctx); err != nil {
+		return err
+	}
+
 	file, err := os.Create(logPath)
 	if err != nil {
 		return err

@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -30,7 +31,11 @@ func NewHTMLParser() *HTMLParser {
 //
 // The function reads the entire file and uses regex to extract all post IDs,
 // subreddits, and usernames, correlating them by position in the file.
-func (p *HTMLParser) ParseIndexHTML(indexPath string) error {
+func (p *HTMLParser) ParseIndexHTML(ctx context.Context, indexPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	content, err := os.ReadFile(indexPath)
 	if err != nil {
 		return fmt.Errorf("open index.html: %w", err)
@@ -138,7 +143,11 @@ func (p *HTMLParser) addPost(postID, subreddit, username string) {
 // IsUserPost is set to true when the subreddit starts with "u_".
 // Returns error for file read failures or invalid filenames.
 // Uses empty string if subreddit or username is missing (does not fail).
-func (p *HTMLParser) ParseHTMLFile(filePath string) (PostInfo, error) {
+func (p *HTMLParser) ParseHTMLFile(ctx context.Context, filePath string) (PostInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return PostInfo{}, err
+	}
+
 	filename := filepath.Base(filePath)
 	ext := strings.ToLower(filepath.Ext(filename))
 	if ext != ".html" {
@@ -195,11 +204,15 @@ func (p *HTMLParser) ParseHTMLFile(filePath string) (PostInfo, error) {
 // files are logged as warnings but do not stop processing.
 //
 // Returns error only if the directory cannot be read.
-func (p *HTMLParser) ParseHTMLFiles(htmlDir string) error {
+func (p *HTMLParser) ParseHTMLFiles(ctx context.Context, htmlDir string) error {
 	p.PostMap = make(map[string]PostInfo)
 	fileCount := 0
 
 	err := filepath.Walk(htmlDir, func(path string, info os.FileInfo, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		if err != nil {
 			log.Printf("Warning: error accessing path %s: %v", path, err)
 			return nil
@@ -213,7 +226,7 @@ func (p *HTMLParser) ParseHTMLFiles(htmlDir string) error {
 			return nil
 		}
 
-		postInfo, err := p.ParseHTMLFile(path)
+		postInfo, err := p.ParseHTMLFile(ctx, path)
 		if err != nil {
 			log.Printf("Warning: failed to parse %s: %v", path, err)
 			return nil
