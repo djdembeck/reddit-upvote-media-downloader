@@ -265,6 +265,10 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return hash, false, nil
 		}
 		lastErr = err
+		// Don't retry on permanent validation errors
+		if validationErr, ok := err.(ValidationError); ok && validationErr.Permanent {
+			break
+		}
 		if attempt < d.config.Retries {
 			if err := sleepWithContext(ctx, d.backoffDuration(attempt)); err != nil {
 				return "", false, err
@@ -317,43 +321,46 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		}
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			file.Close()
-			os.Remove(filePath)
-			return
-		}
-		file.Close()
-	}()
 
 	buf := make([]byte, 512)
 	n, err := io.ReadFull(resp.Body, buf)
 	if err != nil && err != io.ErrUnexpectedEOF {
+		file.Close()
+		os.Remove(filePath)
 		return fmt.Errorf("read response body: %w", err)
 	}
 
-	if err := validateMagicBytes(buf[:n], expectedExt); err != nil {
+	if validationErr := validateMagicBytes(buf[:n], expectedExt); validationErr != nil {
+		file.Close()
+		os.Remove(filePath)
 		return ValidationError{
 			Permanent: true,
-			Reason:    fmt.Sprintf("invalid magic bytes: %v", err),
+			Reason:    fmt.Sprintf("invalid magic bytes: %v", validationErr),
 		}
 	}
 
 	if isHTMLContent(buf[:n]) {
+		file.Close()
+		os.Remove(filePath)
 		return ValidationError{
 			Permanent: true,
 			Reason:    "content is HTML, not media",
 		}
 	}
 
-	if _, err := file.Write(buf[:n]); err != nil {
-		return fmt.Errorf("write buffered content: %w", err)
+	if _, writeErr := file.Write(buf[:n]); writeErr != nil {
+		file.Close()
+		os.Remove(filePath)
+		return fmt.Errorf("write buffered content: %w", writeErr)
 	}
 
-	if _, err := io.Copy(file, resp.Body); err != nil {
-		return fmt.Errorf("write file: %w", err)
+	if _, copyErr := io.Copy(file, resp.Body); copyErr != nil {
+		file.Close()
+		os.Remove(filePath)
+		return fmt.Errorf("write file: %w", copyErr)
 	}
 
+	file.Close()
 	return nil
 }
 
