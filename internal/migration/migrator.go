@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -132,9 +133,14 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		return files[i].modTime.Before(files[j].modTime)
 	})
 
-	for _, f := range files {
+	total := len(files)
+	for i, f := range files {
 		if err := contextChecker(ctx); err != nil {
 			return err
+		}
+		// Progress logging every 100 files
+		if (i+1)%100 == 0 || i == 0 || i == total-1 {
+			log.Printf("Processing file %d of %d: %s", i+1, total, f.name)
 		}
 		m.processFile(ctx, f.name)
 	}
