@@ -202,7 +202,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		}
 
 		expectedExt := filepath.Ext(filename)
-		err := d.downloadOnce(ctx, item.URL, filePath, expectedExt)
+		err = d.downloadOnce(ctx, item.URL, filePath, expectedExt)
 		if err == nil {
 			// Download succeeded, now calculate hash and check for duplicates
 			hash, hashErr := CalculateFileHash(filePath)
@@ -297,11 +297,16 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	// Deferred cleanup: always close file, remove on failure
 	success := false
 	defer func() {
-		if closeErr := file.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("close file: %w", closeErr)
+		if closeErr := file.Close(); closeErr != nil {
+			if err == nil {
+				err = fmt.Errorf("close file: %w", closeErr)
+			}
+			success = false
 		}
 		if !success {
-			os.Remove(filePath)
+			if removeErr := os.Remove(filePath); removeErr != nil {
+				d.logger.Warn("failed to remove partial file", "path", filePath, "error", removeErr)
+			}
 		}
 	}()
 
@@ -472,15 +477,22 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash 
 	}
 
 	ext := filepath.Ext(existingFile)
-	if err := validateExistingFile(existingFile, ext); err != nil {
-		d.logger.Warn("existing file is corrupt, re-downloading",
-			"path", existingFile, "error", err)
-		if removeErr := os.Remove(existingFile); removeErr != nil {
-			d.logger.Error("failed to remove corrupt file",
-				"path", existingFile, "error", removeErr)
-			return "", false, fmt.Errorf("failed to remove corrupt file %s: %w", existingFile, removeErr)
+	if validateErr := validateExistingFile(existingFile, ext); validateErr != nil {
+		// Only delete on permanent validation errors (size, magic, HTML)
+		// Transient I/O errors should not cause deletion
+		var validationErr ValidationError
+		if errors.As(validateErr, &validationErr) && validationErr.Permanent {
+			d.logger.Warn("existing file is corrupt, re-downloading",
+				"path", existingFile, "error", validateErr)
+			if removeErr := os.Remove(existingFile); removeErr != nil {
+				d.logger.Error("failed to remove corrupt file",
+					"path", existingFile, "error", removeErr)
+				return "", false, fmt.Errorf("failed to remove corrupt file %s: %w", existingFile, removeErr)
+			}
+			return "", false, nil
 		}
-		return "", false, nil
+		// Transient I/O errors - return wrapped error without deleting
+		return "", false, fmt.Errorf("failed to validate existing file %s: %w", existingFile, validateErr)
 	}
 
 	d.logger.Info("skip existing file", "path", existingFile)
@@ -495,40 +507,49 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash 
 func validateExistingFile(filePath, ext string) (err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to open %s: %w", filePath, err)
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil && err == nil {
-			err = closeErr
+			err = fmt.Errorf("failed to close %s: %w", filePath, closeErr)
 		}
 	}()
 
 	// Get file info for size check
 	info, err := file.Stat()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to stat %s: %w", filePath, err)
 	}
 
 	// Check minimum size
-	if err := validateMinimumSize(info.Size()); err != nil {
-		return err
+	if sizeErr := validateMinimumSize(info.Size()); sizeErr != nil {
+		return ValidationError{
+			Permanent: true,
+			Reason:    sizeErr.Error(),
+		}
 	}
 
 	// Read first 512 bytes for magic byte check
 	buf := make([]byte, 512)
-	n, err := io.ReadFull(file, buf)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-		return err
+	n, readErr := io.ReadFull(file, buf)
+	if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+		return fmt.Errorf("failed to read %s: %w", filePath, readErr)
 	}
 
 	// Validate magic bytes
-	if err := validateMagicBytes(buf[:n], ext); err != nil {
-		return err
+	if magicErr := validateMagicBytes(buf[:n], ext); magicErr != nil {
+		return ValidationError{
+			Permanent: true,
+			Reason:    fmt.Sprintf("invalid magic bytes: %v", magicErr),
+		}
 	}
 
 	// Check for HTML
 	if isHTMLContent(buf[:n]) {
-		return errors.New("file contains HTML")
+		return ValidationError{
+			Permanent: true,
+			Reason:    "file contains HTML",
+		}
 	}
 
 	return nil

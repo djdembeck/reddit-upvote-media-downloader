@@ -932,8 +932,18 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 
 	t.Run("ChunkedResponseRejectsSmallFile", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "video/mp4")
 			w.WriteHeader(http.StatusOK)
-			w.Write(smallData)
+			// Force chunked encoding by flushing headers before writing body
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			// Write in chunks to ensure Content-Length isn't set
+			w.Write(smallData[:4])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			w.Write(smallData[4:])
 		}))
 		defer server.Close()
 
@@ -962,6 +972,52 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 		filePath := filepath.Join(outputDir, "pics", "smallchunked_1.mp4")
 		_, statErr := os.Stat(filePath)
 		require.True(t, os.IsNotExist(statErr), "Small file should not be created for chunked response")
+	})
+
+	t.Run("EmptyBodyValidation", func(t *testing.T) {
+		var requestCount int32
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&requestCount, 1)
+			// Return HTTP 200 with Content-Type but zero-length body
+			w.Header().Set("Content-Type", "video/mp4")
+			w.WriteHeader(http.StatusOK)
+			// Explicitly write nothing to body
+		}))
+		defer server.Close()
+
+		outputDir := t.TempDir()
+		downloader := NewDownloader(Config{
+			OutputDir:   outputDir,
+			HTTPClient:  server.Client(),
+			Retries:     3,
+			BackoffBase: time.Millisecond,
+			Timeout:     time.Second,
+			UserAgent:   "test-agent",
+			Concurrency: 1,
+		}, nil)
+
+		items := []Downloadable{{
+			PostID:    "emptybody",
+			Subreddit: "pics",
+			Filename:  "emptybody_1.mp4",
+			URL:       server.URL + "/video.mp4",
+		}}
+
+		hashes, err := downloader.Download(context.Background(), items)
+		require.Error(t, err, "Download should fail for empty body")
+		assert.Contains(t, err.Error(), "empty response", "Error should mention empty response")
+
+		// Server should only be hit once (no retries for permanent validation error)
+		require.Equal(t, int32(1), atomic.LoadInt32(&requestCount), "Should only make 1 request (no retries for validation error)")
+
+		// No file should be created
+		filePath := filepath.Join(outputDir, "pics", "emptybody_1.mp4")
+		_, statErr := os.Stat(filePath)
+		require.True(t, os.IsNotExist(statErr), "No file should be created for empty response")
+
+		// No hash should be returned
+		assert.Empty(t, hashes["emptybody"], "No hash should be returned for empty body")
 	})
 }
 
