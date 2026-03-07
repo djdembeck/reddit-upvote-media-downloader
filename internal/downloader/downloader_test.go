@@ -22,6 +22,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func validJPEGData() []byte {
+	data := make([]byte, 1024)
+	data[0] = 0xFF
+	data[1] = 0xD8
+	data[2] = 0xFF
+	for i := 3; i < len(data); i++ {
+		data[i] = byte(i % 256)
+	}
+	return data
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -266,8 +277,13 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
 	// Use proper bdfr-html filename pattern: {POSTID}.ext (POSTID must be 6+ chars)
+	// Create a valid JPEG file (at least 1KB) to test validation
 	bdfrStyleFilePath := filepath.Join(subredditDir, "abc123.jpg")
-	if err := os.WriteFile(bdfrStyleFilePath, []byte("existing"), 0644); err != nil {
+	// Valid JPEG magic bytes: 0xFF 0xD8 0xFF
+	validContent := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+	// Pad to at least 1KB
+	validContent = append(validContent, make([]byte, 1024-len(validContent))...)
+	if err := os.WriteFile(bdfrStyleFilePath, validContent, 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
@@ -290,12 +306,18 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 		URL:       "https://example.com/abc123.jpg",
 	}}
 
-	if _, err := downloader.Download(context.Background(), items); err != nil {
+	hashes, err := downloader.Download(context.Background(), items)
+	if err != nil {
 		t.Fatalf("Download() error = %v", err)
+	}
+	// Verify the file was skipped (not re-downloaded)
+	if hashes["abc123"] == "" {
+		t.Error("Expected file to be skipped, but hash is empty")
 	}
 }
 
 func TestDownloaderRetries(t *testing.T) {
+	validData := validJPEGData()
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count := atomic.AddInt32(&calls, 1)
@@ -304,7 +326,7 @@ func TestDownloaderRetries(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -339,13 +361,14 @@ func TestDownloaderRetries(t *testing.T) {
 }
 
 func TestDownloaderContinuesOnError(t *testing.T) {
+	validData := validJPEGData()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "fail") {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -375,6 +398,7 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 }
 
 func TestDownloaderConcurrencyLimit(t *testing.T) {
+	validData := validJPEGData()
 	var active int32
 	var maxActive int32
 	block := make(chan struct{})
@@ -393,7 +417,7 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 		<-block
 		atomic.AddInt32(&active, -1)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -505,6 +529,11 @@ func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, conte
 }
 
 func TestDeduplication(t *testing.T) {
+	validData := validJPEGData()
+	uniqueData := make([]byte, 1024)
+	copy(uniqueData, validData)
+	uniqueData[100] = 0xAB
+
 	tests := []struct {
 		name                string
 		serverContent       []byte
@@ -523,9 +552,9 @@ func TestDeduplication(t *testing.T) {
 	}{
 		{
 			name:                "SkipsExistingHash",
-			serverContent:       []byte("shared file content"),
+			serverContent:       validData,
 			existingFile:        true,
-			existingFileContent: []byte("shared file content"),
+			existingFileContent: validData,
 			existingFilename:    "existing_abc.jpg",
 			existingPostID:      "existing",
 			newPostID:           "abc",
@@ -536,7 +565,7 @@ func TestDeduplication(t *testing.T) {
 		},
 		{
 			name:           "KeepsFileOnDBError",
-			serverContent:  []byte("downloaded content"),
+			serverContent:  validData,
 			existingFile:   false,
 			newPostID:      "newpost",
 			newFilename:    "newpost_1.jpg",
@@ -547,7 +576,7 @@ func TestDeduplication(t *testing.T) {
 		},
 		{
 			name:            "NewHashSaved",
-			serverContent:   []byte("unique content for new hash"),
+			serverContent:   uniqueData,
 			existingFile:    false,
 			newPostID:       "uniquepost",
 			newFilename:     "uniquepost_1.jpg",
@@ -557,9 +586,9 @@ func TestDeduplication(t *testing.T) {
 		},
 		{
 			name:                "IdenticalContent",
-			serverContent:       []byte("shared identical content"),
+			serverContent:       validData,
 			existingFile:        true,
-			existingFileContent: []byte("shared identical content"),
+			existingFileContent: validData,
 			existingFilename:    "original_abc.jpg",
 			existingPostID:      "existing",
 			newPostID:           "duplicate",
