@@ -34,18 +34,12 @@ func validateMagicBytes(data []byte, ext string) error {
 
 	case ".jpg", ".jpeg":
 		// JPEG: Check for 0xFF 0xD8 0xFF at offset 0
-		if len(data) < 3 {
-			return errors.New("JPEG data too small to validate signature")
-		}
 		if !bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
 			return errors.New("invalid JPEG magic bytes: expected 0xFF 0xD8 0xFF at offset 0")
 		}
 
 	case ".png":
 		// PNG: Check for 0x89 0x50 0x4E 0x47 at offset 0
-		if len(data) < 4 {
-			return errors.New("PNG data too small to validate signature")
-		}
 		if !bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47}) {
 			return errors.New("invalid PNG magic bytes: expected 0x89 0x50 0x4E 0x47 at offset 0")
 		}
