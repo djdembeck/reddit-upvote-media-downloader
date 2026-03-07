@@ -466,7 +466,8 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (strin
 	d.logger.Info("skip existing file", "path", existingFile)
 	hash, err := CalculateFileHash(existingFile)
 	if err != nil {
-		d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
+		d.logger.Error("failed to hash existing file", "path", existingFile, "error", err)
+		return "", false, err
 	}
 	return hash, true, nil
 }
