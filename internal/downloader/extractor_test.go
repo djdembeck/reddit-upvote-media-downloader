@@ -296,6 +296,39 @@ func TestExtractorPermalink(t *testing.T) {
 			},
 			wantNil: true,
 		},
+		{
+			name: "Gallery URL with MediaMeta but no GalleryData",
+			post: reddit.RedditPost{
+				ID:          "1reif3h",
+				Title:       "Gallery Post",
+				Subreddit:   "pics",
+				URL:         "https://www.reddit.com/gallery/1reif3h",
+				GalleryData: nil,
+				MediaMeta: map[string]reddit.MediaMetadata{
+					"media1": {Mime: "image/jpeg", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/gallery1.jpg"}},
+					"media2": {Mime: "image/png", Source: reddit.MediaMetadataImage{URL: "https://preview.redd.it/gallery2.png"}},
+				},
+			},
+			wantCount:      2,
+			wantURL:        "https://preview.redd.it/gallery1.jpg",
+			wantFilename:   "Gallery Post_1_1reif3h.jpg",
+			wantMediaType:  "image",
+			wantURL2:       "https://preview.redd.it/gallery2.png",
+			wantFilename2:  "Gallery Post_2_1reif3h.png",
+			wantMediaType2: "image",
+		},
+		{
+			name: "Gallery URL without MediaMeta - should skip",
+			post: reddit.RedditPost{
+				ID:          "1reif3h",
+				Title:       "Gallery Post",
+				Subreddit:   "pics",
+				URL:         "https://www.reddit.com/gallery/1reif3h",
+				GalleryData: nil,
+				MediaMeta:   nil,
+			},
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {
