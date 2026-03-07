@@ -1082,5 +1082,5 @@ func TestValidExistingFileSkipped(t *testing.T) {
 
 	hash := hashes["existingvalid"]
 	require.NotEmpty(t, hash, "Hash should be returned for existing file")
-	assert.True(t, strings.HasPrefix(hash, "DUPLICATE:"), "Hash should be marked as duplicate for existing file")
+	assert.False(t, strings.HasPrefix(hash, "DUPLICATE:"), "Local file reuse should NOT be marked as duplicate")
 }

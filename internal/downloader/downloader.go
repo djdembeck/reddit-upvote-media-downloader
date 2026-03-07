@@ -177,12 +177,13 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	}
 
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
-	hash, handled, err := d.checkAndHandleExistingFile(outputDir, item.PostID)
+	hash, isLocalReuse, err := d.checkAndHandleExistingFile(outputDir, item.PostID)
 	if err != nil {
 		return "", false, err
 	}
-	if handled {
-		return hash, true, nil
+	if isLocalReuse {
+		// Local file reuse is not a DB duplicate, so return false for isDuplicate
+		return hash, false, nil
 	}
 
 	filePath := filepath.Join(outputDir, filename)
@@ -192,12 +193,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return "", false, err
 		}
 		// Re-check for existing file before each attempt
-		hash, handled, err = d.checkAndHandleExistingFile(outputDir, item.PostID)
+		hash, isLocalReuse, err = d.checkAndHandleExistingFile(outputDir, item.PostID)
 		if err != nil {
 			return "", false, err
 		}
-		if handled {
-			return hash, true, nil
+		if isLocalReuse {
+			return hash, false, nil
 		}
 
 		expectedExt := filepath.Ext(filename)
@@ -322,12 +323,22 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		}
 	}
 
-	if _, writeErr := file.Write(buf[:n]); writeErr != nil {
+	written, writeErr := file.Write(buf[:n])
+	if writeErr != nil {
 		return fmt.Errorf("write buffered content: %w", writeErr)
 	}
 
-	if _, copyErr := io.Copy(file, resp.Body); copyErr != nil {
+	copied, copyErr := io.Copy(file, resp.Body)
+	if copyErr != nil {
 		return fmt.Errorf("write file: %w", copyErr)
+	}
+
+	totalBytes := int64(written) + copied
+	if totalBytes < 1024 {
+		return ValidationError{
+			Permanent: true,
+			Reason:    fmt.Sprintf("file too small (%d bytes)", totalBytes),
+		}
 	}
 
 	success = true
@@ -446,7 +457,7 @@ func combineErrors(errs ...error) error {
 	return joinErrors("multiple errors", combined)
 }
 
-func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (string, bool, error) {
+func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash string, isLocalReuse bool, err error) {
 	existingFile := findExistingFile(outputDir, postID)
 	if existingFile == "" {
 		return "", false, nil
@@ -459,12 +470,13 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (strin
 		if removeErr := os.Remove(existingFile); removeErr != nil {
 			d.logger.Error("failed to remove corrupt file",
 				"path", existingFile, "error", removeErr)
+			return "", false, fmt.Errorf("failed to remove corrupt file %s: %w", existingFile, removeErr)
 		}
 		return "", false, nil
 	}
 
 	d.logger.Info("skip existing file", "path", existingFile)
-	hash, err := CalculateFileHash(existingFile)
+	hash, err = CalculateFileHash(existingFile)
 	if err != nil {
 		d.logger.Error("failed to hash existing file", "path", existingFile, "error", err)
 		return "", false, err
