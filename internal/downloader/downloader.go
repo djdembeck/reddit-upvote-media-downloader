@@ -179,25 +179,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
 	existingFile := findExistingFile(outputDir, item.PostID)
 	if existingFile != "" {
-		// Validate existing file before accepting it
-		ext := filepath.Ext(existingFile)
-		if err := validateExistingFile(existingFile, ext); err != nil {
-			d.logger.Warn("existing file is corrupt, re-downloading",
-				"path", existingFile, "error", err)
-			// Remove corrupt file and continue to download
-			if removeErr := os.Remove(existingFile); removeErr != nil {
-				d.logger.Error("failed to remove corrupt file",
-					"path", existingFile, "error", removeErr)
-			}
-			// Continue to download (don't return)
-		} else {
-			d.logger.Info("skip existing file", "path", existingFile)
-			hash, err := CalculateFileHash(existingFile)
-			if err != nil {
-				d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
-			}
-			return hash, true, nil
+		d.logger.Info("skip existing file", "path", existingFile)
+		hash, err := CalculateFileHash(existingFile)
+		if err != nil {
+			d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
 		}
+		return hash, true, nil
 	}
 
 	filePath := filepath.Join(outputDir, filename)
@@ -209,29 +196,15 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		// Re-check for existing file before each attempt
 		existingFile = findExistingFile(outputDir, item.PostID)
 		if existingFile != "" {
-			// Validate existing file before accepting it
-			ext := filepath.Ext(existingFile)
-			if err := validateExistingFile(existingFile, ext); err != nil {
-				d.logger.Warn("existing file is corrupt, re-downloading",
-					"path", existingFile, "error", err)
-				// Remove corrupt file and continue to download
-				if removeErr := os.Remove(existingFile); removeErr != nil {
-					d.logger.Error("failed to remove corrupt file",
-						"path", existingFile, "error", removeErr)
-				}
-				// Continue to download (don't return)
-			} else {
-				d.logger.Info("skip existing file", "path", existingFile)
-				hash, err := CalculateFileHash(existingFile)
-				if err != nil {
-					d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
-				}
-				return hash, true, nil
+			d.logger.Info("skip existing file", "path", existingFile)
+			hash, err := CalculateFileHash(existingFile)
+			if err != nil {
+				d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
 			}
+			return hash, true, nil
 		}
 
-		expectedExt := filepath.Ext(filename)
-		err := d.downloadOnce(ctx, item.URL, filePath, expectedExt)
+		err := d.downloadOnce(ctx, item.URL, filePath)
 		if err == nil {
 			// Download succeeded, now calculate hash and check for duplicates
 			hash, hashErr := CalculateFileHash(filePath)
@@ -265,10 +238,6 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return hash, false, nil
 		}
 		lastErr = err
-		// Don't retry on permanent validation errors
-		if validationErr, ok := err.(ValidationError); ok && validationErr.Permanent {
-			break
-		}
 		if attempt < d.config.Retries {
 			if err := sleepWithContext(ctx, d.backoffDuration(attempt)); err != nil {
 				return "", false, err
@@ -278,7 +247,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
-func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt string) error {
+func (d *Downloader) downloadOnce(ctx context.Context, url, filePath string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()
 
@@ -299,21 +268,6 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	if resp.ContentLength > 0 && resp.ContentLength < 1024 {
-		return ValidationError{
-			Permanent: true,
-			Reason:    fmt.Sprintf("file too small (%d bytes)", resp.ContentLength),
-		}
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/html") {
-		return ValidationError{
-			Permanent: true,
-			Reason:    "server returned HTML content-type",
-		}
-	}
-
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -321,46 +275,19 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		}
 		return fmt.Errorf("create file: %w", err)
 	}
-
-	buf := make([]byte, 512)
-	n, err := io.ReadFull(resp.Body, buf)
-	if err != nil && err != io.ErrUnexpectedEOF {
-		file.Close()
-		os.Remove(filePath)
-		return fmt.Errorf("read response body: %w", err)
-	}
-
-	if validationErr := validateMagicBytes(buf[:n], expectedExt); validationErr != nil {
-		file.Close()
-		os.Remove(filePath)
-		return ValidationError{
-			Permanent: true,
-			Reason:    fmt.Sprintf("invalid magic bytes: %v", validationErr),
+	defer func() {
+		if err != nil {
+			file.Close()
+			os.Remove(filePath)
+			return
 		}
-	}
-
-	if isHTMLContent(buf[:n]) {
 		file.Close()
-		os.Remove(filePath)
-		return ValidationError{
-			Permanent: true,
-			Reason:    "content is HTML, not media",
-		}
+	}()
+
+	if _, err = io.Copy(file, resp.Body); err != nil {
+		return fmt.Errorf("write file: %w", err)
 	}
 
-	if _, writeErr := file.Write(buf[:n]); writeErr != nil {
-		file.Close()
-		os.Remove(filePath)
-		return fmt.Errorf("write buffered content: %w", writeErr)
-	}
-
-	if _, copyErr := io.Copy(file, resp.Body); copyErr != nil {
-		file.Close()
-		os.Remove(filePath)
-		return fmt.Errorf("write file: %w", copyErr)
-	}
-
-	file.Close()
 	return nil
 }
 
@@ -474,45 +401,6 @@ func combineErrors(errs ...error) error {
 	}
 
 	return joinErrors("multiple errors", combined)
-}
-
-func validateExistingFile(filePath, ext string) error {
-	// Open file
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	// Get file info for size check
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	// Check minimum size
-	if err := validateMinimumSize(info.Size()); err != nil {
-		return err
-	}
-
-	// Read first 512 bytes for magic byte check
-	buf := make([]byte, 512)
-	n, err := file.Read(buf)
-	if err != nil {
-		return err
-	}
-
-	// Validate magic bytes
-	if err := validateMagicBytes(buf[:n], ext); err != nil {
-		return err
-	}
-
-	// Check for HTML
-	if isHTMLContent(buf[:n]) {
-		return errors.New("file contains HTML")
-	}
-
-	return nil
 }
 
 func findExistingFile(dir, postID string) string {
