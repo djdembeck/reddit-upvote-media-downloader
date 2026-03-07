@@ -94,6 +94,15 @@ func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 	return nil
 }
 
+// shouldLogProgress determines if progress should be logged for the given file index.
+// Logs on first file, every 100th file, and the last file.
+func shouldLogProgress(i, total int) bool {
+	if total == 0 {
+		return false
+	}
+	return (i+1)%100 == 0 || i == 0 || i == total-1
+}
+
 func (m *Migrator) Execute(ctx context.Context) error {
 	if err := contextChecker(ctx); err != nil {
 		return err
@@ -138,8 +147,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		if err := contextChecker(ctx); err != nil {
 			return err
 		}
-		// Progress logging every 100 files
-		if (i+1)%100 == 0 || i == 0 || i == total-1 {
+		if shouldLogProgress(i, total) {
 			slog.Info("Processing file", "current", i+1, "total", total, "filename", f.name)
 		}
 		m.processFile(ctx, f.name)

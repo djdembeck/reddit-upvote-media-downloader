@@ -756,6 +756,36 @@ func TestParseHTMLFile(t *testing.T) {
 	}
 }
 
+func TestShouldLogProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		i        int
+		total    int
+		expected bool
+	}{
+		{"empty files", 0, 0, false},
+		{"first file single", 0, 1, true},
+		{"first file multiple", 0, 150, true},
+		{"exact 100 boundary", 99, 100, true},
+		{"exact 200 boundary", 199, 250, true},
+		{"non-boundary", 50, 150, false},
+		{"last file", 149, 150, true},
+		{"101 of 150", 100, 150, false},
+		{"99 of 100", 98, 100, false},
+		{"199 of 200", 198, 200, false},
+		{"200 of 200", 199, 200, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldLogProgress(tt.i, tt.total)
+			if got != tt.expected {
+				t.Errorf("shouldLogProgress(%d, %d) = %v, want %v", tt.i, tt.total, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestMigratorUnknownFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourceDir := filepath.Join(tmpDir, "source")
