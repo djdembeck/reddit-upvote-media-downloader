@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -140,7 +140,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		}
 		// Progress logging every 100 files
 		if (i+1)%100 == 0 || i == 0 || i == total-1 {
-			log.Printf("Processing file %d of %d: %s", i+1, total, f.name)
+			slog.Info("Processing file", "current", i+1, "total", total, "filename", f.name)
 		}
 		m.processFile(ctx, f.name)
 	}
