@@ -88,14 +88,15 @@ func isHTMLContent(data []byte) bool {
 	}
 
 	// Check for common HTML tags (case-insensitive)
+	dataLower := strings.ToLower(string(data))
 	htmlTags := []string{
 		"<html", "<head", "<body", "<div", "<span", "<p", "<a", "<img",
 		"<script", "<style", "<table", "<tr", "<td", "<form", "<input",
-		"<meta", "<title", "<link", "<!--", "<!-", "<!--",
+		"<meta", "<title", "<link", "<!--", "<!-",
 	}
 
 	for _, tag := range htmlTags {
-		if strings.Contains(string(data), tag) {
+		if strings.Contains(dataLower, tag) {
 			return true
 		}
 	}

@@ -250,9 +250,9 @@ func TestIsHTMLContent(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "HTML tag uppercase - not detected by tag list",
+			name: "HTML tag uppercase - detected by case-insensitive check",
 			data: []byte("<HTML>"),
-			want: false, // The tag list only checks lowercase tags
+			want: true,
 		},
 		{
 			name: "DOCTYPE without html",

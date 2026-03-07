@@ -177,27 +177,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	}
 
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
-	existingFile := findExistingFile(outputDir, item.PostID)
-	if existingFile != "" {
-		// Validate existing file before accepting it
-		ext := filepath.Ext(existingFile)
-		if err := validateExistingFile(existingFile, ext); err != nil {
-			d.logger.Warn("existing file is corrupt, re-downloading",
-				"path", existingFile, "error", err)
-			// Remove corrupt file and continue to download
-			if removeErr := os.Remove(existingFile); removeErr != nil {
-				d.logger.Error("failed to remove corrupt file",
-					"path", existingFile, "error", removeErr)
-			}
-			// Continue to download (don't return)
-		} else {
-			d.logger.Info("skip existing file", "path", existingFile)
-			hash, err := CalculateFileHash(existingFile)
-			if err != nil {
-				d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
-			}
-			return hash, true, nil
-		}
+	hash, handled, err := d.checkAndHandleExistingFile(outputDir, item.PostID)
+	if err != nil {
+		return "", false, err
+	}
+	if handled {
+		return hash, true, nil
 	}
 
 	filePath := filepath.Join(outputDir, filename)
@@ -207,27 +192,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return "", false, err
 		}
 		// Re-check for existing file before each attempt
-		existingFile = findExistingFile(outputDir, item.PostID)
-		if existingFile != "" {
-			// Validate existing file before accepting it
-			ext := filepath.Ext(existingFile)
-			if err := validateExistingFile(existingFile, ext); err != nil {
-				d.logger.Warn("existing file is corrupt, re-downloading",
-					"path", existingFile, "error", err)
-				// Remove corrupt file and continue to download
-				if removeErr := os.Remove(existingFile); removeErr != nil {
-					d.logger.Error("failed to remove corrupt file",
-						"path", existingFile, "error", removeErr)
-				}
-				// Continue to download (don't return)
-			} else {
-				d.logger.Info("skip existing file", "path", existingFile)
-				hash, err := CalculateFileHash(existingFile)
-				if err != nil {
-					d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
-				}
-				return hash, true, nil
-			}
+		hash, handled, err = d.checkAndHandleExistingFile(outputDir, item.PostID)
+		if err != nil {
+			return "", false, err
+		}
+		if handled {
+			return hash, true, nil
 		}
 
 		expectedExt := filepath.Ext(filename)
@@ -266,7 +236,8 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		}
 		lastErr = err
 		// Don't retry on permanent validation errors
-		if validationErr, ok := err.(ValidationError); ok && validationErr.Permanent {
+		var validationErr ValidationError
+		if errors.As(err, &validationErr) && validationErr.Permanent {
 			break
 		}
 		if attempt < d.config.Retries {
@@ -474,6 +445,31 @@ func combineErrors(errs ...error) error {
 	}
 
 	return joinErrors("multiple errors", combined)
+}
+
+func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (string, bool, error) {
+	existingFile := findExistingFile(outputDir, postID)
+	if existingFile == "" {
+		return "", false, nil
+	}
+
+	ext := filepath.Ext(existingFile)
+	if err := validateExistingFile(existingFile, ext); err != nil {
+		d.logger.Warn("existing file is corrupt, re-downloading",
+			"path", existingFile, "error", err)
+		if removeErr := os.Remove(existingFile); removeErr != nil {
+			d.logger.Error("failed to remove corrupt file",
+				"path", existingFile, "error", removeErr)
+		}
+		return "", false, nil
+	}
+
+	d.logger.Info("skip existing file", "path", existingFile)
+	hash, err := CalculateFileHash(existingFile)
+	if err != nil {
+		d.logger.Warn("failed to hash existing file", "path", existingFile, "error", err)
+	}
+	return hash, true, nil
 }
 
 func validateExistingFile(filePath, ext string) error {
