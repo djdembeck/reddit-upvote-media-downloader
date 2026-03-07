@@ -250,7 +250,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
-func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt string) error {
+func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt string) (err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()
 
@@ -297,7 +297,9 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	// Deferred cleanup: always close file, remove on failure
 	success := false
 	defer func() {
-		file.Close()
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close file: %w", closeErr)
+		}
 		if !success {
 			os.Remove(filePath)
 		}
@@ -305,6 +307,12 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 
 	buf := make([]byte, 512)
 	n, err := io.ReadFull(resp.Body, buf)
+	if err == io.EOF || (err == nil && n == 0) {
+		return ValidationError{
+			Permanent: true,
+			Reason:    "empty response body",
+		}
+	}
 	if err != nil && err != io.ErrUnexpectedEOF {
 		return fmt.Errorf("read response body: %w", err)
 	}
@@ -484,13 +492,16 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash 
 	return hash, true, nil
 }
 
-func validateExistingFile(filePath, ext string) error {
-	// Open file
+func validateExistingFile(filePath, ext string) (err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	// Get file info for size check
 	info, err := file.Stat()

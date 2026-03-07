@@ -36,12 +36,16 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 
 // CalculateFileHash calculates a BLAKE3 hash for a file.
 // Returns a 64-character hex-encoded string (256-bit hash).
-func CalculateFileHash(filePath string) (string, error) {
+func CalculateFileHash(filePath string) (_ string, err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open file %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close file %s: %w", filePath, closeErr)
+		}
+	}()
 
 	hash, err := CalculateHashFromReader(file)
 	if err != nil {
