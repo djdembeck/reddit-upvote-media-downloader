@@ -132,6 +132,11 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 	case isDirectMediaURL(parsed):
 		return e.buildDownloadables(post, []string{sourceURL}, "")
 	case isRedditPermalinkHost(host):
+		// Check for gallery URLs that might have MediaMeta but no GalleryData
+		if isGalleryURL(parsed.Path) && len(post.MediaMeta) > 0 {
+			e.logger.Debug("extracting gallery from MediaMeta", "post_id", post.ID)
+			return e.extractImageFromMediaMeta(post)
+		}
 		// Check MediaMeta for image data
 		if len(post.MediaMeta) > 0 {
 			e.logger.Debug("extracting from MediaMeta", "post_id", post.ID)
@@ -615,6 +620,10 @@ func isRedditVideoHost(host string) bool {
 
 func isRedditPermalinkHost(host string) bool {
 	return strings.HasSuffix(host, ".reddit.com") || host == "reddit.com"
+}
+
+func isGalleryURL(path string) bool {
+	return strings.HasPrefix(strings.ToLower(path), "/gallery/")
 }
 
 func isImgurHost(host string) bool {
