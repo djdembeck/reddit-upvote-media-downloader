@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -93,6 +94,15 @@ func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 	return nil
 }
 
+// shouldLogProgress determines if progress should be logged for the given file index.
+// Logs on first file, every 100th file, and the last file.
+func shouldLogProgress(i, total int) bool {
+	if total == 0 {
+		return false
+	}
+	return (i+1)%100 == 0 || i == 0 || i == total-1
+}
+
 func (m *Migrator) Execute(ctx context.Context) error {
 	if err := contextChecker(ctx); err != nil {
 		return err
@@ -132,9 +142,13 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		return files[i].modTime.Before(files[j].modTime)
 	})
 
-	for _, f := range files {
+	total := len(files)
+	for i, f := range files {
 		if err := contextChecker(ctx); err != nil {
 			return err
+		}
+		if shouldLogProgress(i, total) {
+			slog.Info("Processing file", "current", i+1, "total", total, "filename", f.name)
 		}
 		m.processFile(ctx, f.name)
 	}

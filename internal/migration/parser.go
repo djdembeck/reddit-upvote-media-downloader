@@ -3,7 +3,7 @@ package migration
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -214,7 +214,7 @@ func (p *HTMLParser) ParseHTMLFiles(ctx context.Context, htmlDir string) error {
 		}
 
 		if err != nil {
-			log.Printf("Warning: error accessing path %s: %v", path, err)
+			slog.Warn("Error accessing path", "path", path, "error", err)
 			return nil
 		}
 
@@ -228,14 +228,14 @@ func (p *HTMLParser) ParseHTMLFiles(ctx context.Context, htmlDir string) error {
 
 		postInfo, err := p.ParseHTMLFile(ctx, path)
 		if err != nil {
-			log.Printf("Warning: failed to parse %s: %v", path, err)
+			slog.Warn("Failed to parse file", "path", path, "error", err)
 			return nil
 		}
 		p.PostMap[postInfo.PostID] = postInfo
 
 		fileCount++
 		if fileCount%1000 == 0 {
-			log.Printf("Parsed %d files...", fileCount)
+			slog.Info("Parsed files", "count", fileCount)
 		}
 
 		return nil
@@ -245,6 +245,6 @@ func (p *HTMLParser) ParseHTMLFiles(ctx context.Context, htmlDir string) error {
 		return fmt.Errorf("failed to walk directory %s: %w", htmlDir, err)
 	}
 
-	log.Printf("Completed parsing %d HTML files from %s", fileCount, htmlDir)
+	slog.Info("Completed parsing HTML files", "count", fileCount, "directory", htmlDir)
 	return nil
 }
