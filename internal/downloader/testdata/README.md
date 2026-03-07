@@ -77,7 +77,7 @@ To verify magic bytes:
 ```bash
 # MP4
 hexdump -C testdata/valid/sample.mp4 | head -1
-# Expected: 00000000  00 00 00 00 66 74 79 70  ...
+# Expected: 00000000  00 00 00 18 66 74 79 70  ...
 
 # WebM
 hexdump -C testdata/valid/sample.webm | head -1
