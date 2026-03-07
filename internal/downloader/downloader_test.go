@@ -715,274 +715,254 @@ func TestHashCalculation_Integration(t *testing.T) {
 	assert.Equal(t, hash, hashFromBytes, "File hash and reader hash should match for same content")
 }
 
-func TestDownloadRejectsHTML(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		// Return large HTML content (>1KB) to pass size check but fail HTML detection
-		htmlContent := `<!DOCTYPE html><html><head><title>Test</title></head><body>Not a video</body></html>`
-		padding := make([]byte, 1024-len(htmlContent))
-		w.Write([]byte(htmlContent))
-		w.Write(padding)
-	}))
-	defer server.Close()
-
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     3,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
-
-	items := []Downloadable{{
-		PostID:    "htmltest",
-		Subreddit: "pics",
-		Filename:  "htmltest_1.mp4",
-		URL:       server.URL + "/video.mp4",
-	}}
-
-	_, err := downloader.Download(context.Background(), items)
-	require.Error(t, err, "Download should fail for HTML content")
-
-	filePath := filepath.Join(outputDir, "pics", "htmltest_1.mp4")
-	_, statErr := os.Stat(filePath)
-	require.True(t, os.IsNotExist(statErr), "HTML file should not be created")
-}
-
-func TestDownloadRejectsSmallFile(t *testing.T) {
-	smallData := []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p'} // Only 8 bytes with valid MP4 signature
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write(smallData)
-	}))
-	defer server.Close()
-
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
-
-	items := []Downloadable{{
-		PostID:    "smalltest",
-		Subreddit: "pics",
-		Filename:  "smalltest_1.mp4",
-		URL:       server.URL + "/small.mp4",
-	}}
-
-	_, err := downloader.Download(context.Background(), items)
-	require.Error(t, err, "Download should fail for small file")
-	assert.Contains(t, err.Error(), "too small", "Error should mention file size")
-
-	filePath := filepath.Join(outputDir, "pics", "smalltest_1.mp4")
-	_, statErr := os.Stat(filePath)
-	require.True(t, os.IsNotExist(statErr), "Small file should not be created")
-}
-
-func TestDownloadRejectsWrongMagicBytes(t *testing.T) {
+func TestDownloadValidationAndRetryBehavior(t *testing.T) {
+	smallData := []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p'}
 	pngData := make([]byte, 1024)
 	pngData[0] = 0x89
 	pngData[1] = 0x50
 	pngData[2] = 0x4E
 	pngData[3] = 0x47
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write(pngData)
-	}))
-	defer server.Close()
+	tests := []struct {
+		name                  string
+		payload               []byte
+		contentType           string
+		statusCode            int
+		retries               int
+		expectedErrorContains string
+		expectFileExists      bool
+		expectedCalls         int32
+		expectHash            bool
+	}{
+		{
+			name: "RejectsHTML",
+			payload: func() []byte {
+				html := `<!DOCTYPE html><html><head><title>Test</title></head><body>Not a video</body></html>`
+				padding := make([]byte, 1024-len(html))
+				return append([]byte(html), padding...)
+			}(),
+			contentType:           "text/html; charset=utf-8",
+			statusCode:            http.StatusOK,
+			retries:               3,
+			expectedErrorContains: "HTML",
+			expectFileExists:      false,
+			expectedCalls:         1,
+			expectHash:            false,
+		},
+		{
+			name:                  "RejectsSmallFile",
+			payload:               smallData,
+			statusCode:            http.StatusOK,
+			retries:               1,
+			expectedErrorContains: "too small",
+			expectFileExists:      false,
+			expectedCalls:         1,
+			expectHash:            false,
+		},
+		{
+			name:                  "RejectsWrongMagicBytes",
+			payload:               pngData,
+			statusCode:            http.StatusOK,
+			retries:               1,
+			expectedErrorContains: "magic bytes",
+			expectFileExists:      false,
+			expectedCalls:         1,
+			expectHash:            false,
+		},
+		{
+			name:             "AcceptsValidMP4",
+			payload:          validMP4Data(),
+			contentType:      "video/mp4",
+			statusCode:       http.StatusOK,
+			retries:          1,
+			expectFileExists: true,
+			expectedCalls:    1,
+			expectHash:       true,
+		},
+		{
+			name:             "AcceptsValidWebM",
+			payload:          validWebMData(),
+			contentType:      "video/webm",
+			statusCode:       http.StatusOK,
+			retries:          1,
+			expectFileExists: true,
+			expectedCalls:    1,
+			expectHash:       true,
+		},
+	}
 
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				if tc.contentType != "" {
+					w.Header().Set("Content-Type", tc.contentType)
+				}
+				w.WriteHeader(tc.statusCode)
+				w.Write(tc.payload)
+			}))
+			defer server.Close()
 
-	items := []Downloadable{{
-		PostID:    "wrongmagic",
-		Subreddit: "pics",
-		Filename:  "wrongmagic_1.mp4",
-		URL:       server.URL + "/wrong.mp4",
-	}}
+			outputDir := t.TempDir()
+			downloader := NewDownloader(Config{
+				OutputDir:   outputDir,
+				HTTPClient:  server.Client(),
+				Retries:     tc.retries,
+				BackoffBase: time.Millisecond,
+				Timeout:     time.Second,
+				UserAgent:   "test-agent",
+				Concurrency: 1,
+			}, nil)
 
-	_, err := downloader.Download(context.Background(), items)
-	require.Error(t, err, "Download should fail for wrong magic bytes")
-	assert.Contains(t, err.Error(), "magic bytes", "Error should mention magic bytes")
+			postID := strings.ToLower(tc.name)
+			ext := ".mp4"
+			if tc.contentType == "video/webm" {
+				ext = ".webm"
+			}
+			filename := postID + "_1" + ext
+			items := []Downloadable{{
+				PostID:    postID,
+				Subreddit: "pics",
+				Filename:  filename,
+				URL:       server.URL + "/file" + ext,
+			}}
 
-	filePath := filepath.Join(outputDir, "pics", "wrongmagic_1.mp4")
-	_, statErr := os.Stat(filePath)
-	require.True(t, os.IsNotExist(statErr), "File with wrong magic bytes should not be created")
-}
+			hashes, err := downloader.Download(context.Background(), items)
 
-func TestDownloadAcceptsValidMP4(t *testing.T) {
-	validData := validMP4Data()
+			if tc.expectedErrorContains != "" {
+				require.Error(t, err, "Download should fail")
+				assert.Contains(t, err.Error(), tc.expectedErrorContains, "Error should contain expected message")
+			} else {
+				require.NoError(t, err, "Download should succeed")
+			}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "video/mp4")
-		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
-	}))
-	defer server.Close()
+			filePath := filepath.Join(outputDir, "pics", filename)
+			_, statErr := os.Stat(filePath)
+			fileExists := statErr == nil
+			assert.Equal(t, tc.expectFileExists, fileExists, "File existence mismatch")
 
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
+			if tc.expectedCalls > 0 {
+				assert.Equal(t, tc.expectedCalls, atomic.LoadInt32(&calls), "HTTP call count mismatch")
+			}
 
-	items := []Downloadable{{
-		PostID:    "validmp4",
-		Subreddit: "pics",
-		Filename:  "validmp4_1.mp4",
-		URL:       server.URL + "/video.mp4",
-	}}
+			if tc.expectHash {
+				assert.NotEmpty(t, hashes[postID], "Hash should be returned")
+			}
+		})
+	}
 
-	hashes, err := downloader.Download(context.Background(), items)
-	require.NoError(t, err, "Download should succeed for valid MP4")
+	t.Run("RetriesOnTransientError", func(t *testing.T) {
+		validData := validMP4Data()
+		var calls int32
 
-	filePath := filepath.Join(outputDir, "pics", "validmp4_1.mp4")
-	_, statErr := os.Stat(filePath)
-	require.NoError(t, statErr, "Valid MP4 file should exist")
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			count := atomic.AddInt32(&calls, 1)
+			if count == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "video/mp4")
+			w.WriteHeader(http.StatusOK)
+			w.Write(validData)
+		}))
+		defer server.Close()
 
-	assert.NotEmpty(t, hashes["validmp4"], "Hash should be returned for valid download")
-}
+		outputDir := t.TempDir()
+		downloader := NewDownloader(Config{
+			OutputDir:   outputDir,
+			HTTPClient:  server.Client(),
+			Retries:     3,
+			BackoffBase: time.Millisecond,
+			Timeout:     time.Second,
+			UserAgent:   "test-agent",
+			Concurrency: 1,
+		}, nil)
 
-func TestDownloadAcceptsValidWebM(t *testing.T) {
-	validData := validWebMData()
+		items := []Downloadable{{
+			PostID:    "retrytransient",
+			Subreddit: "pics",
+			Filename:  "retrytransient_1.mp4",
+			URL:       server.URL + "/video.mp4",
+		}}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "video/webm")
-		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
-	}))
-	defer server.Close()
+		hashes, err := downloader.Download(context.Background(), items)
+		require.NoError(t, err, "Download should succeed after retry")
+		require.Equal(t, int32(2), atomic.LoadInt32(&calls), "Should have made 2 requests")
 
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     1,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
+		filePath := filepath.Join(outputDir, "pics", "retrytransient_1.mp4")
+		_, statErr := os.Stat(filePath)
+		require.NoError(t, statErr, "File should exist after successful retry")
+		assert.NotEmpty(t, hashes["retrytransient"], "Hash should be returned")
+	})
 
-	items := []Downloadable{{
-		PostID:    "validwebm",
-		Subreddit: "pics",
-		Filename:  "validwebm_1.webm",
-		URL:       server.URL + "/video.webm",
-	}}
+	t.Run("PermanentSkipOnValidationError", func(t *testing.T) {
+		var calls int32
 
-	hashes, err := downloader.Download(context.Background(), items)
-	require.NoError(t, err, "Download should succeed for valid WebM")
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&calls, 1)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
+		}))
+		defer server.Close()
 
-	filePath := filepath.Join(outputDir, "pics", "validwebm_1.webm")
-	_, statErr := os.Stat(filePath)
-	require.NoError(t, statErr, "Valid WebM file should exist")
+		outputDir := t.TempDir()
+		downloader := NewDownloader(Config{
+			OutputDir:   outputDir,
+			HTTPClient:  server.Client(),
+			Retries:     3,
+			BackoffBase: time.Millisecond,
+			Timeout:     time.Second,
+			UserAgent:   "test-agent",
+			Concurrency: 1,
+		}, nil)
 
-	assert.NotEmpty(t, hashes["validwebm"], "Hash should be returned for valid download")
-}
+		items := []Downloadable{{
+			PostID:    "permanent",
+			Subreddit: "pics",
+			Filename:  "permanent_1.mp4",
+			URL:       server.URL + "/video.mp4",
+		}}
 
-func TestDownloadRetriesOnTransientError(t *testing.T) {
-	validData := validMP4Data()
-	var calls int32
+		_, err := downloader.Download(context.Background(), items)
+		require.Error(t, err, "Download should fail")
+		require.Equal(t, int32(1), atomic.LoadInt32(&calls), "Should only make 1 request (no retries for validation error)")
+	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&calls, 1)
-		if count == 1 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "video/mp4")
-		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
-	}))
-	defer server.Close()
+	t.Run("ChunkedResponseRejectsSmallFile", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write(smallData)
+		}))
+		defer server.Close()
 
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     3,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
+		outputDir := t.TempDir()
+		downloader := NewDownloader(Config{
+			OutputDir:   outputDir,
+			HTTPClient:  server.Client(),
+			Retries:     1,
+			BackoffBase: time.Millisecond,
+			Timeout:     time.Second,
+			UserAgent:   "test-agent",
+			Concurrency: 1,
+		}, nil)
 
-	items := []Downloadable{{
-		PostID:    "retrytransient",
-		Subreddit: "pics",
-		Filename:  "retrytransient_1.mp4",
-		URL:       server.URL + "/video.mp4",
-	}}
+		items := []Downloadable{{
+			PostID:    "smallchunked",
+			Subreddit: "pics",
+			Filename:  "smallchunked_1.mp4",
+			URL:       server.URL + "/small.mp4",
+		}}
 
-	hashes, err := downloader.Download(context.Background(), items)
-	require.NoError(t, err, "Download should succeed after retry")
-	require.Equal(t, int32(2), calls, "Should have made 2 requests (1 fail, 1 success)")
+		_, err := downloader.Download(context.Background(), items)
+		require.Error(t, err, "Download should fail for small file without Content-Length")
+		assert.Contains(t, err.Error(), "too small", "Error should mention file size")
 
-	filePath := filepath.Join(outputDir, "pics", "retrytransient_1.mp4")
-	_, statErr := os.Stat(filePath)
-	require.NoError(t, statErr, "File should exist after successful retry")
-
-	assert.NotEmpty(t, hashes["retrytransient"], "Hash should be returned")
-}
-
-func TestDownloadPermanentSkipOnValidationError(t *testing.T) {
-	var calls int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
-	}))
-	defer server.Close()
-
-	outputDir := t.TempDir()
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     3,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
-
-	items := []Downloadable{{
-		PostID:    "permanent",
-		Subreddit: "pics",
-		Filename:  "permanent_1.mp4",
-		URL:       server.URL + "/video.mp4",
-	}}
-
-	_, err := downloader.Download(context.Background(), items)
-	require.Error(t, err, "Download should fail")
-
-	require.Equal(t, int32(1), calls, "Should only make 1 request (no retries for permanent validation error)")
+		filePath := filepath.Join(outputDir, "pics", "smallchunked_1.mp4")
+		_, statErr := os.Stat(filePath)
+		require.True(t, os.IsNotExist(statErr), "Small file should not be created for chunked response")
+	})
 }
 
 func TestDetectsCorruptExistingFile(t *testing.T) {
