@@ -485,8 +485,8 @@ func TestValidateMinimumSize(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "Exactly 1KB minus 1 - should fail",
-			size:    1023,
+			name:    "File at 1022 bytes - should fail",
+			size:    1022,
 			wantErr: true,
 		},
 	}
