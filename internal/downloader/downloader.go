@@ -293,17 +293,22 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		return fmt.Errorf("create file: %w", err)
 	}
 
+	// Deferred cleanup: always close file, remove on failure
+	success := false
+	defer func() {
+		file.Close()
+		if !success {
+			os.Remove(filePath)
+		}
+	}()
+
 	buf := make([]byte, 512)
 	n, err := io.ReadFull(resp.Body, buf)
 	if err != nil && err != io.ErrUnexpectedEOF {
-		file.Close()
-		os.Remove(filePath)
 		return fmt.Errorf("read response body: %w", err)
 	}
 
 	if validationErr := validateMagicBytes(buf[:n], expectedExt); validationErr != nil {
-		file.Close()
-		os.Remove(filePath)
 		return ValidationError{
 			Permanent: true,
 			Reason:    fmt.Sprintf("invalid magic bytes: %v", validationErr),
@@ -311,8 +316,6 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	}
 
 	if isHTMLContent(buf[:n]) {
-		file.Close()
-		os.Remove(filePath)
 		return ValidationError{
 			Permanent: true,
 			Reason:    "content is HTML, not media",
@@ -320,18 +323,14 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	}
 
 	if _, writeErr := file.Write(buf[:n]); writeErr != nil {
-		file.Close()
-		os.Remove(filePath)
 		return fmt.Errorf("write buffered content: %w", writeErr)
 	}
 
 	if _, copyErr := io.Copy(file, resp.Body); copyErr != nil {
-		file.Close()
-		os.Remove(filePath)
 		return fmt.Errorf("write file: %w", copyErr)
 	}
 
-	file.Close()
+	success = true
 	return nil
 }
 
@@ -493,8 +492,8 @@ func validateExistingFile(filePath, ext string) error {
 
 	// Read first 512 bytes for magic byte check
 	buf := make([]byte, 512)
-	n, err := file.Read(buf)
-	if err != nil {
+	n, err := io.ReadFull(file, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
 		return err
 	}
 

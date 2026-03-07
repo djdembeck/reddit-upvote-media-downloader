@@ -1002,7 +1002,7 @@ func TestDetectsCorruptExistingFile(t *testing.T) {
 	// Create corrupt file (HTML content) that should be detected and replaced
 	corruptContent := []byte(`<!DOCTYPE html><html><body>This is HTML, not a video</body></html>`)
 	corruptContent = append(corruptContent, make([]byte, 1024-len(corruptContent))...)
-	existingFile := filepath.Join(subredditDir, "corrupttest_xxx.mp4")
+	existingFile := filepath.Join(subredditDir, "corrupttest_1.mp4")
 	require.NoError(t, os.WriteFile(existingFile, corruptContent, 0644))
 
 	downloader := NewDownloader(Config{

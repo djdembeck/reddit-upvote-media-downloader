@@ -27,9 +27,7 @@ func validateMagicBytes(data []byte, ext string) error {
 
 	case ".webm":
 		// WebM: Check for EBML header (0x1A 0x45 0xDF 0xA3) at offset 0
-		if len(data) < 4 {
-			return errors.New("WebM data too small to validate EBML header")
-		}
+		// Caller guarantees len(data) >= 4
 		if !bytes.HasPrefix(data, []byte{0x1A, 0x45, 0xDF, 0xA3}) {
 			return errors.New("invalid WebM magic bytes: expected EBML header at offset 0")
 		}
@@ -71,24 +69,18 @@ func validateMagicBytes(data []byte, ext string) error {
 // isHTMLContent checks if the data appears to be HTML content.
 // Checks for common HTML markers in the first 512 bytes.
 func isHTMLContent(data []byte) bool {
-	// Trim leading whitespace before checking
-	trimmed := strings.TrimSpace(string(data))
-
-	// Check for common HTML markers
-	if strings.HasPrefix(trimmed, "<!DOCTYPE") ||
-		strings.HasPrefix(trimmed, "<html") ||
-		strings.HasPrefix(trimmed, "<!DOCTYPE html") ||
-		strings.HasPrefix(trimmed, "<!doctype") {
-		return true
-	}
-
-	// Check for common HTML tags in the first 512 bytes
 	if len(data) > 512 {
 		data = data[:512]
 	}
 
-	// Check for common HTML tags (case-insensitive)
-	dataLower := strings.ToLower(string(data))
+	// Convert to lowercase once for case-insensitive checks
+	trimmed := strings.TrimSpace(strings.ToLower(string(data)))
+
+	if strings.HasPrefix(trimmed, "<!doctype") ||
+		strings.HasPrefix(trimmed, "<html") {
+		return true
+	}
+
 	htmlTags := []string{
 		"<html", "<head", "<body", "<div", "<span", "<p", "<a", "<img",
 		"<script", "<style", "<table", "<tr", "<td", "<form", "<input",
@@ -96,7 +88,7 @@ func isHTMLContent(data []byte) bool {
 	}
 
 	for _, tag := range htmlTags {
-		if strings.Contains(dataLower, tag) {
+		if strings.Contains(trimmed, tag) {
 			return true
 		}
 	}

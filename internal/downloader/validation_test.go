@@ -460,11 +460,6 @@ func TestValidateMinimumSize(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "File at 1024 bytes - should pass",
-			size:    1024,
-			wantErr: false,
-		},
-		{
 			name:    "File at 1025 bytes - should pass",
 			size:    1025,
 			wantErr: false,

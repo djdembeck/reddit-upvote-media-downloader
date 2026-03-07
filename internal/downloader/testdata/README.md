@@ -4,7 +4,7 @@ This directory contains sample files for testing media validation logic.
 
 ## Directory Structure
 
-```
+```text
 testdata/
 ├── valid/          # Files that should pass validation
 └── invalid/        # Files that should fail validation
@@ -14,7 +14,7 @@ testdata/
 
 ### sample.mp4
 - **Purpose**: Test MP4 file validation
-- **Magic Bytes**: `00 00 00 00 ftyp` (ftyp at offset 4)
+- **Magic Bytes**: `00 00 00 18 ftyp` (box size at offset 0, "ftyp" at offset 4)
 - **Size**: ~1KB
 - **Expected**: Passes validation
 
