@@ -202,7 +202,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		}
 
 		expectedExt := filepath.Ext(filename)
-		err = d.downloadOnce(ctx, item.URL, filePath, expectedExt)
+		err = d.downloadOnce(ctx, item.URL, filePath, expectedExt, item.PostID)
 		if err == nil {
 			// Download succeeded, now calculate hash and check for duplicates
 			hash, hashErr := CalculateFileHash(filePath)
@@ -250,7 +250,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
-func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt string) (err error) {
+func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt, postID string) (err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()
 
@@ -289,6 +289,13 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
+			_, isLocalReuse, validateErr := d.checkAndHandleExistingFile(filepath.Dir(filePath), postID)
+			if validateErr != nil {
+				return fmt.Errorf("existing file validation failed: %w", validateErr)
+			}
+			if !isLocalReuse {
+				return errors.New("existing file was corrupt and removed, retry needed")
+			}
 			return nil
 		}
 		return fmt.Errorf("create file: %w", err)

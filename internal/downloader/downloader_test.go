@@ -897,37 +897,73 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 	})
 
 	t.Run("PermanentSkipOnValidationError", func(t *testing.T) {
-		var calls int32
+		t.Run("HeaderBased", func(t *testing.T) {
+			var calls int32
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			atomic.AddInt32(&calls, 1)
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
-		}))
-		defer server.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
+			}))
+			defer server.Close()
 
-		outputDir := t.TempDir()
-		downloader := NewDownloader(Config{
-			OutputDir:   outputDir,
-			HTTPClient:  server.Client(),
-			Retries:     3,
-			BackoffBase: time.Millisecond,
-			Timeout:     time.Second,
-			UserAgent:   "test-agent",
-			Concurrency: 1,
-		}, nil)
+			outputDir := t.TempDir()
+			downloader := NewDownloader(Config{
+				OutputDir:   outputDir,
+				HTTPClient:  server.Client(),
+				Retries:     3,
+				BackoffBase: time.Millisecond,
+				Timeout:     time.Second,
+				UserAgent:   "test-agent",
+				Concurrency: 1,
+			}, nil)
 
-		items := []Downloadable{{
-			PostID:    "permanent",
-			Subreddit: "pics",
-			Filename:  "permanent_1.mp4",
-			URL:       server.URL + "/video.mp4",
-		}}
+			items := []Downloadable{{
+				PostID:    "permanent",
+				Subreddit: "pics",
+				Filename:  "permanent_1.mp4",
+				URL:       server.URL + "/video.mp4",
+			}}
 
-		_, err := downloader.Download(context.Background(), items)
-		require.Error(t, err, "Download should fail")
-		require.Equal(t, int32(1), atomic.LoadInt32(&calls), "Should only make 1 request (no retries for validation error)")
+			_, err := downloader.Download(context.Background(), items)
+			require.Error(t, err, "Download should fail")
+			require.Equal(t, int32(1), atomic.LoadInt32(&calls), "Should only make 1 request (no retries for validation error)")
+		})
+
+		t.Run("BodyBased", func(t *testing.T) {
+			var calls int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&calls, 1)
+				w.Header().Set("Content-Type", "video/mp4")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content disguised as video</body></html>`)
+			}))
+			defer server.Close()
+
+			outputDir := t.TempDir()
+			downloader := NewDownloader(Config{
+				OutputDir:   outputDir,
+				HTTPClient:  server.Client(),
+				Retries:     3,
+				BackoffBase: time.Millisecond,
+				Timeout:     time.Second,
+				UserAgent:   "test-agent",
+				Concurrency: 1,
+			}, nil)
+
+			items := []Downloadable{{
+				PostID:    "bodycheck",
+				Subreddit: "pics",
+				Filename:  "bodycheck_1.mp4",
+				URL:       server.URL + "/video.mp4",
+			}}
+
+			_, err := downloader.Download(context.Background(), items)
+			require.Error(t, err, "Download should fail due to HTML content in body")
+			require.Equal(t, int32(1), atomic.LoadInt32(&calls), "Should only make 1 request (no retries for validation error)")
+		})
 	})
 
 	t.Run("ChunkedResponseRejectsSmallFile", func(t *testing.T) {
