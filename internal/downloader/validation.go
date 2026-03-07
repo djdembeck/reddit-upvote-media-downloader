@@ -83,9 +83,7 @@ func isHTMLContent(data []byte) bool {
 	}
 
 	// Check for common HTML tags in the first 512 bytes
-	if len(data) < 512 {
-		data = data
-	} else {
+	if len(data) > 512 {
 		data = data[:512]
 	}
 
