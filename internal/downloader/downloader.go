@@ -183,7 +183,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	}
 
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
-	hash, isLocalReuse, err := d.checkAndHandleExistingFile(outputDir, item.PostID)
+	hash, isLocalReuse, err := d.checkAndHandleExistingFile(ctx, outputDir, item.PostID)
 	if err != nil {
 		return "", false, err
 	}
@@ -199,7 +199,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return "", false, err
 		}
 		// Re-check for existing file before each attempt
-		hash, isLocalReuse, err = d.checkAndHandleExistingFile(outputDir, item.PostID)
+		hash, isLocalReuse, err = d.checkAndHandleExistingFile(ctx, outputDir, item.PostID)
 		if err != nil {
 			return "", false, err
 		}
@@ -229,7 +229,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 				// Save error to database
 				if d.db != nil {
 					if saveErr := d.db.IncrementRetry(ctx, item.PostID, "corrupted content (known bad hash)"); saveErr != nil {
-						d.logger.Error("failed to save bad hash error", "post_id", item.PostID, "error", saveErr)
+						return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", item.PostID, saveErr)
 					}
 				}
 				return "", false, ValidationError{
@@ -266,7 +266,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			// Save error to database to prevent future retries
 			if d.db != nil {
 				if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
-					d.logger.Error("failed to save validation error", "post_id", item.PostID, "error", saveErr)
+					return "", false, fmt.Errorf("failed to persist validation error for post %s: IncrementRetry failed: %w", item.PostID, saveErr)
 				}
 			}
 			break
@@ -319,7 +319,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			_, isLocalReuse, validateErr := d.checkAndHandleExistingFile(filepath.Dir(filePath), postID)
+			_, isLocalReuse, validateErr := d.checkAndHandleExistingFile(reqCtx, filepath.Dir(filePath), postID)
 			if validateErr != nil {
 				return fmt.Errorf("existing file validation failed: %w", validateErr)
 			}
@@ -507,7 +507,7 @@ func combineErrors(errs ...error) error {
 	return joinErrors("multiple errors", combined)
 }
 
-func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash string, isLocalReuse bool, err error) {
+func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string) (hash string, isLocalReuse bool, err error) {
 	existingFile := findExistingFile(outputDir, postID)
 	if existingFile == "" {
 		return "", false, nil
@@ -538,6 +538,25 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash 
 		d.logger.Error("failed to hash existing file", "path", existingFile, "error", err)
 		return "", false, err
 	}
+
+	// Check for known bad hashes (corrupted/error content from old bugs)
+	if knownBadHashes[hash] {
+		d.logger.Error("detected known bad hash in existing file (corrupted content)", "hash", hash, "post_id", postID, "path", existingFile)
+		if removeErr := os.Remove(existingFile); removeErr != nil {
+			d.logger.Warn("failed to remove file with bad hash", "path", existingFile, "error", removeErr)
+		}
+		// Save error to database
+		if d.db != nil {
+			if saveErr := d.db.IncrementRetry(ctx, postID, "corrupted content (known bad hash)"); saveErr != nil {
+				return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", postID, saveErr)
+			}
+		}
+		return "", false, ValidationError{
+			Permanent: true,
+			Reason:    "corrupted content (known bad hash)",
+		}
+	}
+
 	return hash, true, nil
 }
 
