@@ -29,9 +29,14 @@ const (
 
 // knownBadHashes contains SHA256 hashes of files known to be corrupted/error content from old bugs.
 // These files are automatically removed and marked as permanently failed.
+// Note: Tests that modify this map must NOT use t.Parallel() as there's no synchronization.
 var knownBadHashes = map[string]bool{
 	"59bac5bf0a2cec9b557d35157752bff733615d1f892165f273b75762fb0c1b37": true,
 }
+
+// knownBadHashesMu protects access to knownBadHashes in tests.
+// Production code only reads from the map, so no locking is needed there.
+var knownBadHashesMu sync.Mutex
 
 type Config struct {
 	OutputDir   string
@@ -224,14 +229,15 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			// Check for known bad hashes (corrupted/error content from old bugs)
 			if knownBadHashes[hash] {
 				d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
-				if removeErr := os.Remove(filePath); removeErr != nil {
-					d.logger.Warn("failed to remove file with bad hash", "path", filePath, "error", removeErr)
-				}
-				// Save error to database
+				removeErr := os.Remove(filePath)
+				// Save error to database even if removal fails (so we don't retry known-bad content)
 				if d.db != nil {
 					if saveErr := d.db.IncrementRetry(ctx, item.PostID, errReasonKnownBadHash); saveErr != nil {
 						return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", item.PostID, saveErr)
 					}
+				}
+				if removeErr != nil {
+					return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", filePath, removeErr)
 				}
 				return "", false, ValidationError{
 					Permanent: true,
@@ -543,14 +549,15 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 	// Check for known bad hashes (corrupted/error content from old bugs)
 	if knownBadHashes[hash] {
 		d.logger.Error("detected known bad hash in existing file (corrupted content)", "hash", hash, "post_id", postID, "path", existingFile)
-		if removeErr := os.Remove(existingFile); removeErr != nil {
-			d.logger.Warn("failed to remove file with bad hash", "path", existingFile, "error", removeErr)
-		}
-		// Save error to database
+		removeErr := os.Remove(existingFile)
+		// Save error to database even if removal fails (so we don't retry known-bad content)
 		if d.db != nil {
 			if saveErr := d.db.IncrementRetry(ctx, postID, errReasonKnownBadHash); saveErr != nil {
 				return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", postID, saveErr)
 			}
+		}
+		if removeErr != nil {
+			return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", existingFile, removeErr)
 		}
 		return "", false, ValidationError{
 			Permanent: true,
