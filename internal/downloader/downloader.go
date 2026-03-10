@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	defaultConcurrency = 10
-	defaultRetries     = 3
-	defaultTimeout     = 30 * time.Second
-	defaultOutputDir   = "output"
-	defaultBackoffBase = 500 * time.Millisecond
+	defaultConcurrency    = 10
+	defaultRetries        = 3
+	defaultTimeout        = 30 * time.Second
+	defaultOutputDir      = "output"
+	defaultBackoffBase    = 500 * time.Millisecond
+	errReasonKnownBadHash = "corrupted content (known bad hash)"
 )
 
 // knownBadHashes contains SHA256 hashes of files known to be corrupted/error content from old bugs.
@@ -228,13 +229,13 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 				}
 				// Save error to database
 				if d.db != nil {
-					if saveErr := d.db.IncrementRetry(ctx, item.PostID, "corrupted content (known bad hash)"); saveErr != nil {
+					if saveErr := d.db.IncrementRetry(ctx, item.PostID, errReasonKnownBadHash); saveErr != nil {
 						return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", item.PostID, saveErr)
 					}
 				}
 				return "", false, ValidationError{
 					Permanent: true,
-					Reason:    "corrupted content (known bad hash)",
+					Reason:    errReasonKnownBadHash,
 				}
 			}
 
@@ -547,13 +548,13 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 		}
 		// Save error to database
 		if d.db != nil {
-			if saveErr := d.db.IncrementRetry(ctx, postID, "corrupted content (known bad hash)"); saveErr != nil {
+			if saveErr := d.db.IncrementRetry(ctx, postID, errReasonKnownBadHash); saveErr != nil {
 				return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", postID, saveErr)
 			}
 		}
 		return "", false, ValidationError{
 			Permanent: true,
-			Reason:    "corrupted content (known bad hash)",
+			Reason:    errReasonKnownBadHash,
 		}
 	}
 

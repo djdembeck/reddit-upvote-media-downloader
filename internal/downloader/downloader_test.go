@@ -1245,10 +1245,10 @@ func TestKnownBadHashDetection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, post)
 	assert.Equal(t, 1, post.RetryCount, "Retry count should be 1 after bad hash detection")
-	assert.Equal(t, "corrupted content (known bad hash)", post.LastError)
+	assert.Equal(t, errReasonKnownBadHash, post.LastError)
 
 	var valErr ValidationError
 	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
-	assert.Equal(t, "corrupted content (known bad hash)", valErr.Reason)
+	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
 }
