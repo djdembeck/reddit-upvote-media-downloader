@@ -239,6 +239,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		// Don't retry on permanent validation errors
 		var validationErr ValidationError
 		if errors.As(err, &validationErr) && validationErr.Permanent {
+			// Save error to database to prevent future retries
+			if d.db != nil {
+				if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
+					d.logger.Error("failed to save validation error", "post_id", item.PostID, "error", saveErr)
+				}
+			}
 			break
 		}
 		if attempt < d.config.Retries {
