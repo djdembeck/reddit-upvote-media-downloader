@@ -19,12 +19,24 @@ import (
 )
 
 const (
-	defaultConcurrency = 10
-	defaultRetries     = 3
-	defaultTimeout     = 30 * time.Second
-	defaultOutputDir   = "output"
-	defaultBackoffBase = 500 * time.Millisecond
+	defaultConcurrency    = 10
+	defaultRetries        = 3
+	defaultTimeout        = 30 * time.Second
+	defaultOutputDir      = "output"
+	defaultBackoffBase    = 500 * time.Millisecond
+	errReasonKnownBadHash = "corrupted content (known bad hash)"
 )
+
+// knownBadHashes contains SHA256 hashes of files known to be corrupted/error content from old bugs.
+// These files are automatically removed and marked as permanently failed.
+// Note: Tests that modify this map must NOT use t.Parallel() as there's no synchronization.
+var knownBadHashes = map[string]bool{
+	"59bac5bf0a2cec9b557d35157752bff733615d1f892165f273b75762fb0c1b37": true,
+}
+
+// knownBadHashesMu protects access to knownBadHashes in tests.
+// Production code only reads from the map, so no locking is needed there.
+var knownBadHashesMu sync.Mutex
 
 type Config struct {
 	OutputDir   string
@@ -177,7 +189,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	}
 
 	// Check if any file containing this post ID already exists (bdfr-html style matching)
-	hash, isLocalReuse, err := d.checkAndHandleExistingFile(outputDir, item.PostID)
+	hash, isLocalReuse, err := d.checkAndHandleExistingFile(ctx, outputDir, item.PostID)
 	if err != nil {
 		return "", false, err
 	}
@@ -193,7 +205,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return "", false, err
 		}
 		// Re-check for existing file before each attempt
-		hash, isLocalReuse, err = d.checkAndHandleExistingFile(outputDir, item.PostID)
+		hash, isLocalReuse, err = d.checkAndHandleExistingFile(ctx, outputDir, item.PostID)
 		if err != nil {
 			return "", false, err
 		}
@@ -212,6 +224,25 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 					d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
 				}
 				return "", false, fmt.Errorf("calculate hash: %w", hashErr)
+			}
+
+			// Check for known bad hashes (corrupted/error content from old bugs)
+			if knownBadHashes[hash] {
+				d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
+				removeErr := os.Remove(filePath)
+				// Save error to database even if removal fails (so we don't retry known-bad content)
+				if d.db != nil {
+					if saveErr := d.db.IncrementRetry(ctx, item.PostID, errReasonKnownBadHash); saveErr != nil {
+						return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", item.PostID, saveErr)
+					}
+				}
+				if removeErr != nil {
+					return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", filePath, removeErr)
+				}
+				return "", false, ValidationError{
+					Permanent: true,
+					Reason:    errReasonKnownBadHash,
+				}
 			}
 
 			// Check if hash already exists in database.
@@ -239,6 +270,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		// Don't retry on permanent validation errors
 		var validationErr ValidationError
 		if errors.As(err, &validationErr) && validationErr.Permanent {
+			// Save error to database to prevent future retries
+			if d.db != nil {
+				if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
+					return "", false, fmt.Errorf("failed to persist validation error for post %s: IncrementRetry failed: %w", item.PostID, saveErr)
+				}
+			}
 			break
 		}
 		if attempt < d.config.Retries {
@@ -289,7 +326,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			_, isLocalReuse, validateErr := d.checkAndHandleExistingFile(filepath.Dir(filePath), postID)
+			_, isLocalReuse, validateErr := d.checkAndHandleExistingFile(reqCtx, filepath.Dir(filePath), postID)
 			if validateErr != nil {
 				return fmt.Errorf("existing file validation failed: %w", validateErr)
 			}
@@ -477,7 +514,7 @@ func combineErrors(errs ...error) error {
 	return joinErrors("multiple errors", combined)
 }
 
-func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash string, isLocalReuse bool, err error) {
+func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string) (hash string, isLocalReuse bool, err error) {
 	existingFile := findExistingFile(outputDir, postID)
 	if existingFile == "" {
 		return "", false, nil
@@ -508,6 +545,26 @@ func (d *Downloader) checkAndHandleExistingFile(outputDir, postID string) (hash 
 		d.logger.Error("failed to hash existing file", "path", existingFile, "error", err)
 		return "", false, err
 	}
+
+	// Check for known bad hashes (corrupted/error content from old bugs)
+	if knownBadHashes[hash] {
+		d.logger.Error("detected known bad hash in existing file (corrupted content)", "hash", hash, "post_id", postID, "path", existingFile)
+		removeErr := os.Remove(existingFile)
+		// Save error to database even if removal fails (so we don't retry known-bad content)
+		if d.db != nil {
+			if saveErr := d.db.IncrementRetry(ctx, postID, errReasonKnownBadHash); saveErr != nil {
+				return "", false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", postID, saveErr)
+			}
+		}
+		if removeErr != nil {
+			return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", existingFile, removeErr)
+		}
+		return "", false, ValidationError{
+			Permanent: true,
+			Reason:    errReasonKnownBadHash,
+		}
+	}
+
 	return hash, true, nil
 }
 

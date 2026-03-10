@@ -32,3 +32,10 @@ Thumbs.db
 
 # Go
 vendor/
+
+# Coverage files
+coverage.html
+coverage.out
+validation_coverage.out
+*.cover
+*.cov
