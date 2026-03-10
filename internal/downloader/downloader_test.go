@@ -1156,3 +1156,99 @@ func TestValidExistingFileSkipped(t *testing.T) {
 	require.NotEmpty(t, hash, "Hash should be returned for existing file")
 	assert.False(t, strings.HasPrefix(hash, "DUPLICATE:"), "Local file reuse should NOT be marked as duplicate")
 }
+
+func TestKnownBadHashDetection(t *testing.T) {
+	testContent := []byte("TEST_CONTENT_FOR_BAD_HASH_DETECTION_12345")
+
+	tempFile := filepath.Join(t.TempDir(), "test.txt")
+	require.NoError(t, os.WriteFile(tempFile, testContent, 0644))
+	testHash, err := CalculateFileHash(tempFile)
+	require.NoError(t, err)
+
+	originalBadHashes := make(map[string]bool)
+	for k, v := range knownBadHashes {
+		originalBadHashes[k] = v
+	}
+	defer func() {
+		knownBadHashes = originalBadHashes
+	}()
+
+	knownBadHashes[testHash] = true
+
+	validTestData := make([]byte, 1024)
+	validTestData[4] = 'f'
+	validTestData[5] = 't'
+	validTestData[6] = 'y'
+	validTestData[7] = 'p'
+	copy(validTestData[8:], testContent)
+	for i := 8 + len(testContent); i < len(validTestData); i++ {
+		validTestData[i] = byte(i % 256)
+	}
+
+	tempValidFile := filepath.Join(t.TempDir(), "valid.mp4")
+	require.NoError(t, os.WriteFile(tempValidFile, validTestData, 0644))
+	actualHash, err := CalculateFileHash(tempValidFile)
+	require.NoError(t, err)
+
+	delete(knownBadHashes, testHash)
+	knownBadHashes[actualHash] = true
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		w.Write(validTestData)
+	}))
+	defer server.Close()
+
+	outputDir := t.TempDir()
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	db, err := storage.NewDB(dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Save the post to the database first (required for IncrementRetry to work)
+	err = db.SavePost(context.Background(), &storage.Post{
+		ID:        "badhash123",
+		Title:     "Test Post",
+		Subreddit: "pics",
+	})
+	require.NoError(t, err)
+
+	downloader := NewDownloader(Config{
+		OutputDir:   outputDir,
+		HTTPClient:  server.Client(),
+		Retries:     1,
+		BackoffBase: time.Millisecond,
+		Timeout:     time.Second,
+		UserAgent:   "test-agent",
+		Concurrency: 1,
+	}, db)
+
+	items := []Downloadable{{
+		PostID:    "badhash123",
+		Subreddit: "pics",
+		Filename:  "badhash123_1.mp4",
+		URL:       server.URL + "/video.mp4",
+	}}
+
+	hashes, downloadErr := downloader.Download(context.Background(), items)
+
+	require.Error(t, downloadErr, "Download should fail for known bad hash")
+	assert.Empty(t, hashes["badhash123"], "Hash should be empty for rejected file")
+
+	filePath := filepath.Join(outputDir, "pics", "badhash123_1.mp4")
+	_, statErr := os.Stat(filePath)
+	assert.True(t, os.IsNotExist(statErr), "File with bad hash should be removed")
+
+	post, err := db.GetPost(context.Background(), "badhash123")
+	require.NoError(t, err)
+	require.NotNil(t, post)
+	assert.Equal(t, 1, post.RetryCount, "Retry count should be 1 after bad hash detection")
+	assert.Equal(t, "corrupted content (known bad hash)", post.LastError)
+
+	var valErr ValidationError
+	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
+	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
+	assert.Equal(t, "corrupted content (known bad hash)", valErr.Reason)
+}

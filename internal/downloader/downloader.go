@@ -26,6 +26,12 @@ const (
 	defaultBackoffBase = 500 * time.Millisecond
 )
 
+// knownBadHashes contains SHA256 hashes of files known to be corrupted/error content from old bugs.
+// These files are automatically removed and marked as permanently failed.
+var knownBadHashes = map[string]bool{
+	"59bac5bf0a2cec9b557d35157752bff733615d1f892165f273b75762fb0c1b37": true,
+}
+
 type Config struct {
 	OutputDir   string
 	Concurrency int
@@ -215,9 +221,6 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			}
 
 			// Check for known bad hashes (corrupted/error content from old bugs)
-			knownBadHashes := map[string]bool{
-				"59bac5bf0a2cec9b557d35157752bff733615d1f892165f273b75762fb0c1b37": true,
-			}
 			if knownBadHashes[hash] {
 				d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
 				if removeErr := os.Remove(filePath); removeErr != nil {
