@@ -214,6 +214,27 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 				return "", false, fmt.Errorf("calculate hash: %w", hashErr)
 			}
 
+			// Check for known bad hashes (corrupted/error content from old bugs)
+			knownBadHashes := map[string]bool{
+				"59bac5bf0a2cec9b557d35157752bff733615d1f892165f273b75762fb0c1b37": true,
+			}
+			if knownBadHashes[hash] {
+				d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
+				if removeErr := os.Remove(filePath); removeErr != nil {
+					d.logger.Warn("failed to remove file with bad hash", "path", filePath, "error", removeErr)
+				}
+				// Save error to database
+				if d.db != nil {
+					if saveErr := d.db.IncrementRetry(ctx, item.PostID, "corrupted content (known bad hash)"); saveErr != nil {
+						d.logger.Error("failed to save bad hash error", "post_id", item.PostID, "error", saveErr)
+					}
+				}
+				return "", false, ValidationError{
+					Permanent: true,
+					Reason:    "corrupted content (known bad hash)",
+				}
+			}
+
 			// Check if hash already exists in database.
 			// Note: There's a small race window where concurrent downloads of the same
 			// content could both pass this check before either saves to the database.
