@@ -272,6 +272,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		}
 		// If corrupt file was removed, retry immediately
 		if err == errRetryImmediately {
+			attempt-- // Don't count immediate retries against the limit
 			continue
 		}
 		lastErr = err
