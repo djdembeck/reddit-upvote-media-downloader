@@ -546,14 +546,23 @@ func joinErrors(prefix string, errs []error) error {
 		return errs[0]
 	}
 
-	var builder strings.Builder
-	builder.WriteString(prefix)
+	// Collect non-nil errors
+	var nonNilErrs []error
 	for _, err := range errs {
-		builder.WriteString("\n - ")
-		builder.WriteString(err.Error())
+		if err != nil {
+			nonNilErrs = append(nonNilErrs, err)
+		}
 	}
 
-	return errors.New(builder.String())
+	if len(nonNilErrs) == 0 {
+		return nil
+	}
+	if len(nonNilErrs) == 1 {
+		return nonNilErrs[0]
+	}
+
+	joined := errors.Join(nonNilErrs...)
+	return fmt.Errorf("%s: %w", prefix, joined)
 }
 
 // combineErrors combines multiple errors into a single error.
@@ -571,7 +580,7 @@ func combineErrors(errs ...error) error {
 		return combined[0]
 	}
 
-	return joinErrors("multiple errors", combined)
+	return errors.Join(combined...)
 }
 
 // handleBlockingFile handles the case where a file already exists at the target path.
