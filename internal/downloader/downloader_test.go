@@ -1668,7 +1668,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 	subredditDir := filepath.Join(tempDir, "pics")
 	require.NoError(t, os.MkdirAll(subredditDir, 0755))
 
-	filePath := filepath.Join(subredditDir, "badhash_1.jpg")
+	filePath := filepath.Join(subredditDir, "badhash.jpg")
 	require.NoError(t, os.WriteFile(filePath, testData, 0644))
 
 	badHash, err := CalculateFileHash(filePath)
