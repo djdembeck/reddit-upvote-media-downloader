@@ -1127,7 +1127,8 @@ func TestValidExistingFileSkipped(t *testing.T) {
 	require.NoError(t, os.MkdirAll(subredditDir, 0755))
 
 	// Create valid existing file with proper POSTID pattern (6+ chars)
-	existingFile := filepath.Join(subredditDir, "existingvalid_123456.mp4")
+	// The POSTID must be the last 6+ alphanumeric segment before extension
+	existingFile := filepath.Join(subredditDir, "my_video_abc123.mp4")
 	require.NoError(t, os.WriteFile(existingFile, validData, 0644))
 
 	downloader := NewDownloader(Config{
@@ -1141,9 +1142,9 @@ func TestValidExistingFileSkipped(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{{
-		PostID:    "existingvalid",
+		PostID:    "abc123",
 		Subreddit: "pics",
-		Filename:  "existingvalid_1.mp4",
+		Filename:  "my_video_abc123.mp4",
 		URL:       server.URL + "/video.mp4",
 	}}
 
@@ -1152,7 +1153,7 @@ func TestValidExistingFileSkipped(t *testing.T) {
 
 	require.Equal(t, int32(0), requestCount, "Should not make any HTTP requests for existing valid file")
 
-	hash := hashes["existingvalid"]
+	hash := hashes["abc123"]
 	require.NotEmpty(t, hash, "Hash should be returned for existing file")
 	assert.False(t, strings.HasPrefix(hash, "DUPLICATE:"), "Local file reuse should NOT be marked as duplicate")
 }
@@ -1326,4 +1327,385 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
+}
+
+// TestHandleBlockingFile tests the handleBlockingFile function for various scenarios
+func TestHandleBlockingFile(t *testing.T) {
+	validData := validJPEGData()
+	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
+	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
+
+	tests := []struct {
+		name          string
+		fileExists    bool
+		fileContent   []byte
+		wantHandled   bool
+		wantErr       bool
+		wantRetryErr  bool
+		checkFileGone bool
+	}{
+		{
+			name:        "FileDoesNotExist",
+			fileExists:  false,
+			wantHandled: false,
+			wantErr:     false,
+		},
+		{
+			name:        "ValidFileExists",
+			fileExists:  true,
+			fileContent: validData,
+			wantHandled: true,
+			wantErr:     false,
+		},
+		{
+			name:          "CorruptFileRemoved",
+			fileExists:    true,
+			fileContent:   corruptData,
+			wantHandled:   false,
+			wantErr:       true,
+			wantRetryErr:  true,
+			checkFileGone: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			filePath := filepath.Join(tempDir, "testfile_123456.jpg")
+
+			d := NewDownloader(Config{
+				OutputDir: tempDir,
+				Retries:   1,
+				Timeout:   time.Second,
+				UserAgent: "test-agent",
+			}, nil)
+
+			if tt.fileExists {
+				require.NoError(t, os.WriteFile(filePath, tt.fileContent, 0644))
+			}
+
+			handled, err := d.handleBlockingFile(context.Background(), filePath, "123456")
+
+			assert.Equal(t, tt.wantHandled, handled, "handled result mismatch")
+
+			if tt.wantErr {
+				require.Error(t, err, "expected error")
+				if tt.wantRetryErr {
+					assert.True(t, errors.Is(err, errRetryImmediately), "error should be errRetryImmediately")
+				}
+			} else {
+				require.NoError(t, err, "unexpected error")
+			}
+
+			if tt.checkFileGone {
+				_, statErr := os.Stat(filePath)
+				assert.True(t, os.IsNotExist(statErr), "corrupt file should be removed")
+			}
+		})
+	}
+}
+
+// TestErrRetryImmediatelySentinel tests that errRetryImmediate is properly used as a sentinel error
+func TestErrRetryImmediatelySentinel(t *testing.T) {
+	validData := validJPEGData()
+	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
+	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
+
+	var requestCount int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&requestCount, 1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.WriteHeader(http.StatusOK)
+		// Return valid data on all requests
+		_ = count
+		w.Write(validData)
+	}))
+	defer server.Close()
+
+	outputDir := t.TempDir()
+	subredditDir := filepath.Join(outputDir, "pics")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+	// Create a corrupt file that will trigger errRetryImmediately when removed
+	// The filename must match the POSTID pattern for findExistingFile to work
+	existingFile := filepath.Join(subredditDir, "retrytest_1.jpg")
+	require.NoError(t, os.WriteFile(existingFile, corruptData, 0644))
+
+	downloader := NewDownloader(Config{
+		OutputDir:   outputDir,
+		HTTPClient:  server.Client(),
+		Retries:     3,
+		BackoffBase: time.Millisecond,
+		Timeout:     time.Second,
+		UserAgent:   "test-agent",
+		Concurrency: 1,
+	}, nil)
+
+	items := []Downloadable{{
+		PostID:    "retrytest",
+		Subreddit: "pics",
+		Filename:  "retrytest_1.jpg",
+		URL:       server.URL + "/image.jpg",
+	}}
+
+	hashes, err := downloader.Download(context.Background(), items)
+	require.NoError(t, err, "Download should succeed after immediate retry")
+
+	// Should make exactly 1 request because the corrupt file triggers immediate retry
+	// without counting against retry limit
+	assert.Equal(t, int32(1), atomic.LoadInt32(&requestCount), "Should make exactly 1 HTTP request")
+
+	// Verify the new valid file exists
+	_, statErr := os.Stat(existingFile)
+	require.NoError(t, statErr, "Valid file should exist after retry")
+
+	// Hash should be returned
+	assert.NotEmpty(t, hashes["retrytest"], "Hash should be returned")
+}
+
+// TestCheckAndHandleExistingFile tests the checkAndHandleExistingFile function
+func TestCheckAndHandleExistingFile(t *testing.T) {
+	validData := validJPEGData()
+	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
+	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
+
+	tests := []struct {
+		name           string
+		fileExists     bool
+		fileContent    []byte
+		wantHash       bool
+		wantLocalReuse bool
+		wantRemoved    bool
+		wantErr        bool
+	}{
+		{
+			name:           "NoExistingFile",
+			fileExists:     false,
+			wantHash:       false,
+			wantLocalReuse: false,
+			wantRemoved:    false,
+			wantErr:        false,
+		},
+		{
+			name:           "ValidExistingFile",
+			fileExists:     true,
+			fileContent:    validData,
+			wantHash:       true,
+			wantLocalReuse: true,
+			wantRemoved:    false,
+			wantErr:        false,
+		},
+		{
+			name:           "CorruptFileRemoved",
+			fileExists:     true,
+			fileContent:    corruptData,
+			wantHash:       false,
+			wantLocalReuse: false,
+			wantRemoved:    true,
+			wantErr:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			subredditDir := filepath.Join(tempDir, "testsub")
+			require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+			// Use POSTID pattern: filename starting with 6+ char POSTID
+			filePath := filepath.Join(subredditDir, "abcdef.jpg")
+
+			d := NewDownloader(Config{
+				OutputDir: tempDir,
+				Retries:   1,
+				Timeout:   time.Second,
+				UserAgent: "test-agent",
+			}, nil)
+
+			if tt.fileExists {
+				require.NoError(t, os.WriteFile(filePath, tt.fileContent, 0644))
+			}
+
+			hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "abcdef")
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			if tt.wantHash {
+				assert.NotEmpty(t, hash, "hash should be returned")
+			} else {
+				assert.Empty(t, hash, "hash should be empty")
+			}
+
+			assert.Equal(t, tt.wantLocalReuse, isLocalReuse, "isLocalReuse mismatch")
+			assert.Equal(t, tt.wantRemoved, wasRemoved, "wasRemoved mismatch")
+
+			if tt.wantRemoved {
+				_, statErr := os.Stat(filePath)
+				assert.True(t, os.IsNotExist(statErr), "file should be removed")
+			}
+		})
+	}
+}
+
+// TestCheckAndHandleExistingFile_KnownBadHash tests that checkAndHandleExistingFile
+// properly detects and removes files with known bad hashes
+func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
+	testData := make([]byte, 1024)
+	testData[0] = 0xFF
+	testData[1] = 0xD8
+	testData[2] = 0xFF
+	for i := 3; i < len(testData); i++ {
+		testData[i] = byte(i % 256)
+	}
+
+	tempDir := t.TempDir()
+	subredditDir := filepath.Join(tempDir, "pics")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+	filePath := filepath.Join(subredditDir, "badhash_1.jpg")
+	require.NoError(t, os.WriteFile(filePath, testData, 0644))
+
+	badHash, err := CalculateFileHash(filePath)
+	require.NoError(t, err)
+
+	// Lock and modify knownBadHashes
+	knownBadHashesMu.Lock()
+	originalBadHashes := make(map[string]bool)
+	for k, v := range knownBadHashes {
+		originalBadHashes[k] = v
+	}
+	knownBadHashes[badHash] = true
+	knownBadHashesMu.Unlock()
+
+	defer func() {
+		knownBadHashesMu.Lock()
+		knownBadHashes = originalBadHashes
+		knownBadHashesMu.Unlock()
+	}()
+
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	db, err := storage.NewDB(dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Save post to database
+	err = db.SavePost(context.Background(), &storage.Post{
+		ID:        "badhash",
+		Title:     "Test",
+		Subreddit: "pics",
+	})
+	require.NoError(t, err)
+
+	d := NewDownloader(Config{
+		OutputDir: tempDir,
+		Retries:   1,
+		Timeout:   time.Second,
+		UserAgent: "test-agent",
+	}, db)
+
+	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "badhash")
+
+	// Should return an error for known bad hash
+	require.Error(t, err, "should error for known bad hash")
+	assert.Empty(t, hash, "hash should be empty")
+	assert.False(t, isLocalReuse, "should not be local reuse")
+	assert.True(t, wasRemoved, "file should be marked as removed")
+
+	// Verify file was removed
+	_, statErr := os.Stat(filePath)
+	assert.True(t, os.IsNotExist(statErr), "file with bad hash should be removed")
+
+	// Check that error is a ValidationError with Permanent=true
+	var valErr ValidationError
+	require.True(t, errors.As(err, &valErr), "error should be a ValidationError")
+	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
+	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
+}
+
+// TestCheckAndHandleExistingFile_ValidFile tests that valid existing files
+// are properly detected and reused without deletion
+func TestCheckAndHandleExistingFile_ValidFile(t *testing.T) {
+	tempDir := t.TempDir()
+	subredditDir := filepath.Join(tempDir, "pics")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+	filePath := filepath.Join(subredditDir, "validfile_1.jpg")
+	validData := validJPEGData()
+	require.NoError(t, os.WriteFile(filePath, validData, 0644))
+
+	d := NewDownloader(Config{
+		OutputDir: tempDir,
+		Retries:   1,
+		Timeout:   time.Second,
+		UserAgent: "test-agent",
+	}, nil)
+
+	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "validfile")
+
+	// File should be found and processed normally
+	require.NoError(t, err)
+	assert.NotEmpty(t, hash, "hash should be returned for valid file")
+	assert.True(t, isLocalReuse, "should be local reuse for existing valid file")
+	assert.False(t, wasRemoved, "should not be removed for valid file")
+}
+
+// TestDownloadErrRetryImmediatelyPath tests the errRetryImmediately path in downloadOnce
+func TestDownloadErrRetryImmediatelyPath(t *testing.T) {
+	validData := validJPEGData()
+	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
+	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
+
+	var requestCount int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.WriteHeader(http.StatusOK)
+		w.Write(validData)
+	}))
+	defer server.Close()
+
+	outputDir := t.TempDir()
+	subredditDir := filepath.Join(outputDir, "pics")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+	// Create a corrupt file with the target filename that will trigger errRetryImmediately
+	targetFile := filepath.Join(subredditDir, "retryimmed_1.jpg")
+	require.NoError(t, os.WriteFile(targetFile, corruptData, 0644))
+
+	downloader := NewDownloader(Config{
+		OutputDir:   outputDir,
+		HTTPClient:  server.Client(),
+		Retries:     2,
+		BackoffBase: time.Millisecond,
+		Timeout:     time.Second,
+		UserAgent:   "test-agent",
+		Concurrency: 1,
+	}, nil)
+
+	items := []Downloadable{{
+		PostID:    "retryimmed",
+		Subreddit: "pics",
+		Filename:  "retryimmed_1.jpg",
+		URL:       server.URL + "/image.jpg",
+	}}
+
+	hashes, err := downloader.Download(context.Background(), items)
+	require.NoError(t, err, "Download should succeed")
+
+	// Should make exactly 1 HTTP request because corrupt file is replaced by immediate retry
+	assert.Equal(t, int32(1), atomic.LoadInt32(&requestCount), "Should make exactly 1 HTTP request")
+
+	// Verify the file is now valid
+	content, readErr := os.ReadFile(targetFile)
+	require.NoError(t, readErr, "Should be able to read file")
+	assert.Equal(t, validData, content, "File should contain valid data")
+
+	assert.NotEmpty(t, hashes["retryimmed"], "Hash should be returned")
 }

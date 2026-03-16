@@ -367,17 +367,26 @@ func TestFilenamePattern(t *testing.T) {
 		expectID    string
 		shouldMatch bool
 	}{
+		// Legacy format: {POSTID}.ext
 		{"abc123.jpg", "abc123", true},
+		{"jkl012.gif", "jkl012", true},
+		{"readme.txt", "readme", true},
+		// Real-world format: {title}_{POSTID}.ext
+		{"My_Post_abc123.jpg", "abc123", true},
+		{"Cool_Image_jkl012.png", "jkl012", true},
+		// Gallery format: {title}_{index}_{POSTID}.ext
+		{"My_Post_1_def456.mp4", "def456", true},
+		{"Gallery_Item_2_ghi789.png", "ghi789", true},
+		// Legacy gallery: {POSTID}_{index}.ext
 		{"def456_1.mp4", "def456", true},
 		{"ghi789_2.png", "ghi789", true},
-		{"jkl012.gif", "jkl012", true},
 		{"mno345_10.webp", "mno345", true},
-		{"readme.txt", "readme", true},
-		{"a.txt", "", false},
-		{".hidden", "", false},
-		{"noextension", "", false},
-		{"_123.jpg", "", false},
-		{"12345.jpg", "", false},
+		// Should not match
+		{"a.txt", "", false},       // POSTID too short (5 chars)
+		{".hidden", "", false},     // No extension
+		{"noextension", "", false}, // No extension
+		{"_123.jpg", "", false},    // POSTID too short (3 chars)
+		{"12345.jpg", "", false},   // POSTID too short (5 chars)
 	}
 
 	for _, tc := range testCases {

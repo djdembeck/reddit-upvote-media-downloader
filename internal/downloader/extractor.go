@@ -58,6 +58,7 @@ type Extractor struct {
 	logger    *slog.Logger
 }
 
+// NewExtractor creates a new Extractor with the specified HTTP client and user agent.
 func NewExtractor(client *http.Client, userAgent string) *Extractor {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -68,6 +69,7 @@ func NewExtractor(client *http.Client, userAgent string) *Extractor {
 	return &Extractor{client: client, userAgent: userAgent, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
+// NewExtractorWithLogger creates a new Extractor with a custom logger.
 func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.Logger) *Extractor {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -81,6 +83,7 @@ func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.
 	return &Extractor{client: client, userAgent: userAgent, logger: logger}
 }
 
+// Extract extracts downloadable media URLs from a Reddit post.
 func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Downloadable, error) {
 	sourceURL := strings.TrimSpace(post.URLOverride)
 	if sourceURL == "" {
@@ -113,6 +116,7 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 	return items, err
 }
 
+// extractFromURL extracts media from a specific URL based on the host.
 func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {
@@ -150,6 +154,7 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 	}
 }
 
+// extractGallery extracts media items from a Reddit gallery post.
 func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, error) {
 	if post.MediaMeta == nil {
 		return nil, errors.New("gallery metadata missing")
@@ -192,6 +197,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 	return items, nil
 }
 
+// extractImageFromMediaMeta extracts media from MediaMeta metadata.
 func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloadable, error) {
 	if post.MediaMeta == nil || len(post.MediaMeta) == 0 {
 		return nil, nil
@@ -236,6 +242,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 	return items, nil
 }
 
+// extractRedditVideo extracts video URLs from Reddit-hosted videos.
 func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	if post.Media != nil && post.Media.RedditVideo != nil {
 		fallback := strings.TrimSpace(post.Media.RedditVideo.FallbackURL)
@@ -263,6 +270,7 @@ func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPo
 	return e.buildDownloadables(post, []string{best}, "")
 }
 
+// extractImgur extracts media URLs from Imgur posts.
 func (e *Extractor) extractImgur(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {
@@ -303,6 +311,7 @@ func (e *Extractor) extractImgur(ctx context.Context, post reddit.RedditPost, so
 	return e.buildDownloadables(post, []string{imageURL}, "")
 }
 
+// fetchImgurImageURL fetches the direct image URL from an Imgur page.
 func (e *Extractor) fetchImgurImageURL(ctx context.Context, pageURL string) (string, error) {
 	body, err := e.fetchText(ctx, pageURL)
 	if err != nil {
@@ -322,6 +331,7 @@ func (e *Extractor) fetchImgurImageURL(ctx context.Context, pageURL string) (str
 	return "", errors.New("imgur image URL not found")
 }
 
+// extractGfycatRedgifs extracts media URLs from Gfycat or Redgifs posts.
 func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
@@ -335,6 +345,7 @@ func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Reddit
 	return e.buildDownloadables(post, []string{mediaURL}, "")
 }
 
+// fetchGfycatRedgifsURL fetches the direct video URL from a Gfycat or Redgifs page.
 func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (string, error) {
 	parsed, err := url.Parse(pageURL)
 	if err != nil {
@@ -372,6 +383,7 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 	return "", errors.New("mp4/webm URL not found in gfycat/redgifs response")
 }
 
+// fetchRedgifsAPI fetches the video URL from the Redgifs API.
 func (e *Extractor) fetchRedgifsAPI(ctx context.Context, apiURL string) (string, error) {
 	response, err := e.fetchJSON(ctx, apiURL)
 	if err != nil {
@@ -401,6 +413,7 @@ func (e *Extractor) fetchRedgifsAPI(ctx context.Context, apiURL string) (string,
 	return "", errors.New("redgifs API did not return mp4 URL")
 }
 
+// fetchText fetches the text content from a URL.
 func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -430,6 +443,7 @@ func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 	return string(body), nil
 }
 
+// fetchJSON fetches JSON content from a URL.
 func (e *Extractor) fetchJSON(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -459,6 +473,7 @@ func (e *Extractor) fetchJSON(ctx context.Context, url string) ([]byte, error) {
 	return body, nil
 }
 
+// selectBestRedditVideo selects the best quality Reddit video URL.
 func (e *Extractor) selectBestRedditVideo(ctx context.Context, baseURL string) (string, error) {
 	qualities := []string{"1080", "720", "480", "360", "240"}
 	for _, quality := range qualities {
@@ -475,6 +490,7 @@ func (e *Extractor) selectBestRedditVideo(ctx context.Context, baseURL string) (
 	return "", errors.New("no Reddit video quality found")
 }
 
+// urlExists checks if a URL returns HTTP 200 OK.
 func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
@@ -491,6 +507,7 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 	return resp.StatusCode == http.StatusOK, nil
 }
 
+// buildDownloadables creates Downloadable items from URLs for a post.
 func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, mediaType string) ([]Downloadable, error) {
 	items := make([]Downloadable, 0, len(urls))
 	sanitizedTitle := sanitizeFilename(post.Title)
@@ -515,6 +532,7 @@ func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, me
 	return items, nil
 }
 
+// extensionAndType determines the file extension and media type from a URL and MIME type.
 func extensionAndType(rawURL, mime string) (string, string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -544,6 +562,7 @@ func extensionAndType(rawURL, mime string) (string, string, error) {
 	return ext, mediaType, nil
 }
 
+// formatToExtension converts a format string to a file extension.
 func formatToExtension(format string) string {
 	switch strings.ToLower(format) {
 	case "pjpg", "jpg", "jpeg":
@@ -561,6 +580,7 @@ func formatToExtension(format string) string {
 	}
 }
 
+// mimeToExtension converts a MIME type to a file extension.
 func mimeToExtension(mime string) string {
 	parts := strings.Split(strings.ToLower(mime), "/")
 	if len(parts) != 2 {
@@ -583,10 +603,12 @@ func mimeToExtension(mime string) string {
 	}
 }
 
+// decodeMediaURL decodes HTML entities in media URLs.
 func decodeMediaURL(raw string) string {
 	return strings.ReplaceAll(raw, "&amp;", "&")
 }
 
+// baseRedditVideoURL extracts the base URL for a Reddit video.
 func baseRedditVideoURL(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -603,6 +625,7 @@ func baseRedditVideoURL(rawURL string) string {
 	return fmt.Sprintf("%s://%s/%s", parsed.Scheme, parsed.Host, parts[0])
 }
 
+// normalizeURL normalizes a URL by adding https:// protocol if missing.
 func normalizeURL(raw string) string {
 	if strings.HasPrefix(raw, "//") {
 		return "https:" + raw
@@ -610,34 +633,42 @@ func normalizeURL(raw string) string {
 	return raw
 }
 
+// isRedditImageHost checks if the host is a Reddit image host.
 func isRedditImageHost(host string) bool {
 	return host == "i.redd.it" || host == "preview.redd.it"
 }
 
+// isRedditVideoHost checks if the host is a Reddit video host.
 func isRedditVideoHost(host string) bool {
 	return host == "v.redd.it"
 }
 
+// isRedditPermalinkHost checks if the host is a Reddit permalink host.
 func isRedditPermalinkHost(host string) bool {
 	return strings.HasSuffix(host, ".reddit.com") || host == "reddit.com"
 }
 
+// isGalleryURL checks if the path is a gallery URL.
 func isGalleryURL(path string) bool {
 	return strings.HasPrefix(strings.ToLower(path), "/gallery/")
 }
 
+// isImgurHost checks if the host is an Imgur host.
 func isImgurHost(host string) bool {
 	return host == "imgur.com" || strings.HasSuffix(host, ".imgur.com")
 }
 
+// isGfycatHost checks if the host is a Gfycat host.
 func isGfycatHost(host string) bool {
 	return host == "gfycat.com" || strings.HasSuffix(host, ".gfycat.com")
 }
 
+// isRedgifsHost checks if the host is a Redgifs host.
 func isRedgifsHost(host string) bool {
 	return host == "redgifs.com" || strings.HasSuffix(host, ".redgifs.com")
 }
 
+// isDirectMediaURL checks if the URL points to a direct media file.
 func isDirectMediaURL(parsed *url.URL) bool {
 	if parsed == nil {
 		return false
@@ -645,6 +676,7 @@ func isDirectMediaURL(parsed *url.URL) bool {
 	return isSupportedExtension(path.Ext(parsed.Path))
 }
 
+// isSupportedExtension checks if the file extension is supported.
 func isSupportedExtension(ext string) bool {
 	_, ok := supportedExtensions[strings.ToLower(ext)]
 	return ok
@@ -652,6 +684,7 @@ func isSupportedExtension(ext string) bool {
 
 var validMediaIDRegex = regexp.MustCompile(`^[a-zA-Z0-9]+$`)
 
+// isValidMediaID checks if the string is a valid media ID.
 func isValidMediaID(id string) bool {
 	return validMediaIDRegex.MatchString(id)
 }
@@ -666,6 +699,7 @@ func buildFilename(sanitizedTitle, postID, ext string, index, totalItems int) st
 	return fmt.Sprintf("%s_%s%s", sanitizedTitle, postID, ext)
 }
 
+// sanitizeFilename sanitizes a post title for use as a filename.
 func sanitizeFilename(title string) string {
 	if title == "" {
 		return "untitled"

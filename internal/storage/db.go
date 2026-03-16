@@ -644,13 +644,14 @@ func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error
 	return imported, nil
 }
 
-// FilenamePattern matches bdfr-html filenames like {POSTID}.ext or {POSTID}_1.ext
-// Examples: abc123.jpg, def456_1.mp4, xyz789_2.png
+// FilenamePattern matches bdfr-html filenames with POSTID extraction.
+// Supports: {POSTID}.ext, {POSTID}_{index}.ext, {title}_{POSTID}.ext, {title}_{index}_{POSTID}.ext
+// Examples: abc123.jpg, abc123_1.mp4, My_Post_abc123.jpg, My_Post_1_def456.mp4
 // Reddit post IDs are typically 6-7 alphanumeric characters.
-var FilenamePattern = regexp.MustCompile(`^([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
+var FilenamePattern = regexp.MustCompile(`^(?:.+_)?([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
 
 // ImportFromDirectory scans a directory for media files and imports post IDs from filenames.
-// Supports bdfr-html filename patterns: {POSTID}.ext, {POSTID}_1.ext
+// Supports bdfr-html filename patterns: {title}_{POSTID}.ext, {title}_{index}_{POSTID}.ext
 func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {

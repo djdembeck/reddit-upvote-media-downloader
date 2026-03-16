@@ -60,6 +60,9 @@ type Downloader struct {
 	db        *storage.DB
 }
 
+// NewDownloader creates a new Downloader instance with the provided configuration and database.
+// It applies default values for any unset configuration options and initializes the HTTP client,
+// logger, and extractor.
 func NewDownloader(config Config, db *storage.DB) *Downloader {
 	config = applyDefaults(config)
 
@@ -82,6 +85,8 @@ func NewDownloader(config Config, db *storage.DB) *Downloader {
 	}
 }
 
+// Extract processes Reddit posts and extracts downloadable media items from each post.
+// It handles gallery posts, direct links, and external media sources.
 func (d *Downloader) Extract(ctx context.Context, posts []reddit.RedditPost) ([]Downloadable, error) {
 	items := make([]Downloadable, 0)
 	var errs []error
@@ -107,6 +112,8 @@ func (d *Downloader) Extract(ctx context.Context, posts []reddit.RedditPost) ([]
 	return items, nil
 }
 
+// Download downloads media items concurrently with retry logic and deduplication.
+// Returns a map of post IDs to their file hashes.
 func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[string]string, error) {
 	hashes := make(map[string]string)
 
@@ -163,12 +170,16 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	return hashes, nil
 }
 
+// DownloadPosts extracts and downloads media from Reddit posts in one operation.
+// Returns the extracted items, a map of post IDs to hashes, and any errors.
 func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.RedditPost) ([]Downloadable, map[string]string, error) {
 	items, extractErr := d.Extract(ctx, posts)
 	hashes, downloadErr := d.Download(ctx, items)
 	return items, hashes, combineErrors(extractErr, downloadErr)
 }
 
+// downloadItem downloads a single media item with retry logic and validation.
+// Returns the file hash, whether it's a duplicate, and any error.
 func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (string, bool, error) {
 	if strings.TrimSpace(item.URL) == "" {
 		return "", false, errors.New("download URL is empty")
@@ -301,6 +312,9 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
+
+// downloadOnce performs a single download attempt with validation.
+// Returns errRetryImmediately if an existing corrupt file was removed.
 func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt, postID string) (err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()
@@ -427,6 +441,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	return nil
 }
 
+// backoffDuration calculates the exponential backoff duration for a retry attempt.
 func (d *Downloader) backoffDuration(attempt int) time.Duration {
 	if attempt <= 0 {
 		return d.config.BackoffBase
@@ -434,6 +449,7 @@ func (d *Downloader) backoffDuration(attempt int) time.Duration {
 	return d.config.BackoffBase * time.Duration(1<<uint(attempt-1))
 }
 
+// applyDefaults sets default values for any unset configuration options.
 func applyDefaults(config Config) Config {
 	if config.OutputDir == "" {
 		config.OutputDir = defaultOutputDir
@@ -456,6 +472,7 @@ func applyDefaults(config Config) Config {
 	return config
 }
 
+// sanitizeSubreddit sanitizes a subreddit name for use as a directory name.
 func sanitizeSubreddit(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -484,6 +501,7 @@ func sanitizeSubreddit(name string) string {
 	return sanitized
 }
 
+// fileExists checks if a file exists and is not a directory.
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -492,6 +510,7 @@ func fileExists(path string) bool {
 	return !info.IsDir()
 }
 
+// sleepWithContext sleeps for the specified duration or until the context is cancelled.
 func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	if duration <= 0 {
 		return nil
@@ -504,6 +523,7 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
+// joinErrors combines multiple errors into a single error with the given prefix.
 func joinErrors(prefix string, errs []error) error {
 	if len(errs) == 0 {
 		return nil
@@ -522,6 +542,7 @@ func joinErrors(prefix string, errs []error) error {
 	return errors.New(builder.String())
 }
 
+// combineErrors combines multiple errors into a single error.
 func combineErrors(errs ...error) error {
 	var combined []error
 	for _, err := range errs {
@@ -539,6 +560,9 @@ func combineErrors(errs ...error) error {
 	return joinErrors("multiple errors", combined)
 }
 
+// handleBlockingFile handles the case where a file already exists at the target path.
+// It validates the existing file and either reuses it if valid, or removes it and returns
+// errRetryImmediately if corrupt. Returns true if the file was successfully handled.
 func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID string) (handled bool, err error) {
 	if !fileExists(filePath) {
 		return false, nil
@@ -562,6 +586,9 @@ func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID st
 	return true, nil
 }
 
+// checkAndHandleExistingFile checks for existing files matching the postID and handles them.
+// Returns the file hash, whether it's a valid local reuse, whether it was removed, and any error.
+// If the file is corrupt, it is removed and wasRemoved is set to true.
 func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
 	existingFile := findExistingFile(outputDir, postID)
 	if existingFile == "" {
@@ -616,6 +643,8 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 	return hash, true, false, nil
 }
 
+// validateExistingFile validates an existing file by checking its size, magic bytes, and content.
+// Returns a ValidationError with Permanent=true for files that should not be retried.
 func validateExistingFile(filePath, ext string) (err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -667,6 +696,8 @@ func validateExistingFile(filePath, ext string) (err error) {
 	return nil
 }
 
+// findExistingFile searches for an existing file in the directory matching the postID.
+// Supports bdfr-html filename patterns: {title}_{POSTID}.ext or {title}_{index}_{POSTID}.ext
 func findExistingFile(dir, postID string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
