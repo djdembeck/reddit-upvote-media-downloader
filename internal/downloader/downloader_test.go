@@ -1674,19 +1674,18 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 	badHash, err := CalculateFileHash(filePath)
 	require.NoError(t, err)
 
-	// Lock and modify knownBadHashes
+	// Lock and modify knownBadHashes - hold lock for entire test
 	knownBadHashesMu.Lock()
+	defer knownBadHashesMu.Unlock()
 	originalBadHashes := make(map[string]bool)
 	for k, v := range knownBadHashes {
 		originalBadHashes[k] = v
 	}
 	knownBadHashes[badHash] = true
-	knownBadHashesMu.Unlock()
 
 	defer func() {
-		knownBadHashesMu.Lock()
+		// Lock is already held by outer defer, just restore
 		knownBadHashes = originalBadHashes
-		knownBadHashesMu.Unlock()
 	}()
 
 	dbDir := t.TempDir()
