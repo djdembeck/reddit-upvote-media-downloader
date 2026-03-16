@@ -465,7 +465,7 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 		{PostID: "p1", Subreddit: "pics", Filename: "p1_1.jpg", URL: server.URL + "/1.jpg", ItemIndex: -1},
 		{PostID: "p2", Subreddit: "pics", Filename: "p2_1.jpg", URL: server.URL + "/2.jpg", ItemIndex: -1},
 		{PostID: "p3", Subreddit: "pics", Filename: "p3_1.jpg", URL: server.URL + "/3.jpg", ItemIndex: -1},
-		{PostID: "p4", Subreddit: "pics", Filename: "p4_1.jpg", URL: server.URL + "/4.jpg"},
+		{PostID: "p4", Subreddit: "pics", Filename: "p4_1.jpg", URL: server.URL + "/4.jpg", ItemIndex: -1},
 	}
 
 	done := make(chan error, 1)
