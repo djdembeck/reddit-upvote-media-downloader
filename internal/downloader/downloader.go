@@ -271,7 +271,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return hash, false, nil
 		}
 		// If corrupt file was removed, retry immediately
-		if err == errRetryImmediately {
+		if errors.Is(err, errRetryImmediately) {
+			d.logger.Debug("immediate retry triggered due to errRetryImmediately",
+				"file", filePath,
+				"post_id", item.PostID,
+				"attempt", attempt,
+			)
 			attempt-- // Don't count immediate retries against the limit
 			continue
 		}
