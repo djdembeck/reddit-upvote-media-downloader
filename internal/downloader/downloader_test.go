@@ -332,6 +332,7 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "abc123_1.jpg",
 		URL:       "https://example.com/abc123.jpg",
+		ItemIndex: -1,
 	}}
 
 	hashes, err := downloader.Download(context.Background(), items)
@@ -374,6 +375,7 @@ func TestDownloaderRetries(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "retry1_1.jpg",
 		URL:       server.URL + "/file.jpg",
+		ItemIndex: -1,
 	}}
 
 	if _, err := downloader.Download(context.Background(), items); err != nil {
@@ -411,8 +413,8 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{
-		{PostID: "fail", Subreddit: "pics", Filename: "fail_1.jpg", URL: server.URL + "/fail.jpg"},
-		{PostID: "ok", Subreddit: "pics", Filename: "ok_1.jpg", URL: server.URL + "/ok.jpg"},
+		{PostID: "fail", Subreddit: "pics", Filename: "fail_1.jpg", URL: server.URL + "/fail.jpg", ItemIndex: -1},
+		{PostID: "ok", Subreddit: "pics", Filename: "ok_1.jpg", URL: server.URL + "/ok.jpg", ItemIndex: -1},
 	}
 
 	if _, err := downloader.Download(context.Background(), items); err == nil {
@@ -460,9 +462,9 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{
-		{PostID: "p1", Subreddit: "pics", Filename: "p1_1.jpg", URL: server.URL + "/1.jpg"},
-		{PostID: "p2", Subreddit: "pics", Filename: "p2_1.jpg", URL: server.URL + "/2.jpg"},
-		{PostID: "p3", Subreddit: "pics", Filename: "p3_1.jpg", URL: server.URL + "/3.jpg"},
+		{PostID: "p1", Subreddit: "pics", Filename: "p1_1.jpg", URL: server.URL + "/1.jpg", ItemIndex: -1},
+		{PostID: "p2", Subreddit: "pics", Filename: "p2_1.jpg", URL: server.URL + "/2.jpg", ItemIndex: -1},
+		{PostID: "p3", Subreddit: "pics", Filename: "p3_1.jpg", URL: server.URL + "/3.jpg", ItemIndex: -1},
 		{PostID: "p4", Subreddit: "pics", Filename: "p4_1.jpg", URL: server.URL + "/4.jpg"},
 	}
 
@@ -643,6 +645,7 @@ func TestDeduplication(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  tt.newFilename,
 				URL:       setup.server.URL + "/download.jpg",
+				ItemIndex: -1,
 			}}
 
 			if tt.triggerDBError {
@@ -713,6 +716,59 @@ func TestHashCalculation_Integration(t *testing.T) {
 	require.NoError(t, err, "CalculateHashFromReader error")
 
 	assert.Equal(t, hash, hashFromBytes, "File hash and reader hash should match for same content")
+}
+
+// TestItemHashKey verifies that itemHashKey generates correct keys for single items and gallery items.
+func TestItemHashKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		item    Downloadable
+		wantKey string
+	}{
+		{
+			name: "SingleItem",
+			item: Downloadable{
+				PostID:    "post123",
+				Filename:  "title_post123.jpg",
+				ItemIndex: -1,
+			},
+			wantKey: "post123",
+		},
+		{
+			name: "GalleryItemFirst",
+			item: Downloadable{
+				PostID:    "gal456",
+				Filename:  "title_1_gal456.jpg",
+				ItemIndex: 0,
+			},
+			wantKey: "gal456_0",
+		},
+		{
+			name: "GalleryItemSecond",
+			item: Downloadable{
+				PostID:    "gal456",
+				Filename:  "title_2_gal456.jpg",
+				ItemIndex: 1,
+			},
+			wantKey: "gal456_1",
+		},
+		{
+			name: "GalleryItemTenth",
+			item: Downloadable{
+				PostID:    "gal789",
+				Filename:  "title_10_gal789.jpg",
+				ItemIndex: 9,
+			},
+			wantKey: "gal789_9",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotKey := itemHashKey(tt.item)
+			assert.Equal(t, tt.wantKey, gotKey)
+		})
+	}
 }
 
 func TestDownloadValidationAndRetryBehavior(t *testing.T) {
@@ -826,6 +882,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  filename,
 				URL:       server.URL + "/file" + ext,
+				ItemIndex: -1,
 			}}
 
 			hashes, err := downloader.Download(context.Background(), items)
@@ -884,6 +941,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			Subreddit: "pics",
 			Filename:  "retrytransient_1.mp4",
 			URL:       server.URL + "/video.mp4",
+			ItemIndex: -1,
 		}}
 
 		hashes, err := downloader.Download(context.Background(), items)
@@ -924,6 +982,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  "permanent_1.mp4",
 				URL:       server.URL + "/video.mp4",
+				ItemIndex: -1,
 			}}
 
 			_, err := downloader.Download(context.Background(), items)
@@ -958,6 +1017,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  "bodycheck_1.mp4",
 				URL:       server.URL + "/video.mp4",
+				ItemIndex: -1,
 			}}
 
 			_, err := downloader.Download(context.Background(), items)
@@ -999,6 +1059,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			Subreddit: "pics",
 			Filename:  "smallchunked_1.mp4",
 			URL:       server.URL + "/small.mp4",
+			ItemIndex: -1,
 		}}
 
 		_, err := downloader.Download(context.Background(), items)
@@ -1038,6 +1099,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			Subreddit: "pics",
 			Filename:  "emptybody_1.mp4",
 			URL:       server.URL + "/video.mp4",
+			ItemIndex: -1,
 		}}
 
 		hashes, err := downloader.Download(context.Background(), items)
@@ -1092,6 +1154,7 @@ func TestDetectsCorruptExistingFile(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "corrupttest_1.mp4",
 		URL:       server.URL + "/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, err := downloader.Download(context.Background(), items)
@@ -1146,6 +1209,7 @@ func TestValidExistingFileSkipped(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "my_video_abc123.mp4",
 		URL:       server.URL + "/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, err := downloader.Download(context.Background(), items)
@@ -1223,6 +1287,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "badhash123_1.mp4",
 		URL:       server.URL + "/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, downloadErr := downloader.Download(context.Background(), items)
@@ -1307,6 +1372,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "existingbad_1.mp4",
 		URL:       "http://example.com/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, downloadErr := downloader.Download(context.Background(), items)
@@ -1405,63 +1471,92 @@ func TestHandleBlockingFile(t *testing.T) {
 	}
 }
 
-// TestErrRetryImmediatelySentinel tests that errRetryImmediate is properly used as a sentinel error
-func TestErrRetryImmediatelySentinel(t *testing.T) {
+// TestErrRetryImmediately tests the errRetryImmediately mechanism for handling corrupt files.
+// It covers both the sentinel error behavior and the integration path in downloadOnce.
+func TestErrRetryImmediately(t *testing.T) {
 	validData := validJPEGData()
 	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
 	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
 
-	var requestCount int32
+	tests := []struct {
+		name             string
+		postID           string
+		filename         string
+		retries          int
+		wantRequestCount int32
+		wantHashKey      string
+	}{
+		{
+			name:             "SentinelErrorPath",
+			postID:           "retrytest",
+			filename:         "retrytest_1.jpg",
+			retries:          3,
+			wantRequestCount: 1,
+			wantHashKey:      "retrytest",
+		},
+		{
+			name:             "DownloadOncePath",
+			postID:           "retryimmed",
+			filename:         "retryimmed_1.jpg",
+			retries:          2,
+			wantRequestCount: 1,
+			wantHashKey:      "retryimmed",
+		},
+	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&requestCount, 1)
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.WriteHeader(http.StatusOK)
-		// Return valid data on all requests
-		_ = count
-		w.Write(validData)
-	}))
-	defer server.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requestCount int32
 
-	outputDir := t.TempDir()
-	subredditDir := filepath.Join(outputDir, "pics")
-	require.NoError(t, os.MkdirAll(subredditDir, 0755))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&requestCount, 1)
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.WriteHeader(http.StatusOK)
+				w.Write(validData)
+			}))
+			defer server.Close()
 
-	// Create a corrupt file that will trigger errRetryImmediately when removed
-	// The filename must match the POSTID pattern for findExistingFile to work
-	existingFile := filepath.Join(subredditDir, "retrytest_1.jpg")
-	require.NoError(t, os.WriteFile(existingFile, corruptData, 0644))
+			outputDir := t.TempDir()
+			subredditDir := filepath.Join(outputDir, "pics")
+			require.NoError(t, os.MkdirAll(subredditDir, 0755))
 
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     3,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
+			// Create a corrupt file that will trigger errRetryImmediately
+			targetFile := filepath.Join(subredditDir, tt.filename)
+			require.NoError(t, os.WriteFile(targetFile, corruptData, 0644))
 
-	items := []Downloadable{{
-		PostID:    "retrytest",
-		Subreddit: "pics",
-		Filename:  "retrytest_1.jpg",
-		URL:       server.URL + "/image.jpg",
-	}}
+			downloader := NewDownloader(Config{
+				OutputDir:   outputDir,
+				HTTPClient:  server.Client(),
+				Retries:     tt.retries,
+				BackoffBase: time.Millisecond,
+				Timeout:     time.Second,
+				UserAgent:   "test-agent",
+				Concurrency: 1,
+			}, nil)
 
-	hashes, err := downloader.Download(context.Background(), items)
-	require.NoError(t, err, "Download should succeed after immediate retry")
+			items := []Downloadable{{
+				PostID:    tt.postID,
+				Subreddit: "pics",
+				Filename:  tt.filename,
+				URL:       server.URL + "/image.jpg",
+				ItemIndex: -1,
+			}}
 
-	// Should make exactly 1 request because the corrupt file triggers immediate retry
-	// without counting against retry limit
-	assert.Equal(t, int32(1), atomic.LoadInt32(&requestCount), "Should make exactly 1 HTTP request")
+			hashes, err := downloader.Download(context.Background(), items)
+			require.NoError(t, err, "Download should succeed after immediate retry")
 
-	// Verify the new valid file exists
-	_, statErr := os.Stat(existingFile)
-	require.NoError(t, statErr, "Valid file should exist after retry")
+			// Verify exactly 1 HTTP request was made (immediate retry doesn't count)
+			assert.Equal(t, tt.wantRequestCount, atomic.LoadInt32(&requestCount), "Should make exactly 1 HTTP request")
 
-	// Hash should be returned
-	assert.NotEmpty(t, hashes["retrytest"], "Hash should be returned")
+			// Verify the file was replaced with valid data
+			content, readErr := os.ReadFile(targetFile)
+			require.NoError(t, readErr, "Should be able to read file")
+			assert.Equal(t, validData, content, "File should contain valid data")
+
+			// Hash should be returned
+			assert.NotEmpty(t, hashes[tt.wantHashKey], "Hash should be returned")
+		})
+	}
 }
 
 // TestCheckAndHandleExistingFile tests the checkAndHandleExistingFile function
@@ -1653,59 +1748,4 @@ func TestCheckAndHandleExistingFile_ValidFile(t *testing.T) {
 	assert.NotEmpty(t, hash, "hash should be returned for valid file")
 	assert.True(t, isLocalReuse, "should be local reuse for existing valid file")
 	assert.False(t, wasRemoved, "should not be removed for valid file")
-}
-
-// TestDownloadErrRetryImmediatelyPath tests the errRetryImmediately path in downloadOnce
-func TestDownloadErrRetryImmediatelyPath(t *testing.T) {
-	validData := validJPEGData()
-	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
-	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
-
-	var requestCount int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requestCount, 1)
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
-	}))
-	defer server.Close()
-
-	outputDir := t.TempDir()
-	subredditDir := filepath.Join(outputDir, "pics")
-	require.NoError(t, os.MkdirAll(subredditDir, 0755))
-
-	// Create a corrupt file with the target filename that will trigger errRetryImmediately
-	targetFile := filepath.Join(subredditDir, "retryimmed_1.jpg")
-	require.NoError(t, os.WriteFile(targetFile, corruptData, 0644))
-
-	downloader := NewDownloader(Config{
-		OutputDir:   outputDir,
-		HTTPClient:  server.Client(),
-		Retries:     2,
-		BackoffBase: time.Millisecond,
-		Timeout:     time.Second,
-		UserAgent:   "test-agent",
-		Concurrency: 1,
-	}, nil)
-
-	items := []Downloadable{{
-		PostID:    "retryimmed",
-		Subreddit: "pics",
-		Filename:  "retryimmed_1.jpg",
-		URL:       server.URL + "/image.jpg",
-	}}
-
-	hashes, err := downloader.Download(context.Background(), items)
-	require.NoError(t, err, "Download should succeed")
-
-	// Should make exactly 1 HTTP request because corrupt file is replaced by immediate retry
-	assert.Equal(t, int32(1), atomic.LoadInt32(&requestCount), "Should make exactly 1 HTTP request")
-
-	// Verify the file is now valid
-	content, readErr := os.ReadFile(targetFile)
-	require.NoError(t, readErr, "Should be able to read file")
-	assert.Equal(t, validData, content, "File should contain valid data")
-
-	assert.NotEmpty(t, hashes["retryimmed"], "Hash should be returned")
 }

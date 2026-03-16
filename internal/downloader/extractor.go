@@ -51,6 +51,7 @@ type Downloadable struct {
 	MediaType string
 	Subreddit string
 	Hash      string
+	ItemIndex int // Gallery item index (-1 for single items, 0+ for gallery items)
 }
 
 type Extractor struct {
@@ -192,6 +193,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 			Filename:  filename,
 			MediaType: mediaType,
 			Subreddit: post.Subreddit,
+			ItemIndex: i, // 0-based gallery index
 		})
 	}
 
@@ -237,6 +239,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 			Filename:  filename,
 			MediaType: mediaType,
 			Subreddit: post.Subreddit,
+			ItemIndex: i, // 0-based gallery index
 		})
 	}
 
@@ -528,12 +531,18 @@ func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, me
 			resolvedType = mediaType
 		}
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(urls))
+		// Use -1 for single items, 0+ for gallery items
+		itemIndex := -1
+		if len(urls) > 1 {
+			itemIndex = i
+		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
 			Filename:  filename,
 			MediaType: resolvedType,
 			Subreddit: post.Subreddit,
+			ItemIndex: itemIndex,
 		})
 	}
 

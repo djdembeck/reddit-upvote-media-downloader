@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -640,7 +641,7 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 	hash, err = CalculateFileHash(existingFile)
 	if err != nil {
 		d.logger.Error("failed to hash existing file", "path", existingFile, "error", err)
-		return "", false, false, err
+		return "", false, false, fmt.Errorf("failed to hash file %s: %w", existingFile, err)
 	}
 
 	// Check for known bad hashes (corrupted/error content from old bugs)
@@ -769,18 +770,11 @@ func extractGalleryIndex(filename string) string {
 }
 
 // itemHashKey generates a unique key for storing/retrieving item hashes.
-// For single-item posts, uses the PostID directly.
-// For gallery items (identified by index in filename), includes the index.
+// For single-item posts (ItemIndex < 0), uses the PostID directly.
+// For gallery items (ItemIndex >= 0), includes the index (e.g., "postid_0", "postid_1").
 func itemHashKey(item Downloadable) string {
-	// Extract index from filename if present (gallery items have _{index}_ pattern)
-	// Filename format: {title}_{index}_{postID}.{ext} for galleries
-	base := strings.TrimSuffix(item.Filename, filepath.Ext(item.Filename))
-	parts := strings.Split(base, "_")
-	if len(parts) >= 2 {
-		// Check if second-to-last part is a number (gallery index)
-		if idx := parts[len(parts)-2]; isNumeric(idx) {
-			return item.PostID + "_" + idx
-		}
+	if item.ItemIndex >= 0 {
+		return item.PostID + "_" + strconv.Itoa(item.ItemIndex)
 	}
 	return item.PostID
 }
