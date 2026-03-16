@@ -25,6 +25,7 @@ const (
 	defaultOutputDir      = "output"
 	defaultBackoffBase    = 500 * time.Millisecond
 	errReasonKnownBadHash = "corrupted content (known bad hash)"
+	maxImmediateRetries   = 5 // Maximum number of immediate retries to prevent infinite loops
 )
 
 // errRetryImmediately is returned when an existing corrupt file was removed
@@ -215,6 +216,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	filePath := filepath.Join(outputDir, filename)
 	var lastErr error
+	immediateRetryCount := 0
 	for attempt := 1; attempt <= d.config.Retries; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return "", false, err
@@ -281,16 +283,28 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 			return hash, false, nil
 		}
-		// If corrupt file was removed, retry immediately
+		// If corrupt file was removed, retry immediately (bounded to prevent infinite loops)
 		if errors.Is(err, errRetryImmediately) {
+			immediateRetryCount++
+			if immediateRetryCount > maxImmediateRetries {
+				d.logger.Debug("max immediate retries exceeded, treating as failure",
+					"file", filePath,
+					"post_id", item.PostID,
+					"immediate_retry_count", immediateRetryCount,
+				)
+				return "", false, fmt.Errorf("max immediate retries exceeded for post %s: corrupt file keeps reappearing at %s", item.PostID, filePath)
+			}
 			d.logger.Debug("immediate retry triggered due to errRetryImmediately",
 				"file", filePath,
 				"post_id", item.PostID,
 				"attempt", attempt,
+				"immediate_retry_count", immediateRetryCount,
 			)
 			attempt-- // Don't count immediate retries against the limit
 			continue
 		}
+		// Reset immediate retry counter on successful operations and other error paths
+		immediateRetryCount = 0
 		lastErr = err
 		// Don't retry on permanent validation errors
 		var validationErr ValidationError
