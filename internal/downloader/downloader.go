@@ -27,6 +27,10 @@ const (
 	errReasonKnownBadHash = "corrupted content (known bad hash)"
 )
 
+// errRetryImmediately is returned when an existing corrupt file was removed
+// and the download should be retried immediately without counting as an attempt.
+var errRetryImmediately = errors.New("corrupt file removed, retrying immediately")
+
 // knownBadHashes contains SHA256 hashes of files known to be corrupted/error content from old bugs.
 // These files are automatically removed and marked as permanently failed.
 // Note: Tests that modify this map must NOT use t.Parallel() as there's no synchronization.
@@ -266,6 +270,10 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 			return hash, false, nil
 		}
+		// If corrupt file was removed, retry immediately
+		if err == errRetryImmediately {
+			continue
+		}
 		lastErr = err
 		// Don't retry on permanent validation errors
 		var validationErr ValidationError
@@ -331,7 +339,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 				return fmt.Errorf("existing file validation failed: %w", validateErr)
 			}
 			if !isLocalReuse {
-				return errors.New("existing file was corrupt and removed, retry needed")
+				// Return sentinel error to trigger immediate retry without incrementing attempt counter
+				return errRetryImmediately
 			}
 			return nil
 		}
