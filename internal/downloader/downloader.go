@@ -114,7 +114,8 @@ func (d *Downloader) Extract(ctx context.Context, posts []reddit.RedditPost) ([]
 }
 
 // Download downloads media items concurrently with retry logic and deduplication.
-// Returns a map of post IDs to their file hashes.
+// Returns a map of post IDs to their file hashes. For posts with multiple items (galleries),
+// hashes are stored with a unique key per item to prevent overwrites.
 func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[string]string, error) {
 	hashes := make(map[string]string)
 
@@ -145,15 +146,14 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 				mu.Unlock()
 				return err
 			}
-			// Record the post as handled, even if it's a duplicate
-			// For duplicates, we'll store the hash with a sentinel marker
 			mu.Lock()
-			if hash != "" && isDuplicate {
-				// For duplicates, send a sentinel value that indicates duplicate
-				// Use a special hash prefix to mark duplicates
-				hashes[item.PostID] = "DUPLICATE:" + hash
-			} else if hash != "" {
-				hashes[item.PostID] = hash
+			if hash != "" {
+				key := itemHashKey(item)
+				if isDuplicate {
+					hashes[key] = "DUPLICATE:" + hash
+				} else {
+					hashes[key] = hash
+				}
 			}
 			mu.Unlock()
 			return nil
@@ -204,13 +204,12 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		return "", false, fmt.Errorf("create subreddit directory: %w", err)
 	}
 
-	// Check if any file containing this post ID already exists (bdfr-html style matching)
-	hash, isLocalReuse, _, err := d.checkAndHandleExistingFile(ctx, outputDir, item.PostID)
+	// Check if the expected file already exists
+	hash, isLocalReuse, _, err := d.checkAndHandleExistingFile(ctx, outputDir, item.PostID, filename)
 	if err != nil {
 		return "", false, err
 	}
 	if isLocalReuse {
-		// Local file reuse is not a DB duplicate, so return false for isDuplicate
 		return hash, false, nil
 	}
 
@@ -221,8 +220,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
-		// Re-check for existing file before each attempt
-		hash, isLocalReuse, _, err = d.checkAndHandleExistingFile(ctx, outputDir, item.PostID)
+		hash, isLocalReuse, _, err = d.checkAndHandleExistingFile(ctx, outputDir, item.PostID, filename)
 		if err != nil {
 			return "", false, err
 		}
@@ -376,7 +374,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 				return nil
 			}
 
-			_, isLocalReuse, wasRemoved, validateErr := d.checkAndHandleExistingFile(reqCtx, filepath.Dir(filePath), postID)
+			existingFilename := filepath.Base(filePath)
+			_, isLocalReuse, wasRemoved, validateErr := d.checkAndHandleExistingFile(reqCtx, filepath.Dir(filePath), postID, existingFilename)
 			if validateErr != nil {
 				return fmt.Errorf("existing file validation failed: %w", validateErr)
 			}
@@ -609,11 +608,11 @@ func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID st
 	return true, nil
 }
 
-// checkAndHandleExistingFile checks for existing files matching the postID and handles them.
+// checkAndHandleExistingFile checks for existing files matching the expected filename and handles them.
 // Returns the file hash, whether it's a valid local reuse, whether it was removed, and any error.
 // If the file is corrupt, it is removed and wasRemoved is set to true.
-func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
-	existingFile := findExistingFile(outputDir, postID)
+func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string, expectedFilename string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
+	existingFile := findExistingFile(outputDir, postID, expectedFilename)
 	if existingFile == "" {
 		return "", false, false, nil
 	}
@@ -719,22 +718,79 @@ func validateExistingFile(filePath, ext string) (err error) {
 	return nil
 }
 
-// findExistingFile searches for an existing file in the directory matching the postID.
+// findExistingFile searches for an existing file in the directory matching the expected filename.
+// For gallery items, only returns the file if it matches the specific index.
 // Supports bdfr-html filename patterns: {title}_{POSTID}.ext or {title}_{index}_{POSTID}.ext
-func findExistingFile(dir, postID string) string {
+func findExistingFile(dir, postID string, expectedFilename string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
+
+	// Extract the expected gallery index if present
+	expectedIdx := extractGalleryIndex(expectedFilename)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		filename := entry.Name()
 		matches := storage.FilenamePattern.FindStringSubmatch(filename)
-		if matches != nil && strings.ToLower(matches[1]) == strings.ToLower(postID) {
-			return filepath.Join(dir, filename)
+		if matches == nil || !strings.EqualFold(matches[1], postID) {
+			continue
 		}
+
+		// For gallery items, verify the index matches
+		if expectedIdx != "" {
+			existingIdx := extractGalleryIndex(filename)
+			if existingIdx != expectedIdx {
+				continue
+			}
+		}
+
+		return filepath.Join(dir, filename)
 	}
 	return ""
+}
+
+// extractGalleryIndex extracts the gallery index from a filename.
+// For "title_1_postid.ext" returns "1", for "title_postid.ext" returns "".
+func extractGalleryIndex(filename string) string {
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+	parts := strings.Split(base, "_")
+	if len(parts) < 3 {
+		return ""
+	}
+	// Check if the part before the last (postID) is numeric
+	if idx := parts[len(parts)-2]; isNumeric(idx) {
+		return idx
+	}
+	return ""
+}
+
+// itemHashKey generates a unique key for storing/retrieving item hashes.
+// For single-item posts, uses the PostID directly.
+// For gallery items (identified by index in filename), includes the index.
+func itemHashKey(item Downloadable) string {
+	// Extract index from filename if present (gallery items have _{index}_ pattern)
+	// Filename format: {title}_{index}_{postID}.{ext} for galleries
+	base := strings.TrimSuffix(item.Filename, filepath.Ext(item.Filename))
+	parts := strings.Split(base, "_")
+	if len(parts) >= 2 {
+		// Check if second-to-last part is a number (gallery index)
+		if idx := parts[len(parts)-2]; isNumeric(idx) {
+			return item.PostID + "_" + idx
+		}
+	}
+	return item.PostID
+}
+
+// isNumeric checks if a string contains only digits.
+func isNumeric(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }

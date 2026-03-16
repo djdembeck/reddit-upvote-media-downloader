@@ -1527,7 +1527,7 @@ func TestCheckAndHandleExistingFile(t *testing.T) {
 				require.NoError(t, os.WriteFile(filePath, tt.fileContent, 0644))
 			}
 
-			hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "abcdef")
+			hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "abcdef", "abcdef.jpg")
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -1609,7 +1609,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 		UserAgent: "test-agent",
 	}, db)
 
-	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "badhash")
+	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "badhash", "badhash.jpg")
 
 	// Should return an error for known bad hash
 	require.Error(t, err, "should error for known bad hash")
@@ -1646,7 +1646,7 @@ func TestCheckAndHandleExistingFile_ValidFile(t *testing.T) {
 		UserAgent: "test-agent",
 	}, nil)
 
-	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "validfile")
+	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "validfile", "validfile_1.jpg")
 
 	// File should be found and processed normally
 	require.NoError(t, err)

@@ -23,6 +23,7 @@ var errGone = errors.New("resource gone (410)")
 
 const (
 	defaultUserAgent = "reddit-media-downloader/1.0"
+	maxBodyBytes     = 10 * 1024 * 1024 // 10MB max response body size
 )
 
 var (
@@ -413,7 +414,6 @@ func (e *Extractor) fetchRedgifsAPI(ctx context.Context, apiURL string) (string,
 	return "", errors.New("redgifs API did not return mp4 URL")
 }
 
-// fetchText fetches the text content from a URL.
 func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -435,9 +435,13 @@ func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	limitedReader := io.LimitReader(resp.Body, maxBodyBytes+1)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(body)) > maxBodyBytes {
+		return "", fmt.Errorf("response body exceeds maximum size of %d bytes", maxBodyBytes)
 	}
 
 	return string(body), nil
@@ -465,9 +469,13 @@ func (e *Extractor) fetchJSON(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	limitedReader := io.LimitReader(resp.Body, maxBodyBytes+1)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(body)) > maxBodyBytes {
+		return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxBodyBytes)
 	}
 
 	return body, nil

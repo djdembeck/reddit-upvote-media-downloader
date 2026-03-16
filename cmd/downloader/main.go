@@ -512,9 +512,9 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	// Collect any save errors to prevent finalizing full_sync_once on persistence failures
 	var firstSaveErr error
 	for _, post := range newPosts {
-		if hash, ok := hashes[post.ID]; ok {
+		hash := findHashForPost(hashes, post.ID)
+		if hash != "" {
 			post.DownloadedAt = time.Now()
-			// Strip DUPLICATE: prefix if present before saving to database
 			if strings.HasPrefix(hash, "DUPLICATE:") {
 				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
 			} else {
@@ -602,4 +602,26 @@ func handleAuth(cfg *config.Config) error {
 	}
 	fmt.Println("Token written to ./refresh_token.txt - please secure this file!")
 	return nil
+}
+
+func findHashForPost(hashes map[string]string, postID string) string {
+	if hash, ok := hashes[postID]; ok {
+		return hash
+	}
+	for key, hash := range hashes {
+		parts := strings.Split(key, "_")
+		if len(parts) == 2 && parts[0] == postID && isNumeric(parts[1]) {
+			return hash
+		}
+	}
+	return ""
+}
+
+func isNumeric(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
