@@ -50,7 +50,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"access_token":  "test_access_token",
 				"token_type":    "bearer",
 				"expires_in":    3600,
@@ -69,7 +69,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(createMockListing("upvoted", 3))
+			_ = json.NewEncoder(w).Encode(createMockListing("upvoted", 3))
 			return
 		}
 
@@ -82,7 +82,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(createMockListing("saved", 2))
+			_ = json.NewEncoder(w).Encode(createMockListing("saved", 2))
 			return
 		}
 
@@ -650,7 +650,7 @@ func TestFullMockFlow(t *testing.T) {
 
 			tokenIssued = true
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"access_token": "mock_access_token",
 				"token_type":   "bearer",
 				"expires_in":   3600,
@@ -687,7 +687,7 @@ func TestFullMockFlow(t *testing.T) {
 					},
 				},
 			}
-			json.NewEncoder(w).Encode(listing)
+			_ = json.NewEncoder(w).Encode(listing)
 			return
 		}
 
@@ -739,6 +739,6 @@ func BenchmarkRateLimiter_Wait(b *testing.B) {
 	ctx := context.Background()
 
 	for i := 0; i < b.N; i++ {
-		rl.Wait(ctx)
+		_ = rl.Wait(ctx)
 	}
 }

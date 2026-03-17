@@ -217,7 +217,7 @@ func TestExtractorRedditVideoDash(t *testing.T) {
 func TestExtractorImgurPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintln(w, `<meta property="og:image" content="https://i.imgur.com/test.jpg">`)
+		_, _ = fmt.Fprintln(w, `<meta property="og:image" content="https://i.imgur.com/test.jpg">`)
 	}))
 	defer server.Close()
 
@@ -254,7 +254,7 @@ func TestExtractorRedgifsAPI(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(w).Encode(payload)
+		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	defer server.Close()
 
@@ -355,7 +355,7 @@ func TestDownloaderRetries(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -398,7 +398,7 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -447,7 +447,7 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 		<-block
 		atomic.AddInt32(&active, -1)
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -493,8 +493,6 @@ type dedupTestSetup struct {
 	db           *storage.DB
 	server       *httptest.Server
 	downloader   *Downloader
-	existingFile string
-	existingHash string
 }
 
 func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup {
@@ -511,7 +509,7 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(serverContent)
+		_, _ = w.Write(serverContent)
 	}))
 
 	d := NewDownloader(Config{
@@ -534,7 +532,7 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 func (s *dedupTestSetup) cleanup() {
 	s.server.Close()
-	s.db.Close()
+	_ = s.db.Close()
 }
 
 func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, content []byte, postID string) string {
@@ -649,7 +647,7 @@ func TestDeduplication(t *testing.T) {
 			}}
 
 			if tt.triggerDBError {
-				setup.db.Close()
+				_ = setup.db.Close()
 			}
 
 			hashes, err := setup.downloader.Download(context.Background(), items)
@@ -853,7 +851,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 					w.Header().Set("Content-Type", tc.contentType)
 				}
 				w.WriteHeader(tc.statusCode)
-				w.Write(tc.payload)
+				_, _ = w.Write(tc.payload)
 			}))
 			defer server.Close()
 
@@ -918,7 +916,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "video/mp4")
 			w.WriteHeader(http.StatusOK)
-			w.Write(validData)
+			_, _ = w.Write(validData)
 		}))
 		defer server.Close()
 
@@ -959,7 +957,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				atomic.AddInt32(&calls, 1)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
+				_, _ = fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
 			}))
 			defer server.Close()
 
@@ -994,7 +992,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				atomic.AddInt32(&calls, 1)
 				w.Header().Set("Content-Type", "video/mp4")
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content disguised as video</body></html>`)
+				_, _ = fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content disguised as video</body></html>`)
 			}))
 			defer server.Close()
 
@@ -1032,11 +1030,11 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				flusher.Flush()
 			}
 			// Write in chunks to ensure Content-Length isn't set
-			w.Write(smallData[:4])
+			_, _ = w.Write(smallData[:4])
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-			w.Write(smallData[4:])
+			_, _ = w.Write(smallData[4:])
 		}))
 		defer server.Close()
 
@@ -1122,7 +1120,7 @@ func TestDetectsCorruptExistingFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -1178,7 +1176,7 @@ func TestValidExistingFileSkipped(t *testing.T) {
 		atomic.AddInt32(&requestCount, 1)
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -1250,7 +1248,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
-		w.Write(validTestData)
+		_, _ = w.Write(validTestData)
 	}))
 	defer server.Close()
 
@@ -1259,7 +1257,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	dbPath := filepath.Join(dbDir, "test.db")
 	db, err := storage.NewDB(dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Save the post to the database first (required for IncrementRetry to work)
 	err = db.SavePost(context.Background(), &storage.Post{
@@ -1345,7 +1343,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 	dbPath := filepath.Join(dbDir, "test.db")
 	db, err := storage.NewDB(dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	err = db.SavePost(context.Background(), &storage.Post{
 		ID:        "existingbad",
@@ -1512,7 +1510,7 @@ func TestErrRetryImmediately(t *testing.T) {
 				atomic.AddInt32(&requestCount, 1)
 				w.Header().Set("Content-Type", "image/jpeg")
 				w.WriteHeader(http.StatusOK)
-				w.Write(validData)
+				_, _ = w.Write(validData)
 			}))
 			defer server.Close()
 
@@ -1689,7 +1687,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 	dbPath := filepath.Join(dbDir, "test.db")
 	db, err := storage.NewDB(dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Save post to database
 	err = db.SavePost(context.Background(), &storage.Post{
