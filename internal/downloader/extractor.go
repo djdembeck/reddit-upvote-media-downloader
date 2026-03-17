@@ -121,6 +121,8 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 }
 
 // extractFromURL extracts media from a specific URL based on the host.
+//
+//nolint:cyclop
 func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {

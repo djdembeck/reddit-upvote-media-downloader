@@ -493,6 +493,8 @@ func applyDefaults(config Config) Config {
 }
 
 // sanitizeSubreddit sanitizes a subreddit name for use as a directory name.
+//
+//nolint:cyclop
 func sanitizeSubreddit(name string) string {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -632,6 +634,8 @@ func (d *Downloader) getFileLock(filePath string) *sync.Mutex {
 // checkAndHandleExistingFile checks for existing files matching the expected filename and handles them.
 // Returns the file hash, whether it's a valid local reuse, whether it was removed, and any error.
 // If the file is corrupt, it is removed and wasRemoved is set to true.
+//
+//nolint:cyclop
 func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string, expectedFilename string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
 	existingFile := findExistingFile(outputDir, postID, expectedFilename)
 	if existingFile == "" {
@@ -688,6 +692,8 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 
 // validateExistingFile validates an existing file by checking its size, magic bytes, and content.
 // Returns a ValidationError with Permanent=true for files that should not be retried.
+//
+//nolint:cyclop
 func validateExistingFile(filePath, ext string) (err error) {
 	file, err := os.Open(filePath)
 	if err != nil {

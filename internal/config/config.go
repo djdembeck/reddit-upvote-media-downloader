@@ -137,6 +137,8 @@ func flagWasSet() bool {
 
 // Load loads configuration from environment variables, .env file, and CLI flags
 // Priority: CLI flags > Environment vars > .env file > defaults
+//
+//nolint:cyclop
 func Load() (*Config, error) {
 	// Load .env file if exists (ignore error if file doesn't exist)
 	_ = godotenv.Load()

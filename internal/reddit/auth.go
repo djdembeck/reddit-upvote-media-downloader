@@ -147,7 +147,7 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 
 		// Exchange code for token
 		code := r.URL.Query().Get("code")
-		token, err := exchangeCodeForToken(code, oauthConfig)
+		token, err := exchangeCodeForToken(r.Context(), code, oauthConfig)
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
 			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
@@ -193,9 +193,8 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 }
 
 // exchangeCodeForToken exchanges an authorization code for a refresh token.
-func exchangeCodeForToken(code string, oauthConfig *oauth2.Config) (string, error) {
-	// Use oauth2.Config.Exchange with context
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func exchangeCodeForToken(ctx context.Context, code string, oauthConfig *oauth2.Config) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	token, err := oauthConfig.Exchange(ctx, code)

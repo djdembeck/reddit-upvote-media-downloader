@@ -572,8 +572,7 @@ func TestDuplicateHandling(t *testing.T) {
 				require.NoError(t, os.Rename(file1, newFile1), "Failed to rename file1")
 				require.NoError(t, os.Rename(file2, newFile2), "Failed to rename file2")
 
-				_ = newFile1 // used for side effect only
-				_ = newFile2
+				file2 = newFile2
 			}
 
 			migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)

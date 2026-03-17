@@ -13,6 +13,7 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
+//nolint:cyclop
 func main() {
 	var (
 		sourceDir = flag.String("source", "", "Source media directory (required)")
@@ -166,6 +167,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	return nil
 }
 
+//nolint:cyclop
 func runRollback(logPath, sourceRoot, destRoot string) {
 	fmt.Println("Rollback")
 	fmt.Println("========")

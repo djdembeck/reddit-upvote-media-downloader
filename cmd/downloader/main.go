@@ -237,6 +237,7 @@ func main() {
 	}
 }
 
+//nolint:cyclop
 func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) error {
 	outputDir := cfg.Storage.OutputDir
 

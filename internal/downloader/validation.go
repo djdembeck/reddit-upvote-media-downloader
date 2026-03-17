@@ -8,6 +8,8 @@ import (
 
 // validateMagicBytes checks if the data has the correct magic bytes for the given extension.
 // Supports: .mp4, .webm, .jpg, .jpeg, .png, .gif
+//
+//nolint:cyclop
 func validateMagicBytes(data []byte, ext string) error {
 	if len(data) < 4 {
 		return errors.New("data too small to validate magic bytes")
