@@ -1,19 +1,13 @@
-version: "2"
-
 run:
   timeout: 5m
   allow-parallel-runners: true
 
 output:
-  formats:
-    text:
-      path: stdout
-      print-linter-name: true
-      print-issued-lines: true
+  format: colored-line-number
   sort-results: true
 
 linters:
-  default: none
+  disable-all: true
   enable:
     - errcheck
     - govet
@@ -72,169 +66,104 @@ linters:
     - wrapcheck
     - wsl
 
-  settings:
-    revive:
-      rules:
-        - name: exported
-          severity: warning
-        - name: package-comments
-          severity: warning
-        - name: blank-imports
-          severity: warning
-        - name: context-as-argument
-          severity: warning
-        - name: error-return
-          severity: warning
-        - name: error-strings
-          severity: warning
-        - name: increment-decrement
-          severity: warning
-        - name: receiver-naming
-          severity: warning
-        - name: struct-tag
-          severity: warning
-        - name: unexported-return
-          severity: warning
-        - name: unused-parameter
-          severity: warning
-        - name: use-any
-          severity: warning
-        - name: var-declaration
-          severity: warning
-        - name: waitgroup-by-value
-          severity: warning
-
-    govet:
-      enable-all: true
-      disable:
-        - shadow
-
-    errcheck:
-      check-type-assertions: true
-      check-blank: true
-
-    goimports:
-      local-prefixes:
-        - github.com/djdembeck/reddit-upvote-media-downloader
-
-    gocyclo:
-      min-complexity: 15
-
-    dupl:
-      threshold: 100
-
-    lll:
-      line-length: 120
-      tab-width: 4
-
-    misspell:
-      locale: US
-
-    staticcheck:
-      checks:
-        - "all"
-      dot-import-whitelist:
-        - github.com/onsi/ginkgo
-        - github.com/onsi/gomega
-      initialisms:
-        - "ACL"
-        - "API"
-        - "ASCII"
-        - "CPU"
-        - "CSS"
-        - "DNS"
-        - "EOF"
-        - "GUID"
-        - "HTML"
-        - "HTTP"
-        - "HTTPS"
-        - "ID"
-        - "IP"
-        - "JSON"
-        - "QPS"
-        - "RAM"
-        - "RPC"
-        - "SLA"
-        - "SMTP"
-        - "SQL"
-        - "SSH"
-        - "TCP"
-        - "TLS"
-        - "TTL"
-        - "UDP"
-        - "UI"
-        - "GID"
-        - "UID"
-        - "UUID"
-        - "URI"
-        - "URL"
-        - "UTF8"
-        - "VM"
-        - "XML"
-        - "XMPP"
-        - "XSRF"
-        - "XSS"
-
-    unparam:
-      check-exported: false
-
-  exclusions:
-    generated: lax
-    presets:
-      - comments
-      - common-false-positives
-      - legacy
-      - std-error-handling
+linters-settings:
+  revive:
     rules:
-      - path: _test\.go
-        linters:
-          - gocyclo
-          - errcheck
-          - dupl
-          - gosec
-          - lll
-          - cyclop
-          - nestif
+      - name: exported
+        severity: warning
+      - name: package-comments
+        severity: warning
+      - name: blank-imports
+        severity: warning
+      - name: context-as-argument
+        severity: warning
+      - name: error-return
+        severity: warning
+      - name: error-strings
+        severity: warning
+      - name: increment-decrement
+        severity: warning
+      - name: receiver-naming
+        severity: warning
+      - name: struct-tag
+        severity: warning
+      - name: unexported-return
+        severity: warning
+      - name: unused-parameter
+        severity: warning
+      - name: use-any
+        severity: warning
+      - name: var-declaration
+        severity: warning
+      - name: waitgroup-by-value
+        severity: warning
 
-      - text: "weak cryptographic primitive"
-        linters:
-          - gosec
+  govet:
+    enable-all: true
+    disable:
+      - shadow
 
-      - path: _test\.go
-        text: "shadow"
-        linters:
-          - govet
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
 
-      - text: "non-wrapping format verb for fmt.Errorf"
-        linters:
-          - errorlint
+  goimports:
+    local-prefixes: github.com/djdembeck/reddit-upvote-media-downloader
 
-      - path: internal/
-        text: "should have a package comment"
-        linters:
-          - revive
-          - staticcheck
+  gocyclo:
+    min-complexity: 15
 
-    paths:
-      - vendor
-      - .git
+  dupl:
+    threshold: 100
+
+  lll:
+    line-length: 120
+    tab-width: 4
+
+  misspell:
+    locale: US
+
+  staticcheck:
+    checks:
+      - "all"
+
+  unparam:
+    check-exported: false
 
 issues:
   max-issues-per-linter: 50
   max-same-issues: 3
+  exclude-use-default: true
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - lll
+        - cyclop
+        - nestif
 
-formatters:
-  enable:
-    - gofmt
-    - goimports
-  settings:
-    gofmt:
-      simplify: true
-    goimports:
-      local-prefixes:
-        - github.com/djdembeck/reddit-upvote-media-downloader
-  exclusions:
-    generated: lax
-    paths:
-      - vendor
-      - .git
+    - text: "weak cryptographic primitive"
+      linters:
+        - gosec
+
+    - path: _test\.go
+      text: "shadow"
+      linters:
+        - govet
+
+    - text: "non-wrapping format verb for fmt.Errorf"
+      linters:
+        - errorlint
+
+    - path: internal/
+      text: "should have a package comment"
+      linters:
+        - revive
+        - staticcheck
+
+  exclude-dirs:
+    - vendor
+    - .git
