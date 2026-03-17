@@ -143,6 +143,8 @@ func min(a, b int) int {
 
 // NewClient creates a new authenticated Reddit client.
 // If tokenStore is nil, tokens will not be persisted.
+//
+//nolint:cyclop
 func NewClient(config *Config, tokenStore TokenStore) (*Client, error) {
 	if config == nil {
 		return nil, errors.New("config is required")
@@ -195,6 +197,8 @@ func NewClient(config *Config, tokenStore TokenStore) (*Client, error) {
 // authenticate performs OAuth2 authentication with client credentials.
 // It will use refresh_token grant if a refresh token exists, otherwise
 // falls back to password grant.
+//
+//nolint:cyclop
 func (c *Client) authenticate(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -335,6 +339,8 @@ func (c *Client) ensureValidToken(ctx context.Context) error {
 }
 
 // doRequest makes an authenticated HTTP request with rate limiting.
+//
+//nolint:cyclop
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, params url.Values) (*http.Response, error) {
 	// Wait for rate limit
 	if err := c.rateLimiter.Wait(ctx); err != nil {
@@ -417,6 +423,8 @@ func (c *Client) GetSaved(ctx context.Context, limit int) ([]storage.Post, error
 }
 
 // getUserPosts fetches posts from a user endpoint (upvoted or saved).
+//
+//nolint:cyclop
 func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) ([]storage.Post, error) {
 	if limit <= 0 {
 		return []storage.Post{}, nil

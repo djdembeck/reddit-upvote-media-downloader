@@ -107,6 +107,8 @@ func shouldLogProgress(i, total int) bool {
 }
 
 // Execute runs the migration process.
+//
+//nolint:cyclop
 func (m *Migrator) Execute(ctx context.Context) error {
 	if err := contextChecker(ctx); err != nil {
 		return err

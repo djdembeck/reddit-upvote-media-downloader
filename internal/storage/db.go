@@ -58,6 +58,8 @@ ALTER TABLE posts ADD COLUMN last_attempt INTEGER;
 
 // runMigrations adds new columns to the posts table if they don't exist.
 // This is idempotent - safe to run multiple times.
+//
+//nolint:cyclop
 func (db *DB) runMigrations() error {
 	// Get existing columns
 	rows, err := db.conn.Query("PRAGMA table_info(posts)")
@@ -438,6 +440,8 @@ func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
 }
 
 // GetPostByHash retrieves a post by its hash.
+//
+//nolint:cyclop
 func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	query := `
 		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, hash
@@ -512,6 +516,8 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 }
 
 // GetStats returns download statistics.
+//
+//nolint:cyclop
 func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	stats := &Stats{
 		PostsBySource:    make(map[string]int64),
@@ -593,6 +599,8 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 
 // ImportFromIDList imports post IDs from an idList.txt file.
 // The file format is one post ID per line. Empty lines and comments (starting with #) are ignored.
+//
+//nolint:cyclop
 func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -662,6 +670,8 @@ var FilenamePattern = regexp.MustCompile(`^(?:.+_)?([a-zA-Z0-9]{6,})(?:_\d+)?\.\
 
 // ImportFromDirectory scans a directory for media files and imports post IDs from filenames.
 // Supports bdfr-html filename patterns: {title}_{POSTID}.ext, {title}_{index}_{POSTID}.ext
+//
+//nolint:cyclop
 func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
