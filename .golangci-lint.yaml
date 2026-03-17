@@ -5,11 +5,14 @@ run:
   allow-parallel-runners: true
 
 output:
-  format: colored-line-number
-  sort-results: true
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - govet
@@ -68,104 +71,110 @@ linters:
     - wrapcheck
     - wsl
 
-linters-settings:
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+        - name: package-comments
+          severity: warning
+        - name: blank-imports
+          severity: warning
+        - name: context-as-argument
+          severity: warning
+        - name: error-return
+          severity: warning
+        - name: error-strings
+          severity: warning
+        - name: increment-decrement
+          severity: warning
+        - name: receiver-naming
+          severity: warning
+        - name: struct-tag
+          severity: warning
+        - name: unexported-return
+          severity: warning
+        - name: unused-parameter
+          severity: warning
+        - name: use-any
+          severity: warning
+        - name: var-declaration
+          severity: warning
+        - name: waitgroup-by-value
+          severity: warning
+
+    govet:
+      enable-all: true
+      disable:
+        - shadow
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    gocyclo:
+      min-complexity: 15
+
+    dupl:
+      threshold: 100
+
+    lll:
+      line-length: 120
+      tab-width: 4
+
+    misspell:
+      locale: US
+
+    staticcheck:
+      checks:
+        - "all"
+
+    unparam:
+      check-exported: false
+
+  exclusions:
+    paths:
+      - vendor
+      - .git
     rules:
-      - name: exported
-        severity: warning
-      - name: package-comments
-        severity: warning
-      - name: blank-imports
-        severity: warning
-      - name: context-as-argument
-        severity: warning
-      - name: error-return
-        severity: warning
-      - name: error-strings
-        severity: warning
-      - name: increment-decrement
-        severity: warning
-      - name: receiver-naming
-        severity: warning
-      - name: struct-tag
-        severity: warning
-      - name: unexported-return
-        severity: warning
-      - name: unused-parameter
-        severity: warning
-      - name: use-any
-        severity: warning
-      - name: var-declaration
-        severity: warning
-      - name: waitgroup-by-value
-        severity: warning
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - lll
+          - cyclop
+          - nestif
 
-  govet:
-    enable-all: true
-    disable:
-      - shadow
+      - text: "weak cryptographic primitive"
+        linters:
+          - gosec
 
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
+      - path: _test\.go
+        text: "shadow"
+        linters:
+          - govet
 
-  goimports:
-    local-prefixes: github.com/djdembeck/reddit-upvote-media-downloader
+      - text: "non-wrapping format verb for fmt.Errorf"
+        linters:
+          - errorlint
 
-  gocyclo:
-    min-complexity: 15
+      - path: internal/
+        text: "should have a package comment"
+        linters:
+          - revive
+          - staticcheck
 
-  dupl:
-    threshold: 100
-
-  lll:
-    line-length: 120
-    tab-width: 4
-
-  misspell:
-    locale: US
-
-  staticcheck:
-    checks:
-      - "all"
-
-  unparam:
-    check-exported: false
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/djdembeck/reddit-upvote-media-downloader
 
 issues:
   max-issues-per-linter: 50
   max-same-issues: 3
-  exclude-use-default: true
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - lll
-        - cyclop
-        - nestif
-
-    - text: "weak cryptographic primitive"
-      linters:
-        - gosec
-
-    - path: _test\.go
-      text: "shadow"
-      linters:
-        - govet
-
-    - text: "non-wrapping format verb for fmt.Errorf"
-      linters:
-        - errorlint
-
-    - path: internal/
-      text: "should have a package comment"
-      linters:
-        - revive
-        - staticcheck
-
-  exclude-dirs:
-    - vendor
-    - .git
