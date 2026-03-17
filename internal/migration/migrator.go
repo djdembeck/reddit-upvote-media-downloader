@@ -26,6 +26,7 @@ func contextChecker(ctx context.Context) error {
 	}
 }
 
+// Migrator handles file reorganization from flat to subreddit-based structure.
 type Migrator struct {
 	SourceDir string
 	DestDir   string
@@ -37,12 +38,14 @@ type Migrator struct {
 	seenHashes map[string]FileHashInfo
 }
 
+// FileHashInfo tracks file hash information for duplicate detection.
 type FileHashInfo struct {
 	PostID     string
 	SourcePath string
 	Timestamp  time.Time
 }
 
+// NewMigrator creates a new Migrator instance.
 func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB) *Migrator {
 	m := &Migrator{
 		SourceDir: sourceDir,
@@ -103,6 +106,7 @@ func shouldLogProgress(i, total int) bool {
 	return (i+1)%100 == 0 || i == 0 || i == total-1
 }
 
+// Execute runs the migration process.
 func (m *Migrator) Execute(ctx context.Context) error {
 	if err := contextChecker(ctx); err != nil {
 		return err

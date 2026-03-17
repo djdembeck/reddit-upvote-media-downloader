@@ -44,6 +44,7 @@ var supportedExtensions = map[string]string{
 	".webm": "video",
 }
 
+// Downloadable represents a single media item extracted from a Reddit post.
 type Downloadable struct {
 	PostID    string
 	URL       string
@@ -54,6 +55,7 @@ type Downloadable struct {
 	ItemIndex int // Gallery item index (-1 for single items, 0+ for gallery items)
 }
 
+// Extractor extracts media URLs from Reddit posts.
 type Extractor struct {
 	client    *http.Client
 	userAgent string

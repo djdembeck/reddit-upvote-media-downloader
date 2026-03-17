@@ -30,15 +30,18 @@ type RedditPost struct {
 	URLOverride string                   `json:"url_overridden_by_dest"`
 }
 
+// GalleryData represents the gallery data structure from Reddit API.
 type GalleryData struct {
 	Items []GalleryItem `json:"items"`
 }
 
+// GalleryItem represents a single item in a Reddit gallery.
 type GalleryItem struct {
 	MediaID string `json:"media_id"`
 	ID      int    `json:"id"`
 }
 
+// MediaMetadata represents metadata for a media item in a gallery.
 type MediaMetadata struct {
 	Status   string               `json:"status"`
 	Kind     string               `json:"e"`
@@ -47,6 +50,7 @@ type MediaMetadata struct {
 	Previews []MediaMetadataImage `json:"p"`
 }
 
+// MediaMetadataImage represents image source information.
 type MediaMetadataImage struct {
 	URL string `json:"u"`
 	X   int    `json:"x"`

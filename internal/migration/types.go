@@ -2,6 +2,7 @@ package migration
 
 import "time"
 
+// PostInfo holds metadata extracted from HTML files.
 type PostInfo struct {
 	PostID     string
 	Subreddit  string
@@ -10,6 +11,7 @@ type PostInfo struct {
 	Hash       string // Optional: pre-computed hash for deduplication
 }
 
+// MigrationRecord represents a single file migration operation.
 type MigrationRecord struct {
 	PostID     string    `json:"post_id"`
 	SourcePath string    `json:"source_path"`
@@ -24,6 +26,7 @@ type MigrationRecord struct {
 	Hash       string    `json:"hash,omitempty"`
 }
 
+// MigrationLog contains all migration operations and statistics.
 type MigrationLog struct {
 	Version      string            `json:"version"`
 	Timestamp    time.Time         `json:"timestamp"`

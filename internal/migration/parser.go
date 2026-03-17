@@ -10,10 +10,12 @@ import (
 	"strings"
 )
 
+// HTMLParser parses bdfr-html files to extract post metadata.
 type HTMLParser struct {
 	PostMap map[string]PostInfo
 }
 
+// NewHTMLParser creates a new HTMLParser instance.
 func NewHTMLParser() *HTMLParser {
 	return &HTMLParser{
 		PostMap: make(map[string]PostInfo),

@@ -44,6 +44,7 @@ var knownBadHashes = map[string]bool{
 // Production code only reads from the map, so no locking is needed there.
 var knownBadHashesMu sync.Mutex
 
+// Config holds configuration options for the downloader.
 type Config struct {
 	OutputDir   string
 	Concurrency int
@@ -55,6 +56,7 @@ type Config struct {
 	Logger      *slog.Logger
 }
 
+// Downloader orchestrates media downloads from Reddit posts.
 type Downloader struct {
 	config    Config
 	extractor *Extractor

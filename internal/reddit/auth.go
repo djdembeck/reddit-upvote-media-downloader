@@ -56,7 +56,7 @@ func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, 
 		},
 		RedirectURL: fmt.Sprintf("http://127.0.0.1:%d/callback", port),
 		Scopes:      []string{"identity", "history", "read", "save"},
-}
+	}
 
 	// Build the authorization URL with duration=permanent to get refresh tokens
 	authURL := oauthConfig.AuthCodeURL(state, oauth2.SetAuthURLParam("duration", "permanent"))

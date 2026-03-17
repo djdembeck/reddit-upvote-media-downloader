@@ -11,11 +11,13 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
+// Rollback handles reverting file migrations.
 type Rollback struct {
 	LogPath string
 	DB      *storage.DB
 }
 
+// RollbackLog contains rollback operation results.
 type RollbackLog struct {
 	Timestamp    time.Time        `json:"timestamp"`
 	OriginalLog  string           `json:"original_log"`
@@ -24,6 +26,7 @@ type RollbackLog struct {
 	Operations   []RollbackRecord `json:"operations"`
 }
 
+// RollbackRecord represents a single rollback operation.
 type RollbackRecord struct {
 	PostID     string    `json:"post_id"`
 	SourcePath string    `json:"source_path"`
@@ -33,10 +36,12 @@ type RollbackRecord struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
+// NewRollback creates a new Rollback instance.
 func NewRollback(logPath string, db *storage.DB) *Rollback {
 	return &Rollback{LogPath: logPath, DB: db}
 }
 
+// Execute runs the rollback process.
 func (r *Rollback) Execute() (*RollbackLog, error) {
 	// Load migration log
 	file, err := os.Open(r.LogPath)
@@ -153,6 +158,8 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 
 	record.Status = "success"
 
+	// DB cleanup happens after file rollback. If DB delete fails, the file
+	// is still rolled back but the database record remains.
 	if r.DB != nil {
 		if err := r.DB.DeletePost(context.Background(), op.PostID); err != nil {
 			record.Status = "failed"

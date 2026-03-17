@@ -5,6 +5,7 @@ import (
 	"unicode"
 )
 
+// SanitizePath sanitizes a string for use as a filesystem path component.
 func SanitizePath(name string) string {
 	if name == "" {
 		return "unknown"
