@@ -29,7 +29,7 @@ func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 	require.NoError(t, err, "Failed to create test database")
 
 	cleanup := func() {
-		db.Close()
+		_ = db.Close()
 	}
 
 	return db, tempDir, cleanup
@@ -443,11 +443,11 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 			switch tc.name {
 			case "missing_file_after_backoff":
 				for i := 0; i < 1; i++ {
-					db.IncrementRetry(ctx, postID, "error")
+					_ = db.IncrementRetry(ctx, postID, "error")
 				}
 			case "exceeds_threshold":
 				for i := 0; i < 4; i++ {
-					db.IncrementRetry(ctx, postID, "error")
+					_ = db.IncrementRetry(ctx, postID, "error")
 				}
 			}
 
@@ -609,7 +609,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
 	if err != nil {
@@ -823,7 +823,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
@@ -935,7 +935,7 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
@@ -1018,7 +1018,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create database: %v", err)
 				}
 
-				return sourceDir, destDir, "", db, func() { db.Close() }
+				return sourceDir, destDir, "", db, func() { _ = db.Close() }
 			},
 			expectError:     false,
 			expectMovedPath: "testsubreddit/test_post_1r4wjj5.jpg",
@@ -1060,7 +1060,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create database: %v", err)
 				}
 
-				return sourceDir, destDir, "", db, func() { db.Close() }
+				return sourceDir, destDir, "", db, func() { _ = db.Close() }
 			},
 			expectError:     false,
 			expectMovedPath: "testsubreddit/test_post_1r4wjj5.jpg",
@@ -1078,7 +1078,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 				}
 
 				nonExistentDir := filepath.Join(tempDir, "nonexistent")
-				return nonExistentDir, destDir, "", db, func() { db.Close() }
+				return nonExistentDir, destDir, "", db, func() { _ = db.Close() }
 			},
 			expectError:  true,
 			expectErrMsg: "source directory does not exist",
@@ -1143,7 +1143,7 @@ func TestE2E_ReCheckMissingFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	existingFile := filepath.Join(outputDir, "existing.jpg")
 	missingFile := filepath.Join(outputDir, "missing.jpg")
@@ -1249,7 +1249,7 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
