@@ -123,6 +123,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		modTime time.Time
 	}
 	var files []fileEntry
+	var firstErr error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -133,6 +134,9 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		info, err := entry.Info()
 		if err != nil {
 			m.recordError(entry.Name(), "", "stat_file", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		files = append(files, fileEntry{
@@ -147,7 +151,6 @@ func (m *Migrator) Execute(ctx context.Context) error {
 	})
 
 	total := len(files)
-	var firstErr error
 	for i, f := range files {
 		if err := contextChecker(ctx); err != nil {
 			return err

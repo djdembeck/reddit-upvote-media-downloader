@@ -433,7 +433,8 @@ func TestRollbackPathEscaping(t *testing.T) {
 		},
 	}
 
-	logData, _ := json.Marshal(log)
+	logData, err := json.Marshal(log)
+	require.NoError(t, err)
 	if err := os.WriteFile(logPath, logData, 0644); err != nil {
 		t.Fatalf("Failed to write log file: %v", err)
 	}

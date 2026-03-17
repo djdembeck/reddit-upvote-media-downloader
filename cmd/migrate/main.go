@@ -30,7 +30,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error: --log-file required for rollback")
 			os.Exit(1)
 		}
-		runRollback(*logFile)
+		runRollback(*logFile, *sourceDir, *destDir)
 		return
 	}
 
@@ -51,10 +51,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	runMigration(*sourceDir, *destDir, *indexPath, *htmlDir, *logFile, *dryRun)
+	if err := runMigration(*sourceDir, *destDir, *indexPath, *htmlDir, *logFile, *dryRun); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
-func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun bool) {
+func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun bool) error {
 	ctx := context.Background()
 
 	fmt.Println("Reddit Media Migration Tool")
@@ -75,14 +78,12 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	if htmlDir != "" {
 		fmt.Println("Parsing HTML files...")
 		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("parse html files: %w", err)
 		}
 	} else {
 		fmt.Println("Parsing index.html...")
 		if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("parse index html: %w", err)
 		}
 	}
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
@@ -95,16 +96,14 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		var err error
 		db, err = storage.NewDB(dbPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("open database: %w", err)
 		}
 		defer db.Close()
 	}
 
 	if !dryRun {
 		if err := os.MkdirAll(destDir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating destination directory: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("create destination directory: %w", err)
 		}
 	}
 
@@ -119,19 +118,19 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	// Execute
 	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
 	if err := migrator.LoadExistingLog(ctx, logFile); err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading existing log: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("load existing log: %w", err)
 	}
 
+	var saveErr error
 	defer func() {
 		if err := migrator.SaveLog(ctx, logFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving log: %v\n", err)
+			saveErr = err
 		}
 	}()
 
 	if err := migrator.Execute(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Summary
@@ -148,12 +147,16 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		fmt.Println("\nDry run complete. Remove --dry-run to execute.")
 	}
 
-	if migrator.Log.ErrorCount > 0 {
-		os.Exit(1)
+	if saveErr != nil {
+		return fmt.Errorf("migration completed but failed to save log: %w", saveErr)
 	}
+	if migrator.Log.ErrorCount > 0 {
+		return fmt.Errorf("migration completed with %d errors", migrator.Log.ErrorCount)
+	}
+	return nil
 }
 
-func runRollback(logPath string) {
+func runRollback(logPath, sourceRoot, destRoot string) {
 	fmt.Println("Rollback")
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
@@ -171,12 +174,20 @@ func runRollback(logPath string) {
 		defer db.Close()
 	}
 
-	sourceRoot, destRoot := readRootsFromLog(logPath)
-	if sourceRoot == "" || destRoot == "" {
-		fmt.Fprintln(os.Stderr, "Error: Could not read source/dest roots from log file")
+	// Read roots from log for audit purposes only
+	logSourceRoot, logDestRoot := readRootsFromLog(logPath)
+
+	// Validate that CLI roots match log roots (audit check)
+	if logSourceRoot != "" && logSourceRoot != sourceRoot {
+		fmt.Fprintf(os.Stderr, "Error: Log source directory (%s) does not match CLI source directory (%s)\n", logSourceRoot, sourceRoot)
+		os.Exit(1)
+	}
+	if logDestRoot != "" && logDestRoot != destRoot {
+		fmt.Fprintf(os.Stderr, "Error: Log destination directory (%s) does not match CLI destination directory (%s)\n", logDestRoot, destRoot)
 		os.Exit(1)
 	}
 
+	// Use CLI roots as authoritative (not from log)
 	rb := migration.NewRollback(logPath, db, sourceRoot, destRoot)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
