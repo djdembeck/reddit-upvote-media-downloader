@@ -369,9 +369,7 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 	}
 	host := strings.ToLower(parsed.Host)
 	mediaID := strings.Trim(strings.Trim(parsed.Path, "/"), " ")
-	if strings.HasPrefix(mediaID, "watch/") {
-		mediaID = strings.TrimPrefix(mediaID, "watch/")
-	}
+	mediaID = strings.TrimPrefix(mediaID, "watch/")
 	if mediaID == "" {
 		return "", errors.New("missing media ID")
 	}
@@ -441,7 +439,7 @@ func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusGone {
 		return "", errGone
@@ -475,7 +473,7 @@ func (e *Extractor) fetchJSON(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusGone {
 		return nil, errGone
@@ -525,7 +523,7 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return resp.StatusCode == http.StatusOK, nil
 }
