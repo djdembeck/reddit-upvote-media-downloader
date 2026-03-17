@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
@@ -13,8 +14,10 @@ import (
 
 // Rollback handles reverting file migrations.
 type Rollback struct {
-	LogPath string
-	DB      *storage.DB
+	LogPath    string
+	DB         *storage.DB
+	SourceRoot string
+	DestRoot   string
 }
 
 // RollbackLog contains rollback operation results.
@@ -36,14 +39,16 @@ type RollbackRecord struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
-// NewRollback creates a new Rollback instance.
-func NewRollback(logPath string, db *storage.DB) *Rollback {
-	return &Rollback{LogPath: logPath, DB: db}
+func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string) *Rollback {
+	return &Rollback{
+		LogPath:    logPath,
+		DB:         db,
+		SourceRoot: sourceRoot,
+		DestRoot:   destRoot,
+	}
 }
 
-// Execute runs the rollback process.
-func (r *Rollback) Execute() (*RollbackLog, error) {
-	// Load migration log
+func (r *Rollback) loadLog() (*MigrationLog, error) {
 	file, err := os.Open(r.LogPath)
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)
@@ -54,6 +59,21 @@ func (r *Rollback) Execute() (*RollbackLog, error) {
 	if err := json.NewDecoder(file).Decode(&migLog); err != nil {
 		return nil, fmt.Errorf("decode log: %w", err)
 	}
+	return &migLog, nil
+}
+
+func (r *Rollback) Execute(ctx context.Context) (*RollbackLog, error) {
+	migLog, err := r.loadLog()
+	if err != nil {
+		return nil, err
+	}
+
+	if r.SourceRoot == "" {
+		r.SourceRoot = migLog.SourceDir
+	}
+	if r.DestRoot == "" {
+		r.DestRoot = migLog.DestDir
+	}
 
 	rollbackLog := &RollbackLog{
 		Timestamp:   time.Now(),
@@ -61,14 +81,13 @@ func (r *Rollback) Execute() (*RollbackLog, error) {
 		Operations:  []RollbackRecord{},
 	}
 
-	// Process in reverse order
 	for i := len(migLog.Operations) - 1; i >= 0; i-- {
 		op := migLog.Operations[i]
 		if op.Status != "moved" && op.Status != "moved_with_warning" {
 			continue
 		}
 
-		record := r.rollbackOperation(op)
+		record := r.rollbackOperation(ctx, op)
 		rollbackLog.Operations = append(rollbackLog.Operations, record)
 
 		if record.Status == "success" {
@@ -81,12 +100,24 @@ func (r *Rollback) Execute() (*RollbackLog, error) {
 	return rollbackLog, nil
 }
 
-func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
+func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) RollbackRecord {
 	record := RollbackRecord{
 		PostID:     op.PostID,
 		SourcePath: op.DestPath,
 		DestPath:   op.SourcePath,
 		Timestamp:  time.Now(),
+	}
+
+	// Validate paths are within trusted roots
+	if err := r.validatePath(op.SourcePath); err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("invalid source path: %v", err)
+		return record
+	}
+	if err := r.validatePath(op.DestPath); err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("invalid dest path: %v", err)
+		return record
 	}
 
 	// Check file exists
@@ -161,13 +192,49 @@ func (r *Rollback) rollbackOperation(op MigrationRecord) RollbackRecord {
 	// DB cleanup happens after file rollback. If DB delete fails, the file
 	// is still rolled back but the database record remains.
 	if r.DB != nil {
-		if err := r.DB.DeletePost(context.Background(), op.PostID); err != nil {
+		// Use a timeout context for DB operations
+		ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := r.DB.DeletePost(ctxTimeout, op.PostID); err != nil {
 			record.Status = "failed"
 			record.Error = fmt.Sprintf("db delete failed: %v", err)
 		}
 	}
 
 	return record
+}
+
+// validatePath ensures a path is absolute and within the trusted root directories.
+func (r *Rollback) validatePath(pathStr string) error {
+	// Clean and make absolute
+	absPath, err := filepath.Abs(filepath.Clean(pathStr))
+	if err != nil {
+		return fmt.Errorf("resolve absolute path: %w", err)
+	}
+
+	// Check if path is within source or dest root
+	if r.SourceRoot != "" {
+		sourceRootAbs, err := filepath.Abs(filepath.Clean(r.SourceRoot))
+		if err != nil {
+			return fmt.Errorf("resolve source root: %w", err)
+		}
+		sourceRootAbs += string(filepath.Separator)
+		if strings.HasPrefix(absPath+string(filepath.Separator), sourceRootAbs) {
+			return nil
+		}
+	}
+	if r.DestRoot != "" {
+		destRootAbs, err := filepath.Abs(filepath.Clean(r.DestRoot))
+		if err != nil {
+			return fmt.Errorf("resolve dest root: %w", err)
+		}
+		destRootAbs += string(filepath.Separator)
+		if strings.HasPrefix(absPath+string(filepath.Separator), destRootAbs) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("path %s escapes trusted roots", absPath)
 }
 
 func SaveRollbackLog(log *RollbackLog, path string) error {

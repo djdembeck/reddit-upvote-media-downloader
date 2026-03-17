@@ -771,9 +771,6 @@ func extractGalleryIndex(filename string) string {
 	return ""
 }
 
-// itemHashKey generates a unique key for storing/retrieving item hashes.
-// For single-item posts (ItemIndex < 0), uses the PostID directly.
-// For gallery items (ItemIndex >= 0), includes the index (e.g., "postid_0", "postid_1").
 func itemHashKey(item Downloadable) string {
 	if item.ItemIndex >= 0 {
 		return item.PostID + "_" + strconv.Itoa(item.ItemIndex)

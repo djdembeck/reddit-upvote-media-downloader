@@ -320,8 +320,8 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil)
-	rollbackLog, err := rb.Execute()
+	rb := NewRollback(logPath, nil, "", "")
+	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,8 +360,8 @@ func TestRollbackMissingFile(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil)
-	rollbackLog, err := rb.Execute()
+	rb := NewRollback(logPath, nil, "", "")
+	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1066,8 +1066,8 @@ func TestMigrationSuite(t *testing.T) {
 			if tt.runRollback {
 				require.NoError(t, migrator.SaveLog(context.Background(), logPath), "Failed to save log")
 
-				rb := NewRollback(logPath, db)
-				rollbackLog, err := rb.Execute()
+				rb := NewRollback(logPath, db, "", "")
+				rollbackLog, err := rb.Execute(context.Background())
 				require.NoError(t, err, "Rollback failed")
 
 				assert.Equal(t, tt.wantRollbackSuccess, rollbackLog.SuccessCount, "Rollback success count mismatch")

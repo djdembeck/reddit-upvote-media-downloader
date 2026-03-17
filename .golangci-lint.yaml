@@ -133,10 +133,6 @@ linters:
     staticcheck:
       checks:
         - "all"
-
-    stylecheck:
-      checks:
-        - "all"
       dot-import-whitelist:
         - github.com/onsi/ginkgo
         - github.com/onsi/gomega
@@ -217,7 +213,7 @@ linters:
         text: "should have a package comment"
         linters:
           - revive
-          - stylecheck
+          - staticcheck
 
     paths:
       - vendor

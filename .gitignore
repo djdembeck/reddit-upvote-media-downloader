@@ -1,6 +1,6 @@
 # Binaries
 reddit-downloader
-downloader
+/downloader
 migrate
 main
 *.exe

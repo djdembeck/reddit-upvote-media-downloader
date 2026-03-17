@@ -147,6 +147,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 	})
 
 	total := len(files)
+	var firstErr error
 	for i, f := range files {
 		if err := contextChecker(ctx); err != nil {
 			return err
@@ -154,19 +155,21 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		if shouldLogProgress(i, total) {
 			slog.Info("Processing file", "current", i+1, "total", total, "filename", f.name)
 		}
-		m.processFile(ctx, f.name)
+		if err := m.processFile(ctx, f.name); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return nil
+	return firstErr
 }
 
-func (m *Migrator) processFile(ctx context.Context, filename string) {
+func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	m.Log.TotalFiles++
 
 	// Extract POSTID
 	postID, err := ExtractPostID(filename)
 	if err != nil {
 		m.recordError(filename, "", "extract_postid", err)
-		return
+		return fmt.Errorf("extract postid from %s: %w", filename, err)
 	}
 
 	// Lookup in PostMap
@@ -187,20 +190,20 @@ func (m *Migrator) processFile(ctx context.Context, filename string) {
 	fileInfo, err := os.Stat(sourcePath)
 	if err != nil {
 		m.recordError(filename, postID, "stat_file", err)
-		return
+		return fmt.Errorf("stat file %s: %w", sourcePath, err)
 	}
 
 	// Calculate hash for duplicate detection
 	fileHash, err := calculateHash(sourcePath)
 	if err != nil {
 		m.recordError(filename, postID, "calculate_hash", err)
-		return
+		return fmt.Errorf("calculate hash for %s: %w", sourcePath, err)
 	}
 
 	// Check if hash already seen (duplicate detection) - includes idempotent re-run check
 	if existingInfo, hashSeen := m.seenHashes[fileHash]; hashSeen {
 		m.recordSkipped(filename, postID, fmt.Sprintf("duplicate hash (first seen: %s)", existingInfo.SourcePath))
-		return
+		return nil
 	}
 
 	// Check if hash exists in database (if DB is available and not dry-run)
@@ -208,29 +211,29 @@ func (m *Migrator) processFile(ctx context.Context, filename string) {
 		exists, dbErr := m.DB.HashExists(ctx, fileHash)
 		if dbErr != nil {
 			m.recordError(filename, postID, "check_hash_exists", dbErr)
-			return
+			return fmt.Errorf("check hash exists for %s: %w", sourcePath, dbErr)
 		}
 		if exists {
 			m.recordSkipped(filename, postID, "duplicate hash (exists in database)")
-			return
+			return nil
 		}
 	}
 
 	// Check if destination exists
 	if _, err := os.Stat(destPath); err == nil {
 		m.recordSkipped(filename, postID, "destination already exists")
-		return
+		return nil
 	}
 
 	if m.DryRun {
 		m.recordDryRun(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash)
-		return
+		return nil
 	}
 
 	// Move file
 	if err := m.moveFile(sourcePath, destPath); err != nil {
 		m.recordError(filename, postID, "move_file", err)
-		return
+		return fmt.Errorf("move file %s to %s: %w", sourcePath, destPath, err)
 	}
 
 	// Save post to database (if DB is available and not dry-run)
@@ -286,6 +289,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) {
 	}
 
 	m.recordSuccess(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash)
+	return nil
 }
 
 func (m *Migrator) buildDestPath(filename string, info PostInfo) string {

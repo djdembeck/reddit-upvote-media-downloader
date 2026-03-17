@@ -143,17 +143,25 @@ func (rp *RedditPost) ToStoragePost(source string) storage.Post {
 
 // DetectMediaType determines the media type of the Reddit post.
 func (rp *RedditPost) DetectMediaType() MediaType {
-	// Check for Reddit-hosted video
+	if rp.GalleryData != nil && len(rp.GalleryData.Items) > 0 {
+		return MediaTypeGallery
+	}
+	if len(rp.MediaMeta) > 0 {
+		for _, meta := range rp.MediaMeta {
+			if strings.HasPrefix(strings.ToLower(meta.Mime), "image/") {
+				return MediaTypeGallery
+			}
+		}
+	}
+
 	if rp.IsVideo && rp.Media != nil && rp.Media.RedditVideo != nil {
 		return MediaTypeVideo
 	}
 
-	// Check for self/text post
 	if rp.IsSelf {
 		return MediaTypeText
 	}
 
-	// Check post_hint for common media types
 	switch rp.PostHint {
 	case "image":
 		return MediaTypeImage
@@ -165,17 +173,14 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 		return MediaTypeText
 	}
 
-	// Try to infer from URL for image types
 	if isImageURL(rp.URL) {
 		return MediaTypeImage
 	}
 
-	// Try to infer from URL for video types
 	if isVideoURL(rp.URL) {
 		return MediaTypeVideo
 	}
 
-	// Default to link for external URLs
 	if rp.URL != "" && rp.URL != rp.Permalink {
 		return MediaTypeLink
 	}

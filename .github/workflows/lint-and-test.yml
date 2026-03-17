@@ -27,7 +27,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.5
           args: --config=.golangci-lint.yaml --timeout=5m
           skip-cache: true
 

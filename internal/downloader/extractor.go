@@ -204,7 +204,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 
 // extractImageFromMediaMeta extracts media from MediaMeta metadata.
 func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloadable, error) {
-	if post.MediaMeta == nil || len(post.MediaMeta) == 0 {
+	if len(post.MediaMeta) == 0 {
 		return nil, nil
 	}
 
@@ -231,7 +231,9 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 		mediaURL = decodeMediaURL(mediaURL)
 		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
 		if err != nil {
-			return nil, fmt.Errorf("failed to determine extension/type for post=%v key=%v url=%v: %w", post.ID, key, mediaURL, err)
+			e.logger.Warn("failed to determine extension/type for media, skipping",
+				"post_id", post.ID, "media_id", key, "url", mediaURL, "error", err)
+			continue
 		}
 
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(keys))
