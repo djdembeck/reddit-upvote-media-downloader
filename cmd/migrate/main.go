@@ -30,7 +30,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error: --log-file required for rollback")
 			os.Exit(1)
 		}
-		logSourceRoot, logDestRoot := readRootsFromLog(*logFile)
+		logSourceRoot, logDestRoot, err := readRootsFromLog(*logFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 		if *sourceDir == "" {
 			*sourceDir = logSourceRoot
 		}
@@ -135,7 +139,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	if err := migrator.Execute(ctx); err != nil {
-		return err
+		return fmt.Errorf("executing migration: %w", err)
 	}
 
 	if err := migrator.SaveLog(ctx, logFile); err != nil {
@@ -181,7 +185,11 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	}
 
 	// Read roots from log for audit purposes only
-	logSourceRoot, logDestRoot := readRootsFromLog(logPath)
+	logSourceRoot, logDestRoot, err := readRootsFromLog(logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Validate that CLI roots match log roots (audit check)
 	if logSourceRoot != "" && logSourceRoot != sourceRoot {
@@ -218,17 +226,17 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	}
 }
 
-func readRootsFromLog(logPath string) (sourceRoot, destRoot string) {
+func readRootsFromLog(logPath string) (sourceRoot, destRoot string, err error) {
 	data, err := os.ReadFile(logPath)
 	if err != nil {
-		return "", ""
+		return "", "", fmt.Errorf("readRootsFromLog: read %s: %w", logPath, err)
 	}
 	var log struct {
 		SourceDir string `json:"source_dir"`
 		DestDir   string `json:"dest_dir"`
 	}
 	if err := json.Unmarshal(data, &log); err != nil {
-		return "", ""
+		return "", "", fmt.Errorf("readRootsFromLog: unmarshal %s: %w", logPath, err)
 	}
-	return log.SourceDir, log.DestDir
+	return log.SourceDir, log.DestDir, nil
 }
