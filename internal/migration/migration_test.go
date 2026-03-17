@@ -87,6 +87,38 @@ func TestSanitizePath(t *testing.T) {
 	}
 }
 
+func TestSanitizePathWindowsReservedNames(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"CON", "_CON"},
+		{"PRN", "_PRN"},
+		{"AUX", "_AUX"},
+		{"NUL", "_NUL"},
+		{"COM1", "_COM1"},
+		{"COM2", "_COM2"},
+		{"COM9", "_COM9"},
+		{"LPT1", "_LPT1"},
+		{"LPT9", "_LPT9"},
+		{"CON.txt", "CON_txt"},
+		{"PRN.jpg", "PRN_jpg"},
+		{"AUX.mp4", "AUX_mp4"},
+		{"path/CON/file", "path_CON_file"},
+		{"lowercase_con", "lowercase_con"},
+		{"CONVENTION", "CONVENTION"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := SanitizePath(tt.input)
+			if got != tt.expected {
+				t.Errorf("SanitizePath(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestHTMLParser(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "index.html")
@@ -320,7 +352,7 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil, "", "")
+	rb := NewRollback(logPath, nil, originalDir, destDir)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -344,12 +376,14 @@ func TestRollbackMissingFile(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "migration_log.json")
 
 	log := MigrationLog{
-		Version: "1.0",
+		Version:   "1.0",
+		SourceDir: filepath.Join(tmpDir, "source"),
+		DestDir:   filepath.Join(tmpDir, "dest"),
 		Operations: []MigrationRecord{
 			{
 				PostID:     "abc123",
-				SourcePath: "/nonexistent/source.jpg",
-				DestPath:   "/nonexistent/dest.jpg",
+				SourcePath: filepath.Join(tmpDir, "source", "Test_abc123.jpg"),
+				DestPath:   filepath.Join(tmpDir, "dest", "Test_abc123.jpg"),
 				Status:     "moved",
 			},
 		},
@@ -360,7 +394,7 @@ func TestRollbackMissingFile(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil, "", "")
+	rb := NewRollback(logPath, nil, log.SourceDir, log.DestDir)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -369,6 +403,62 @@ func TestRollbackMissingFile(t *testing.T) {
 	if rollbackLog.ErrorCount != 1 {
 		t.Errorf("ErrorCount = %d, want 1", rollbackLog.ErrorCount)
 	}
+}
+
+func TestRollbackPathEscaping(t *testing.T) {
+	tmpDir := t.TempDir()
+	trustedSource := filepath.Join(tmpDir, "trusted_source")
+	trustedDest := filepath.Join(tmpDir, "trusted_dest")
+	untrustedPath := filepath.Join(tmpDir, "untrusted", "file.jpg")
+
+	if err := os.MkdirAll(trustedSource, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+	if err := os.MkdirAll(trustedDest, 0755); err != nil {
+		t.Fatalf("Failed to create dest directory: %v", err)
+	}
+
+	logPath := filepath.Join(tmpDir, "migration_log.json")
+	log := MigrationLog{
+		Version:   "1.0",
+		SourceDir: trustedSource,
+		DestDir:   trustedDest,
+		Operations: []MigrationRecord{
+			{
+				PostID:     "abc123",
+				SourcePath: filepath.Join(trustedSource, "Test_abc123.jpg"),
+				DestPath:   untrustedPath,
+				Status:     "moved",
+			},
+		},
+	}
+
+	logData, _ := json.Marshal(log)
+	if err := os.WriteFile(logPath, logData, 0644); err != nil {
+		t.Fatalf("Failed to write log file: %v", err)
+	}
+
+	rb := NewRollback(logPath, nil, trustedSource, trustedDest)
+	rollbackLog, err := rb.Execute(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if rollbackLog.ErrorCount != 1 {
+		t.Errorf("ErrorCount = %d, want 1 (path should escape trusted root)", rollbackLog.ErrorCount)
+	}
+
+	if len(rollbackLog.Operations) != 1 {
+		t.Fatalf("Expected 1 operation, got %d", len(rollbackLog.Operations))
+	}
+
+	if !contains(rollbackLog.Operations[0].Error, "escapes root") {
+		t.Errorf("Expected path escape error, got: %s", rollbackLog.Operations[0].Error)
+	}
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }
 
 func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
@@ -1066,7 +1156,7 @@ func TestMigrationSuite(t *testing.T) {
 			if tt.runRollback {
 				require.NoError(t, migrator.SaveLog(context.Background(), logPath), "Failed to save log")
 
-				rb := NewRollback(logPath, db, "", "")
+				rb := NewRollback(logPath, db, sourceDir, destDir)
 				rollbackLog, err := rb.Execute(context.Background())
 				require.NoError(t, err, "Rollback failed")
 

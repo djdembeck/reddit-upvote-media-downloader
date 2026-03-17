@@ -663,21 +663,18 @@ func TestDeduplication(t *testing.T) {
 					assert.Empty(t, hashes[tt.newPostID], "Expected empty hash (error)")
 				} else {
 					hash := hashes[tt.newPostID]
-					assert.NotEmpty(t, hash, "Hash should be marked with DUPLICATE prefix for duplicates")
-					assert.True(t, strings.HasPrefix(hash, "DUPLICATE:"), "Expected hash to start with DUPLICATE: prefix, got %s", hash)
+					assert.NotEmpty(t, hash, "Hash should be returned for duplicates")
+					assert.Equal(t, 64, len(hash), "Expected raw hash length 64 for duplicates")
+					assert.Equal(t, "true", hashes[tt.newPostID+"_duplicate"], "Expected duplicate marker to be set")
 				}
 			} else {
 				assert.NotEmpty(t, hashes[tt.newPostID], "Hash should be returned for new file")
-				assert.False(t, strings.HasPrefix(hashes[tt.newPostID], "DUPLICATE:"), "Hash should not be marked as duplicate for new file")
+				assert.Empty(t, hashes[tt.newPostID+"_duplicate"], "Hash should not be marked as duplicate for new file")
 			}
 
 			if tt.checkHashLength {
 				hash := hashes[tt.newPostID]
-				expectedLen := 64
-				if strings.HasPrefix(hash, "DUPLICATE:") {
-					expectedLen = 75
-				}
-				assert.Equal(t, expectedLen, len(hash), "Expected hash length %d, got %d (hash: %s)", expectedLen, len(hash), hash)
+				assert.Equal(t, 64, len(hash), "Expected hash length 64, got %d (hash: %s)", len(hash), hash)
 			}
 
 			newFilePath := filepath.Join(setup.subredditDir, tt.newFilename)
@@ -1219,7 +1216,7 @@ func TestValidExistingFileSkipped(t *testing.T) {
 
 	hash := hashes["abc123"]
 	require.NotEmpty(t, hash, "Hash should be returned for existing file")
-	assert.False(t, strings.HasPrefix(hash, "DUPLICATE:"), "Local file reuse should NOT be marked as duplicate")
+	assert.Empty(t, hashes["abc123_duplicate"], "Local file reuse should NOT be marked as duplicate")
 }
 
 func TestKnownBadHashDetection(t *testing.T) {

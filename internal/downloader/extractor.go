@@ -189,13 +189,17 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 		}
 
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(post.GalleryData.Items))
+		itemIndex := -1
+		if len(post.GalleryData.Items) > 1 {
+			itemIndex = i
+		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
 			Filename:  filename,
 			MediaType: mediaType,
 			Subreddit: post.Subreddit,
-			ItemIndex: i, // 0-based gallery index
+			ItemIndex: itemIndex,
 		})
 	}
 
@@ -237,13 +241,17 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 		}
 
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(keys))
+		itemIndex := -1
+		if len(keys) > 1 {
+			itemIndex = i
+		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
 			URL:       mediaURL,
 			Filename:  filename,
 			MediaType: mediaType,
 			Subreddit: post.Subreddit,
-			ItemIndex: i, // 0-based gallery index
+			ItemIndex: itemIndex,
 		})
 	}
 

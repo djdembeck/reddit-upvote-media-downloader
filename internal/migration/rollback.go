@@ -69,10 +69,10 @@ func (r *Rollback) Execute(ctx context.Context) (*RollbackLog, error) {
 	}
 
 	if r.SourceRoot == "" {
-		r.SourceRoot = migLog.SourceDir
+		return nil, fmt.Errorf("source root must be provided")
 	}
 	if r.DestRoot == "" {
-		r.DestRoot = migLog.DestDir
+		return nil, fmt.Errorf("dest root must be provided")
 	}
 
 	rollbackLog := &RollbackLog{
@@ -108,13 +108,13 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 		Timestamp:  time.Now(),
 	}
 
-	// Validate paths are within trusted roots
-	if err := r.validatePath(op.SourcePath); err != nil {
+	// Validate paths are within trusted roots - source path must be under SourceRoot, dest path under DestRoot
+	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {
 		record.Status = "error"
 		record.Error = fmt.Sprintf("invalid source path: %v", err)
 		return record
 	}
-	if err := r.validatePath(op.DestPath); err != nil {
+	if err := r.validatePathAgainstRoot(op.DestPath, r.DestRoot); err != nil {
 		record.Status = "error"
 		record.Error = fmt.Sprintf("invalid dest path: %v", err)
 		return record
@@ -204,37 +204,21 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 	return record
 }
 
-// validatePath ensures a path is absolute and within the trusted root directories.
-func (r *Rollback) validatePath(pathStr string) error {
-	// Clean and make absolute
+func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 	absPath, err := filepath.Abs(filepath.Clean(pathStr))
 	if err != nil {
 		return fmt.Errorf("resolve absolute path: %w", err)
 	}
 
-	// Check if path is within source or dest root
-	if r.SourceRoot != "" {
-		sourceRootAbs, err := filepath.Abs(filepath.Clean(r.SourceRoot))
-		if err != nil {
-			return fmt.Errorf("resolve source root: %w", err)
-		}
-		sourceRootAbs += string(filepath.Separator)
-		if strings.HasPrefix(absPath+string(filepath.Separator), sourceRootAbs) {
-			return nil
-		}
+	rootAbs, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
 	}
-	if r.DestRoot != "" {
-		destRootAbs, err := filepath.Abs(filepath.Clean(r.DestRoot))
-		if err != nil {
-			return fmt.Errorf("resolve dest root: %w", err)
-		}
-		destRootAbs += string(filepath.Separator)
-		if strings.HasPrefix(absPath+string(filepath.Separator), destRootAbs) {
-			return nil
-		}
+	rootAbs += string(filepath.Separator)
+	if !strings.HasPrefix(absPath+string(filepath.Separator), rootAbs) {
+		return fmt.Errorf("path %s escapes root %s", absPath, root)
 	}
-
-	return fmt.Errorf("path %s escapes trusted roots", absPath)
+	return nil
 }
 
 func SaveRollbackLog(log *RollbackLog, path string) error {

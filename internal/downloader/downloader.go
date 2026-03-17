@@ -62,6 +62,9 @@ type Downloader struct {
 	extractor *Extractor
 	logger    *slog.Logger
 	db        *storage.DB
+	// fileLocks provides per-path mutexes to prevent race conditions
+	// when validating/removing files created with O_EXCL by another writer.
+	fileLocks sync.Map
 }
 
 // NewDownloader creates a new Downloader instance with the provided configuration and database.
@@ -152,10 +155,9 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 			mu.Lock()
 			if hash != "" {
 				key := itemHashKey(item)
+				hashes[key] = hash
 				if isDuplicate {
-					hashes[key] = "DUPLICATE:" + hash
-				} else {
-					hashes[key] = hash
+					hashes[key+"_duplicate"] = "true"
 				}
 			}
 			mu.Unlock()
@@ -589,6 +591,12 @@ func combineErrors(errs ...error) error {
 // It validates the existing file and either reuses it if valid, or removes it and returns
 // errRetryImmediately if corrupt. Returns true if the file was successfully handled.
 func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID string) (handled bool, err error) {
+	// Acquire per-path lock to prevent race conditions with concurrent downloads
+	// to the same destination file (created with O_EXCL by another writer).
+	fileLock := d.getFileLock(filePath)
+	fileLock.Lock()
+	defer fileLock.Unlock()
+
 	if !fileExists(filePath) {
 		return false, nil
 	}
@@ -609,6 +617,14 @@ func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID st
 
 	d.logger.Info("reusing blocking file", "path", filePath)
 	return true, nil
+}
+
+// getFileLock returns a mutex for the given file path, creating one if necessary.
+// This provides per-path locking to prevent race conditions when validating files
+// that may have been created with O_EXCL by another concurrent download.
+func (d *Downloader) getFileLock(filePath string) *sync.Mutex {
+	actual, _ := d.fileLocks.LoadOrStore(filePath, &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }
 
 // checkAndHandleExistingFile checks for existing files matching the expected filename and handles them.

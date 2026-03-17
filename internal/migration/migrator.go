@@ -276,12 +276,16 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		}
 
 		if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
-			// Log warning but don't fail migration - file was already moved successfully
-			m.recordWarning(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
+			m.recordSuccessWithWarning(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash, fmt.Errorf("save post to db: %w", saveErr))
+			m.seenHashes[fileHash] = FileHashInfo{
+				PostID:     postID,
+				SourcePath: sourcePath,
+				Timestamp:  time.Now(),
+			}
+			return nil
 		}
 	}
 
-	// Record hash as seen
 	m.seenHashes[fileHash] = FileHashInfo{
 		PostID:     postID,
 		SourcePath: sourcePath,
@@ -439,6 +443,24 @@ func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo
 		FileSize:   size,
 		Hash:       hash,
 	})
+}
+
+func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, info PostInfo, size int64, hash string, warnErr error) {
+	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+		PostID:     postID,
+		SourcePath: filepath.Join(m.SourceDir, filename),
+		DestPath:   destPath,
+		Subreddit:  info.Subreddit,
+		Username:   info.Username,
+		IsUserPost: info.IsUserPost,
+		Status:     "moved_with_warning",
+		Error:      fmt.Sprintf("warning: %v", warnErr),
+		Timestamp:  time.Now(),
+		FileSize:   size,
+		Hash:       hash,
+	})
+	m.Log.MovedCount++
+	m.Log.WarningCount++
 }
 
 // calculateHash computes BLAKE3 hash of a file

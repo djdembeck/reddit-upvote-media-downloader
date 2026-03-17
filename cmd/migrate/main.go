@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -121,14 +122,15 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		fmt.Fprintf(os.Stderr, "Error loading existing log: %v\n", err)
 		os.Exit(1)
 	}
+
+	defer func() {
+		if err := migrator.SaveLog(ctx, logFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving log: %v\n", err)
+		}
+	}()
+
 	if err := migrator.Execute(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Save log
-	if err := migrator.SaveLog(ctx, logFile); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving log: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -169,14 +171,19 @@ func runRollback(logPath string) {
 		defer db.Close()
 	}
 
-	rb := migration.NewRollback(logPath, db, "", "")
+	sourceRoot, destRoot := readRootsFromLog(logPath)
+	if sourceRoot == "" || destRoot == "" {
+		fmt.Fprintln(os.Stderr, "Error: Could not read source/dest roots from log file")
+		os.Exit(1)
+	}
+
+	rb := migration.NewRollback(logPath, db, sourceRoot, destRoot)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Save rollback log
 	rollbackPath := logPath + ".rollback_" + time.Now().Format("20060102_150405") + ".json"
 	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving rollback log: %v\n", err)
@@ -192,4 +199,19 @@ func runRollback(logPath string) {
 	if rollbackLog.ErrorCount > 0 {
 		os.Exit(1)
 	}
+}
+
+func readRootsFromLog(logPath string) (sourceRoot, destRoot string) {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return "", ""
+	}
+	var log struct {
+		SourceDir string `json:"source_dir"`
+		DestDir   string `json:"dest_dir"`
+	}
+	if err := json.Unmarshal(data, &log); err != nil {
+		return "", ""
+	}
+	return log.SourceDir, log.DestDir
 }

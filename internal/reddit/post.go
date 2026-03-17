@@ -146,10 +146,17 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 	if rp.GalleryData != nil && len(rp.GalleryData.Items) > 0 {
 		return MediaTypeGallery
 	}
-	if len(rp.MediaMeta) > 0 {
+	if len(rp.MediaMeta) > 1 {
 		for _, meta := range rp.MediaMeta {
 			if strings.HasPrefix(strings.ToLower(meta.Mime), "image/") {
 				return MediaTypeGallery
+			}
+		}
+	}
+	if len(rp.MediaMeta) == 1 {
+		for _, meta := range rp.MediaMeta {
+			if strings.HasPrefix(strings.ToLower(meta.Mime), "image/") {
+				return MediaTypeImage
 			}
 		}
 	}
