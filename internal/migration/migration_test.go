@@ -389,7 +389,10 @@ func TestRollbackMissingFile(t *testing.T) {
 		},
 	}
 
-	logData, _ := json.Marshal(log)
+	logData, err := json.Marshal(log)
+	if err != nil {
+		t.Fatalf("Failed to marshal log: %v", err)
+	}
 	if err := os.WriteFile(logPath, logData, 0644); err != nil {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
@@ -405,11 +408,10 @@ func TestRollbackMissingFile(t *testing.T) {
 	}
 }
 
-func TestRollbackPathEscaping(t *testing.T) {
+func TestRollbackPathValidation(t *testing.T) {
 	tmpDir := t.TempDir()
 	trustedSource := filepath.Join(tmpDir, "trusted_source")
 	trustedDest := filepath.Join(tmpDir, "trusted_dest")
-	untrustedPath := filepath.Join(tmpDir, "untrusted", "file.jpg")
 
 	if err := os.MkdirAll(trustedSource, 0755); err != nil {
 		t.Fatalf("Failed to create source directory: %v", err)
@@ -418,43 +420,96 @@ func TestRollbackPathEscaping(t *testing.T) {
 		t.Fatalf("Failed to create dest directory: %v", err)
 	}
 
-	logPath := filepath.Join(tmpDir, "migration_log.json")
-	log := MigrationLog{
-		Version:   "1.0",
-		SourceDir: trustedSource,
-		DestDir:   trustedDest,
-		Operations: []MigrationRecord{
-			{
-				PostID:     "abc123",
-				SourcePath: filepath.Join(trustedSource, "Test_abc123.jpg"),
-				DestPath:   untrustedPath,
-				Status:     "moved",
-			},
+	untrustedPath := filepath.Join(tmpDir, "untrusted", "file.jpg")
+	validSourcePath := filepath.Join(trustedSource, "Test_abc123.jpg")
+	validDestPath := filepath.Join(trustedDest, "pics", "Test_abc123.jpg")
+
+	destPicsDir := filepath.Join(trustedDest, "pics")
+	if err := os.MkdirAll(destPicsDir, 0755); err != nil {
+		t.Fatalf("Failed to create dest pics directory: %v", err)
+	}
+
+	tests := []struct {
+		name            string
+		destPath        string
+		setupFile       string
+		wantErrorCount  int
+		wantSuccess     int
+		wantErrContains string
+	}{
+		{
+			name:            "path_escapes_root",
+			destPath:        untrustedPath,
+			wantErrorCount:  1,
+			wantSuccess:     0,
+			wantErrContains: "escapes root",
+		},
+		{
+			name:            "valid_path_in_root",
+			destPath:        validDestPath,
+			setupFile:       validDestPath,
+			wantErrorCount:  0,
+			wantSuccess:     1,
+			wantErrContains: "",
 		},
 	}
 
-	logData, err := json.Marshal(log)
-	require.NoError(t, err)
-	if err := os.WriteFile(logPath, logData, 0644); err != nil {
-		t.Fatalf("Failed to write log file: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logPath := filepath.Join(tmpDir, "migration_log_"+tt.name+".json")
 
-	rb := NewRollback(logPath, nil, trustedSource, trustedDest)
-	rollbackLog, err := rb.Execute(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+			if tt.setupFile != "" {
+				if err := os.WriteFile(tt.setupFile, []byte("test content"), 0644); err != nil {
+					t.Fatalf("Failed to write test file: %v", err)
+				}
+				defer os.Remove(tt.setupFile)
+			}
 
-	if rollbackLog.ErrorCount != 1 {
-		t.Errorf("ErrorCount = %d, want 1 (path should escape trusted root)", rollbackLog.ErrorCount)
-	}
+			log := MigrationLog{
+				Version:   "1.0",
+				SourceDir: trustedSource,
+				DestDir:   trustedDest,
+				Operations: []MigrationRecord{
+					{
+						PostID:     "abc123",
+						SourcePath: validSourcePath,
+						DestPath:   tt.destPath,
+						Status:     "moved",
+					},
+				},
+			}
 
-	if len(rollbackLog.Operations) != 1 {
-		t.Fatalf("Expected 1 operation, got %d", len(rollbackLog.Operations))
-	}
+			logData, err := json.Marshal(log)
+			if err != nil {
+				t.Fatalf("Failed to marshal log: %v", err)
+			}
+			if err := os.WriteFile(logPath, logData, 0644); err != nil {
+				t.Fatalf("Failed to write log file: %v", err)
+			}
+			defer os.Remove(logPath)
 
-	if !contains(rollbackLog.Operations[0].Error, "escapes root") {
-		t.Errorf("Expected path escape error, got: %s", rollbackLog.Operations[0].Error)
+			rb := NewRollback(logPath, nil, trustedSource, trustedDest)
+			rollbackLog, err := rb.Execute(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if rollbackLog.ErrorCount != tt.wantErrorCount {
+				t.Errorf("ErrorCount = %d, want %d", rollbackLog.ErrorCount, tt.wantErrorCount)
+			}
+
+			if rollbackLog.SuccessCount != tt.wantSuccess {
+				t.Errorf("SuccessCount = %d, want %d", rollbackLog.SuccessCount, tt.wantSuccess)
+			}
+
+			if len(rollbackLog.Operations) != 1 {
+				t.Fatalf("Expected 1 operation, got %d", len(rollbackLog.Operations))
+			}
+
+			if tt.wantErrContains != "" && !contains(rollbackLog.Operations[0].Error, tt.wantErrContains) {
+				t.Errorf("Expected error containing %q, got: %s", tt.wantErrContains, rollbackLog.Operations[0].Error)
+			}
+		})
 	}
 }
 

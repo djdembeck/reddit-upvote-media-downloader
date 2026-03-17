@@ -30,6 +30,17 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error: --log-file required for rollback")
 			os.Exit(1)
 		}
+		logSourceRoot, logDestRoot := readRootsFromLog(*logFile)
+		if *sourceDir == "" {
+			*sourceDir = logSourceRoot
+		}
+		if *destDir == "" {
+			*destDir = logDestRoot
+		}
+		if *sourceDir == "" || *destDir == "" {
+			fmt.Fprintln(os.Stderr, "Error: --source and --dest are required when migration log is missing source_dir or dest_dir")
+			os.Exit(1)
+		}
 		runRollback(*logFile, *sourceDir, *destDir)
 		return
 	}
@@ -121,16 +132,12 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		return fmt.Errorf("load existing log: %w", err)
 	}
 
-	var saveErr error
-	defer func() {
-		if err := migrator.SaveLog(ctx, logFile); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving log: %v\n", err)
-			saveErr = err
-		}
-	}()
-
 	if err := migrator.Execute(ctx); err != nil {
 		return err
+	}
+
+	if err := migrator.SaveLog(ctx, logFile); err != nil {
+		return fmt.Errorf("migration completed but failed to save log: %w", err)
 	}
 
 	// Summary
@@ -147,9 +154,6 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		fmt.Println("\nDry run complete. Remove --dry-run to execute.")
 	}
 
-	if saveErr != nil {
-		return fmt.Errorf("migration completed but failed to save log: %w", saveErr)
-	}
 	if migrator.Log.ErrorCount > 0 {
 		return fmt.Errorf("migration completed with %d errors", migrator.Log.ErrorCount)
 	}

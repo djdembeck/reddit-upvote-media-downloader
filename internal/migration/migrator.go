@@ -135,7 +135,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		if err != nil {
 			m.recordError(entry.Name(), "", "stat_file", err)
 			if firstErr == nil {
-				firstErr = err
+				firstErr = fmt.Errorf("stat file %s: %w", entry.Name(), err)
 			}
 			continue
 		}
