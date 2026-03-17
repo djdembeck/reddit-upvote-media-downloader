@@ -109,7 +109,9 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
 		}
-		defer db.Close()
+		defer func() {
+			_ = db.Close()
+		}()
 	}
 
 	if !dryRun {
@@ -175,7 +177,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 			os.Exit(1)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 	}
 
 	// Read roots from log for audit purposes only

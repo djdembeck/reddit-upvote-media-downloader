@@ -137,7 +137,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
@@ -181,7 +181,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
 		os.Exit(1)
 	}
-	defer redditClient.Close()
+	defer func() {
+		_ = redditClient.Close()
+	}()
 
 	// Parse log level from configuration
 	parsedLevel := parseSlogLevel(cfg.Log.Level)
