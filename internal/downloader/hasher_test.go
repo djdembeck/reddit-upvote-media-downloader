@@ -57,7 +57,7 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				hash, err := CalculateFileHash(filePath)
 				require.NoError(t, err)
-				assert.Equal(t, hash, expectedHash, "hash should be deterministic")
+				assert.Equal(t, expectedHash, hash, "hash should be deterministic")
 			},
 			description: "calculates hash for known content",
 		},
@@ -248,7 +248,7 @@ func TestCalculateHashFromReader(t *testing.T) {
 		assert.Len(t, hash, 64)
 		expectedHash, err := CalculateFileHashFromBytes(content)
 		require.NoError(t, err)
-		assert.Equal(t, hash, expectedHash)
+		assert.Equal(t, expectedHash, hash)
 	})
 }
 
@@ -317,28 +317,32 @@ func isValidHex(c byte) bool {
 }
 
 // errorReader is a reader that always returns an error
+//
+//nolint:govet // Field order kept for readability
 type errorReader struct {
 	err error
 }
 
-func (r *errorReader) Read(p []byte) (n int, err error) {
+func (r *errorReader) Read(_ []byte) (int, error) {
 	return 0, r.err
 }
 
 // eofReader is a reader that returns EOF immediately
 type eofReader struct{}
 
-func (r *eofReader) Read(p []byte) (n int, err error) {
+func (r *eofReader) Read(_ []byte) (int, error) {
 	return 0, io.EOF
 }
 
 // partialReader is a reader that returns data in small chunks
+//
+//nolint:govet // Field order kept for readability
 type partialReader struct {
 	data   []byte
 	offset int
 }
 
-func (r *partialReader) Read(p []byte) (n int, err error) {
+func (r *partialReader) Read(p []byte) (int, error) {
 	if r.offset >= len(r.data) {
 		return 0, io.EOF
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/zeebo/blake3"
 )
@@ -37,7 +38,7 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 // CalculateFileHash calculates a BLAKE3 hash for a file.
 // Returns a 64-character hex-encoded string (256-bit hash).
 func CalculateFileHash(filePath string) (_ string, err error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return "", fmt.Errorf("open file %s: %w", filePath, err)
 	}

@@ -5,6 +5,8 @@ import (
 	"unicode"
 )
 
+const subUnknown = "unknown"
+
 var reservedWindowsNames = []string{
 	"CON", "PRN", "AUX", "NUL",
 	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
@@ -14,7 +16,7 @@ var reservedWindowsNames = []string{
 // SanitizePath sanitizes a string for use as a filesystem path component.
 func SanitizePath(name string) string {
 	if name == "" {
-		return "unknown"
+		return subUnknown
 	}
 
 	sanitized := strings.Map(func(r rune) rune {
@@ -27,7 +29,7 @@ func SanitizePath(name string) string {
 	sanitized = strings.Trim(sanitized, "_")
 
 	if sanitized == "" {
-		return "unknown"
+		return subUnknown
 	}
 
 	upperSanitized := strings.ToUpper(sanitized)

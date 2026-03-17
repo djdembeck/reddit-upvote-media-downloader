@@ -38,7 +38,7 @@ func (p *HTMLParser) ParseIndexHTML(ctx context.Context, indexPath string) error
 		return err
 	}
 
-	content, err := os.ReadFile(indexPath)
+	content, err := os.ReadFile(filepath.Clean(indexPath))
 	if err != nil {
 		return fmt.Errorf("open index.html: %w", err)
 	}
@@ -163,7 +163,7 @@ func (p *HTMLParser) ParseHTMLFile(ctx context.Context, filePath string) (PostIn
 	}
 
 	// Read HTML content
-	content, err := os.ReadFile(filePath)
+	content, err := os.ReadFile(filepath.Clean(filePath))
 	if err != nil {
 		return PostInfo{}, fmt.Errorf("read file %s: %w", filePath, err)
 	}

@@ -36,7 +36,13 @@ func parseSlogLevel(levelStr string) slog.Level {
 	}
 }
 
-// memoryTokenStore implements reddit.TokenStore with in-memory storage
+//nolint:gocritic // os.Exit does not run deferred functions, but cancel() is called explicitly before exit
+func exitWithCancel(cancel context.CancelFunc, code int) {
+	cancel()
+	os.Exit(code)
+}
+
+// memoryTokenStore implements reddit.TokenStore with in-memory storage.
 type memoryTokenStore struct {
 	token *oauth2.Token
 }
@@ -50,7 +56,7 @@ func (m *memoryTokenStore) LoadToken() (*oauth2.Token, error) {
 	return m.token, nil
 }
 
-// buildTokenFromEnv builds an oauth2.Token from environment variables
+// buildTokenFromEnv builds an oauth2.Token from environment variables.
 func buildTokenFromEnv() *oauth2.Token {
 	accessToken := os.Getenv("REDDIT_ACCESS_TOKEN")
 	refreshToken := os.Getenv("REDDIT_REFRESH_TOKEN")
@@ -80,7 +86,7 @@ func buildTokenFromEnv() *oauth2.Token {
 	return nil
 }
 
-// maskToken masks a token showing only the last 4 characters
+// maskToken masks a token showing only the last 4 characters.
 func maskToken(token string) string {
 	if len(token) > 4 {
 		return "****" + token[len(token)-4:]
@@ -122,28 +128,32 @@ func main() {
 	}()
 
 	// Create output directories
-	if err := os.MkdirAll(cfg.Storage.OutputDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Storage.OutputDir, 0750); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
-		os.Exit(1)
+		exitWithCancel(cancel, 1)
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
-		os.Exit(1)
+		exitWithCancel(cancel, 1)
 	}
 
 	// Open database
 	db, err := storage.NewDB(cfg.Storage.DBPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
+		exitWithCancel(cancel, 1)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() {
+		if err := db.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+		}
+	}()
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
 		if err := runAutoMigration(ctx, db, cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Migration failed: %v\n", err)
-			os.Exit(1)
+			exitWithCancel(cancel, 1)
 		}
 	}
 
@@ -179,10 +189,12 @@ func main() {
 	redditClient, err := reddit.NewClient(redditConfig, tokenStore)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
-		os.Exit(1)
+		exitWithCancel(cancel, 1)
 	}
 	defer func() {
-		_ = redditClient.Close()
+		if err := redditClient.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing Reddit client: %v\n", err)
+		}
 	}()
 
 	// Parse log level from configuration
@@ -190,7 +202,7 @@ func main() {
 
 	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: parsedLevel,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				a.Key = "timestamp"
 			}
@@ -237,50 +249,89 @@ func main() {
 	}
 }
 
-//nolint:cyclop
 func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) error {
 	outputDir := cfg.Storage.OutputDir
 
+	if alreadyComplete, err := checkMigrationAlreadyComplete(ctx, db); err != nil || alreadyComplete {
+		return err
+	}
+
+	if hasPosts, err := checkDatabaseHasPosts(ctx, db); err != nil || hasPosts {
+		return err
+	}
+
+	if cfg.Migrate.ReorganizeEnabled {
+		if err := runReorganizationIfEnabled(ctx, cfg, outputDir, db); err != nil {
+			return err
+		}
+	}
+
+	if err := importFromIDList(ctx, db, outputDir); err != nil {
+		return err
+	}
+
+	if err := importFromDirectory(ctx, db, outputDir); err != nil {
+		return err
+	}
+
+	return db.SetMetadata(ctx, "migration_complete", "true")
+}
+
+func checkMigrationAlreadyComplete(ctx context.Context, db *storage.DB) (bool, error) {
 	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
 	if err != nil {
 		fmt.Printf("Warning: Could not check migration_complete metadata: %v\n", err)
 	}
 	if migrationComplete == "true" {
 		fmt.Println("Migration already completed (migration_complete=true), skipping migration")
-		return nil
+		return true, nil
 	}
+	return false, nil
+}
 
+func checkDatabaseHasPosts(ctx context.Context, db *storage.DB) (bool, error) {
 	stats, err := db.GetStats(ctx)
 	if err != nil {
-		return fmt.Errorf("getting stats: %w", err)
+		return false, fmt.Errorf("getting stats: %w", err)
 	}
 	if stats.TotalPosts > 0 {
 		fmt.Printf("Database has %d posts, marking migration as complete\n", stats.TotalPosts)
 		if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
-			return fmt.Errorf("setting migration_complete metadata: %w", err)
+			return false, fmt.Errorf("setting migration_complete metadata: %w", err)
 		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func runReorganizationIfEnabled(ctx context.Context, cfg *config.Config, outputDir string, db *storage.DB) error {
+	if cfg.Migrate.SourceDir == "" {
+		return fmt.Errorf(
+			"migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; " +
+				"set MIGRATE_SOURCE_DIR environment variable",
+		)
+	}
+	if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
+		return fmt.Errorf("file reorganization failed: %w", err)
+	}
+	return nil
+}
+
+func importFromIDList(ctx context.Context, db *storage.DB, outputDir string) error {
+	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
+	if _, err := os.Stat(idListPath); err != nil {
 		return nil
 	}
-
-	if cfg.Migrate.ReorganizeEnabled {
-		if cfg.Migrate.SourceDir == "" {
-			return fmt.Errorf("migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; set MIGRATE_SOURCE_DIR environment variable")
-		}
-		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
-			return fmt.Errorf("file reorganization failed: %w", err)
-		}
+	fmt.Printf("Migrating existing data from %s...\n", idListPath)
+	count, err := db.ImportFromIDList(ctx, idListPath)
+	if err != nil {
+		return fmt.Errorf("importing idList: %w", err)
 	}
+	fmt.Printf("Migrated %d posts from idList.txt\n", count)
+	return nil
+}
 
-	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
-	if _, err := os.Stat(idListPath); err == nil {
-		fmt.Printf("Migrating existing data from %s...\n", idListPath)
-		count, err := db.ImportFromIDList(ctx, idListPath)
-		if err != nil {
-			return fmt.Errorf("importing idList: %w", err)
-		}
-		fmt.Printf("Migrated %d posts from idList.txt\n", count)
-	}
-
+func importFromDirectory(ctx context.Context, db *storage.DB, outputDir string) error {
 	count, err := db.ImportFromDirectory(ctx, outputDir)
 	if err != nil {
 		return fmt.Errorf("importing media directory: %w", err)
@@ -288,15 +339,48 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	if count > 0 {
 		fmt.Printf("Migrated %d posts from media directory\n", count)
 	}
-
-	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
-		return fmt.Errorf("setting migration_complete metadata: %w", err)
-	}
-
 	return nil
 }
 
 func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB) error {
+	printReorganizationHeader(sourceDir, destDir, htmlDir)
+
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context error: %w", err)
+	}
+
+	if err := validateSourceDirectory(sourceDir); err != nil {
+		return err
+	}
+
+	parser, err := parseHTMLMetadata(ctx, sourceDir, htmlDir)
+	if err != nil {
+		return err
+	}
+
+	if len(parser.PostMap) == 0 {
+		fmt.Println("Warning: No HTML metadata found. Files will be organized as 'unknown' subreddit.")
+	}
+	fmt.Printf("Total: %d posts in HTML metadata\n\n", len(parser.PostMap))
+
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context error: %w", err)
+	}
+
+	if err := os.MkdirAll(destDir, 0750); err != nil {
+		return fmt.Errorf("creating destination directory: %w", err)
+	}
+
+	migrator, err := executeMigration(ctx, sourceDir, destDir, parser.PostMap, db)
+	if err != nil {
+		return err
+	}
+
+	printReorganizationSummary(migrator)
+	return nil
+}
+
+func printReorganizationHeader(sourceDir, destDir, htmlDir string) {
 	fmt.Println("===================")
 	fmt.Println("File Reorganization")
 	fmt.Println("===================")
@@ -304,11 +388,9 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	fmt.Printf("Destination: %s\n", destDir)
 	fmt.Printf("HTML Directory: %s\n", htmlDir)
 	fmt.Println()
+}
 
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
+func validateSourceDirectory(sourceDir string) error {
 	info, err := os.Stat(sourceDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -319,70 +401,48 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	if !info.IsDir() {
 		return fmt.Errorf("source path is not a directory: %s", sourceDir)
 	}
+	return nil
+}
 
+func parseHTMLMetadata(ctx context.Context, sourceDir, htmlDir string) (*migration.HTMLParser, error) {
 	parser := migration.NewHTMLParser()
 
-	if htmlDir != "" {
-		fmt.Printf("Parsing HTML files from %s...\n", htmlDir)
-		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
-			return fmt.Errorf("parsing HTML files: %w", err)
-		}
-	} else {
-		fmt.Printf("Parsing HTML files from %s...\n", sourceDir)
-		if err := parser.ParseHTMLFiles(ctx, sourceDir); err != nil {
-			return fmt.Errorf("parsing HTML files: %w", err)
-		}
+	htmlSource := htmlDir
+	if htmlSource == "" {
+		htmlSource = sourceDir
+	}
+	fmt.Printf("Parsing HTML files from %s...\n", htmlSource)
+	if err := parser.ParseHTMLFiles(ctx, htmlSource); err != nil {
+		return nil, fmt.Errorf("parsing HTML files: %w", err)
+	}
 
-		if len(parser.PostMap) == 0 {
-			indexPaths := []string{
-				filepath.Join(filepath.Dir(sourceDir), "index.html"),
-				filepath.Join(sourceDir, "index.html"),
-			}
-			for _, indexPath := range indexPaths {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if _, err := os.Stat(indexPath); err != nil {
-					if os.IsNotExist(err) {
-						continue
-					}
-					return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
-				}
-				fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", indexPath)
-				if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
-					return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
-				}
-				break
-			}
+	if len(parser.PostMap) == 0 && htmlDir == "" {
+		if err := parseIndexHTMLFallback(ctx, sourceDir, parser); err != nil {
+			return nil, err
 		}
 	}
 
-	if len(parser.PostMap) == 0 {
-		fmt.Println("Warning: No HTML metadata found. Files will be organized as 'unknown' subreddit.")
-	}
-	fmt.Printf("Total: %d posts in HTML metadata\n\n", len(parser.PostMap))
+	return parser, nil
+}
 
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("creating destination directory: %w", err)
-	}
-
+func executeMigration(ctx context.Context, sourceDir, destDir string, postMap map[string]migration.PostInfo, db *storage.DB) (*migration.Migrator, error) {
 	logPath := filepath.Join(destDir, ".migration_log.json")
-	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db)
+	migrator := migration.NewMigrator(sourceDir, destDir, postMap, false, db)
 	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
-		return fmt.Errorf("loading existing log: %w", err)
+		return nil, fmt.Errorf("loading existing log: %w", err)
 	}
 	if err := migrator.Execute(ctx); err != nil {
-		return fmt.Errorf("executing migration: %w", err)
+		return nil, fmt.Errorf("executing migration: %w", err)
 	}
 
 	if err := migrator.SaveLog(ctx, logPath); err != nil {
-		return fmt.Errorf("saving migration log: %w", err)
+		return nil, fmt.Errorf("saving migration log: %w", err)
 	}
 
+	return migrator, nil
+}
+
+func printReorganizationSummary(migrator *migration.Migrator) {
 	fmt.Println("\nReorganization Summary")
 	fmt.Println("======================")
 	fmt.Printf("Total: %d\n", migrator.Log.TotalFiles)
@@ -390,9 +450,32 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	fmt.Printf("Skipped: %d\n", migrator.Log.SkippedCount)
 	fmt.Printf("Warnings: %d\n", migrator.Log.WarningCount)
 	fmt.Printf("Errors: %d\n", migrator.Log.ErrorCount)
-	fmt.Printf("Log: %s\n", logPath)
+	fmt.Printf("Log: %s\n", filepath.Join(migrator.Log.SourceDir, ".migration_log.json"))
 	fmt.Println()
+}
 
+// parseIndexHTMLFallback attempts to parse index.html when no individual HTML files are found.
+func parseIndexHTMLFallback(ctx context.Context, sourceDir string, parser *migration.HTMLParser) error {
+	indexPaths := []string{
+		filepath.Join(filepath.Dir(sourceDir), "index.html"),
+		filepath.Join(sourceDir, "index.html"),
+	}
+	for _, indexPath := range indexPaths {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context error: %w", err)
+		}
+		if _, err := os.Stat(indexPath); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
+		}
+		fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", indexPath)
+		if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
+			return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
+		}
+		return nil
+	}
 	return nil
 }
 
@@ -434,37 +517,68 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
-	// Check if full sync is pending (first run after migration)
-	fullSyncOnce, _ := db.GetMetadata(ctx, "full_sync_once")
+	isFullSync, fetchLimit := determineFetchParameters(ctx, db, cfg)
+	if isFullSync {
+		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
+	}
+
+	allPosts, err := fetchPosts(ctx, client, fetchLimit)
+	if err != nil {
+		return err
+	}
+
+	newPosts, err := filterNewPosts(ctx, db, allPosts, cfg)
+	if err != nil {
+		return err
+	}
+
+	if len(newPosts) == 0 {
+		fmt.Println("No new posts to download")
+		return handleEmptyDownloads(ctx, db, isFullSync, slogLogger)
+	}
+
+	return downloadAndSavePosts(ctx, db, dl, newPosts, isFullSync, slogLogger)
+}
+
+func determineFetchParameters(ctx context.Context, db *storage.DB, cfg *config.Config) (bool, int) {
+	fullSyncOnce, err := db.GetMetadata(ctx, "full_sync_once")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Could not check full_sync_once metadata: %v\n", err)
+	}
 	isFullSync := fullSyncOnce == "pending" && cfg.Migrate.FullSyncOnce
 
 	fetchLimit := cfg.Download.FetchLimit
 	if isFullSync {
-		// Use higher limit for full sync (fetch all posts)
 		fetchLimit = 1000
-		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
 	}
+	return isFullSync, fetchLimit
+}
 
-	// Fetch upvoted and saved posts
+func fetchPosts(ctx context.Context, client reddit.RedditClient, fetchLimit int) ([]storage.Post, error) {
 	upvoted, err := client.GetUpvoted(ctx, fetchLimit)
 	if err != nil {
-		return fmt.Errorf("fetching upvoted: %w", err)
+		return nil, fmt.Errorf("fetching upvoted: %w", err)
 	}
 
 	saved, err := client.GetSaved(ctx, fetchLimit)
 	if err != nil {
-		return fmt.Errorf("fetching saved: %w", err)
+		return nil, fmt.Errorf("fetching saved: %w", err)
 	}
 
 	fmt.Printf("Fetched %d upvoted and %d saved posts\n", len(upvoted), len(saved))
 
-	// Combine all posts
-	allPosts := append(upvoted, saved...)
+	allPosts := make([]storage.Post, 0, len(upvoted)+len(saved))
+	allPosts = append(allPosts, upvoted...)
+	allPosts = append(allPosts, saved...)
+	return allPosts, nil
+}
 
-	// Filter posts: include new posts and posts eligible for retry
+func filterNewPosts(ctx context.Context, db *storage.DB, allPosts []storage.Post, cfg *config.Config) ([]storage.Post, error) {
 	var newPosts []storage.Post
 	for _, post := range allPosts {
-		status, err := db.CheckPostStatus(ctx, post.ID, cfg.SmartPolling.RetryThreshold, cfg.Backoff.Base, cfg.Backoff.Max)
+		status, err := db.CheckPostStatus(
+			ctx, post.ID, cfg.SmartPolling.RetryThreshold, cfg.Backoff.Base, cfg.Backoff.Max,
+		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
 			continue
@@ -473,64 +587,33 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 			newPosts = append(newPosts, post)
 		}
 	}
-
 	fmt.Printf("Found %d new posts to download\n", len(newPosts))
+	return newPosts, nil
+}
 
-	if len(newPosts) == 0 {
-		fmt.Println("No new posts to download")
-		if isFullSync {
-			if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
-			} else {
-				fmt.Println("Full sync completed, switching to incremental mode")
-			}
-		}
+func handleEmptyDownloads(ctx context.Context, db *storage.DB, isFullSync bool, slogLogger *slog.Logger) error {
+	if !isFullSync {
 		return nil
 	}
-
-	// Convert storage.Post to reddit.RedditPost for extraction
-	redditPosts := make([]reddit.RedditPost, len(newPosts))
-	for i, post := range newPosts {
-		redditPosts[i] = reddit.RedditPost{
-			ID:        post.ID,
-			Title:     post.Title,
-			URL:       post.URL,
-			Subreddit: post.Subreddit,
-			Author:    post.Author,
-		}
+	if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+		fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
+	} else {
+		fmt.Println("Full sync completed, switching to incremental mode")
 	}
+	return nil
+}
 
-	// Extract downloadable items
+func downloadAndSavePosts(ctx context.Context, db *storage.DB, dl *downloader.Downloader, newPosts []storage.Post, isFullSync bool, slogLogger *slog.Logger) error {
+	redditPosts := convertToRedditPosts(newPosts)
+
 	items, err := dl.Extract(ctx, redditPosts)
 	if err != nil {
 		return fmt.Errorf("extracting media: %w", err)
 	}
-
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	// Download items and get hashes (may return partial hashes + error)
 	hashes, err := dl.Download(ctx, items)
-
-	// Save posts with whatever hashes we have (preserves partial results on error)
-	// Collect any save errors to prevent finalizing full_sync_once on persistence failures
-	var firstSaveErr error
-	for _, post := range newPosts {
-		hash := findHashForPost(hashes, post.ID)
-		if hash != "" {
-			post.DownloadedAt = time.Now()
-			if strings.HasPrefix(hash, "DUPLICATE:") {
-				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
-			} else {
-				post.Hash = hash
-			}
-			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
-				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
-				if firstSaveErr == nil {
-					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
-				}
-			}
-		}
-	}
+	firstSaveErr := savePostsWithHashes(ctx, db, newPosts, hashes, slogLogger)
 
 	if err != nil {
 		slogLogger.Warn("Warning: download completed with errors", "error", err)
@@ -550,6 +633,43 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
 	return nil
+}
+
+func convertToRedditPosts(newPosts []storage.Post) []reddit.RedditPost {
+	redditPosts := make([]reddit.RedditPost, len(newPosts))
+	for i, post := range newPosts {
+		redditPosts[i] = reddit.RedditPost{
+			ID:        post.ID,
+			Title:     post.Title,
+			URL:       post.URL,
+			Subreddit: post.Subreddit,
+			Author:    post.Author,
+		}
+	}
+	return redditPosts
+}
+
+func savePostsWithHashes(ctx context.Context, db *storage.DB, newPosts []storage.Post, hashes map[string]string, slogLogger *slog.Logger) error {
+	var firstSaveErr error
+	for _, post := range newPosts {
+		hash := findHashForPost(hashes, post.ID)
+		if hash == "" {
+			continue
+		}
+		post.DownloadedAt = time.Now()
+		if strings.HasPrefix(hash, "DUPLICATE:") {
+			post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
+		} else {
+			post.Hash = hash
+		}
+		if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+			slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
+			if firstSaveErr == nil {
+				firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
+			}
+		}
+	}
+	return firstSaveErr
 }
 
 // handleAuth runs the OAuth2 code flow to get a refresh token.

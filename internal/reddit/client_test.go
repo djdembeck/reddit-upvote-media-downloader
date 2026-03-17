@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +15,8 @@ import (
 )
 
 // mockTokenStore implements TokenStore for testing.
+//
+//nolint:govet // Field order kept for readability
 type mockTokenStore struct {
 	token      *oauth2.Token
 	saveCalled bool
@@ -36,7 +37,7 @@ func (m *mockTokenStore) LoadToken() (*oauth2.Token, error) {
 }
 
 // setupTestServer creates a mock Reddit API server for testing.
-func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
+func setupTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +51,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "test_access_token",
 				"token_type":    "bearer",
 				"expires_in":    3600,
@@ -89,8 +90,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 
-	serverURL, _ := url.Parse(server.URL)
-	return server, serverURL
+	return server
 }
 
 // createMockListing creates a mock Reddit listing response.
@@ -121,7 +121,7 @@ func createMockListing(kind string, count int) RedditListing {
 }
 
 func TestNewClient(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server := setupTestServer(t)
 	defer server.Close()
 
 	tests := []struct {
@@ -209,7 +209,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_GetUpvoted(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create config for testing
@@ -260,7 +260,7 @@ func TestClient_GetUpvoted(t *testing.T) {
 }
 
 func TestClient_GetSaved(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server := setupTestServer(t)
 	defer server.Close()
 
 	config := &Config{
@@ -650,7 +650,7 @@ func TestFullMockFlow(t *testing.T) {
 
 			tokenIssued = true
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "mock_access_token",
 				"token_type":   "bearer",
 				"expires_in":   3600,

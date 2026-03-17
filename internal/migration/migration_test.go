@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -517,15 +518,15 @@ func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
+func setupDuplicateScenario(t *testing.T, content []byte) (string, string, string, string, map[string]PostInfo) {
 	tmpDir := t.TempDir()
-	sourceDir = filepath.Join(tmpDir, "source")
-	destDir = filepath.Join(tmpDir, "dest")
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
 
 	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
-	file1 = filepath.Join(sourceDir, "Post1_abc123.jpg")
-	file2 = filepath.Join(sourceDir, "Post2_def456.jpg")
+	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
 
 	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
 	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
@@ -534,12 +535,12 @@ func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, f
 	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
 	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
 
-	postMap = map[string]PostInfo{
+	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
 		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
 	}
 
-	return
+	return sourceDir, destDir, file1, file2, postMap
 }
 
 func TestDuplicateHandling(t *testing.T) {
@@ -638,10 +639,10 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 
 	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
 	_, err := os.Stat(destFile1)
-	assert.NoError(t, err, "First file should be moved")
+	require.NoError(t, err, "First file should be moved")
 
 	_, err = os.Stat(file2)
-	assert.NoError(t, err, "Duplicate source file should remain")
+	require.NoError(t, err, "Duplicate source file should remain")
 
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator2.LoadExistingLog(context.Background(), logPath), "Failed to load existing log")
@@ -691,7 +692,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 			"mmmmmm": "Newest",
 		}[postID], postID))
 		_, err := os.Stat(destFile)
-		assert.NoError(t, err, "Dest file should exist for %s", postID)
+		require.NoError(t, err, "Dest file should exist for %s", postID)
 	}
 
 	var opPostIDs []string
@@ -1131,7 +1132,9 @@ func TestMigrationSuite(t *testing.T) {
 			wantPostRollbackDBCheck: func(t *testing.T, db *storage.DB) {
 				ctx := context.Background()
 				post, err := db.GetPost(ctx, "abc123")
-				require.NoError(t, err)
+				if err != nil && !errors.Is(err, storage.ErrPostNotFound) {
+					t.Fatalf("Unexpected error: %v", err)
+				}
 				assert.Nil(t, post)
 			},
 		},
@@ -1178,7 +1181,7 @@ func TestMigrationSuite(t *testing.T) {
 			for _, relPath := range tt.wantDestFiles {
 				destFile := filepath.Join(destDir, relPath)
 				_, err := os.Stat(destFile)
-				assert.NoError(t, err, "Dest file should exist: %s", relPath)
+				require.NoError(t, err, "Dest file should exist: %s", relPath)
 			}
 
 			for _, filename := range tt.wantSourceRemoved {
@@ -1190,7 +1193,7 @@ func TestMigrationSuite(t *testing.T) {
 			for _, filename := range tt.wantSourceRemain {
 				srcFile := filepath.Join(sourceDir, filename)
 				_, err := os.Stat(srcFile)
-				assert.NoError(t, err, "Source file should remain: %s", filename)
+				require.NoError(t, err, "Source file should remain: %s", filename)
 			}
 
 			ctx := context.Background()
@@ -1221,7 +1224,7 @@ func TestMigrationSuite(t *testing.T) {
 				for _, filename := range tt.wantSourceRemoved {
 					srcFile := filepath.Join(sourceDir, filename)
 					_, err := os.Stat(srcFile)
-					assert.NoError(t, err, "Source file should be restored: %s", filename)
+					require.NoError(t, err, "Source file should be restored: %s", filename)
 				}
 
 				for _, relPath := range tt.wantDestFiles {

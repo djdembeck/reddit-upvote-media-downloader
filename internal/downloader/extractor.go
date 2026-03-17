@@ -56,6 +56,8 @@ type Downloadable struct {
 }
 
 // Extractor extracts media URLs from Reddit posts.
+//
+//nolint:govet // Field order kept for readability (client before logger)
 type Extractor struct {
 	client    *http.Client
 	userAgent string
@@ -123,7 +125,9 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 // extractFromURL extracts media from a specific URL based on the host.
 //
 //nolint:cyclop
-func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractFromURL(
+	ctx context.Context, post reddit.RedditPost, sourceURL string,
+) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse URL: %w", err)
@@ -187,7 +191,10 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 		mediaURL = decodeMediaURL(mediaURL)
 		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
 		if err != nil {
-			return nil, fmt.Errorf("failed to determine extension/type for post=%v media_id=%v url=%v: %w", post.ID, item.MediaID, mediaURL, err)
+			return nil, fmt.Errorf(
+				"failed to determine extension/type for post=%v media_id=%v url=%v: %w",
+				post.ID, item.MediaID, mediaURL, err,
+			)
 		}
 
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(post.GalleryData.Items))
@@ -261,7 +268,9 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 }
 
 // extractRedditVideo extracts video URLs from Reddit-hosted videos.
-func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractRedditVideo(
+	ctx context.Context, post reddit.RedditPost, sourceURL string,
+) ([]Downloadable, error) {
 	if post.Media != nil && post.Media.RedditVideo != nil {
 		fallback := strings.TrimSpace(post.Media.RedditVideo.FallbackURL)
 		if fallback != "" {
@@ -289,7 +298,9 @@ func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPo
 }
 
 // extractImgur extracts media URLs from Imgur posts.
-func (e *Extractor) extractImgur(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractImgur(
+	ctx context.Context, post reddit.RedditPost, sourceURL string,
+) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse imgur URL: %w", err)
@@ -350,7 +361,9 @@ func (e *Extractor) fetchImgurImageURL(ctx context.Context, pageURL string) (str
 }
 
 // extractGfycatRedgifs extracts media URLs from Gfycat or Redgifs posts.
-func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractGfycatRedgifs(
+	ctx context.Context, post reddit.RedditPost, sourceURL string,
+) ([]Downloadable, error) {
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
 		if errors.Is(err, errGone) {
@@ -523,7 +536,7 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("do request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -531,7 +544,9 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 }
 
 // buildDownloadables creates Downloadable items from URLs for a post.
-func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, mediaType string) ([]Downloadable, error) {
+func (e *Extractor) buildDownloadables(
+	post reddit.RedditPost, urls []string, mediaType string,
+) ([]Downloadable, error) {
 	items := make([]Downloadable, 0, len(urls))
 	sanitizedTitle := sanitizeFilename(post.Title)
 	for i, mediaURL := range urls {
@@ -744,7 +759,9 @@ func sanitizeFilename(title string) string {
 		case ':', '*', '?', '"', '<', '>', '|':
 			return '_'
 		// Control characters
-		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31:
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+			10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+			20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31:
 			return -1
 		default:
 			return r

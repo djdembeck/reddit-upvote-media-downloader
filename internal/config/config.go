@@ -14,6 +14,8 @@ import (
 )
 
 // Config holds all application configuration
+//
+//nolint:govet // Field order kept for readability (grouped by category)
 type Config struct {
 	Reddit       RedditConfig
 	Storage      StorageConfig
@@ -54,6 +56,8 @@ type LogConfig struct {
 }
 
 // MigrateConfig holds migration settings
+//
+//nolint:govet // Field order kept for readability (grouped by category)
 type MigrateConfig struct {
 	OnStart           bool
 	FullSyncOnce      bool
@@ -71,7 +75,7 @@ type BackoffConfig struct {
 // CalculateBackoffDelay calculates exponential backoff delay for retries
 // Formula: baseDelay * (2^retryCount), capped at maxDelay
 // Edge cases: negative retryCount returns 0, zero base returns 0
-func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+func CalculateBackoffDelay(retryCount int, base, maxVal time.Duration) time.Duration {
 	// Handle edge cases
 	if retryCount < 0 {
 		return 0
@@ -84,8 +88,8 @@ func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duratio
 	delay := base * time.Duration(1<<uint(retryCount))
 
 	// Cap at max delay
-	if delay > max {
-		return max
+	if delay > maxVal {
+		return maxVal
 	}
 	return delay
 }
@@ -129,7 +133,7 @@ func init() {
 func flagWasSet() bool {
 	// Check if any non-default flag values were set
 	// We use flag.CommandLine.Lookup to check if flags were explicitly set
-	flag.CommandLine.Visit(func(f *flag.Flag) {
+	flag.CommandLine.Visit(func(_ *flag.Flag) {
 		flagSet = true
 	})
 	return flagSet
@@ -141,7 +145,9 @@ func flagWasSet() bool {
 //nolint:cyclop
 func Load() (*Config, error) {
 	// Load .env file if exists (ignore error if file doesn't exist)
-	_ = godotenv.Load()
+	// errcheck explicitly requires checking the return, but we intentionally
+	// ignore it since missing .env is valid - config comes from env vars/flags
+	_ = godotenv.Load() //nolint:errcheck
 
 	// Parse CLI flags
 	flag.Parse()
@@ -188,31 +194,7 @@ func Load() (*Config, error) {
 	// Apply CLI flag overrides (highest priority)
 	// Only override if flags were explicitly provided on command line
 	if flagWasSet() {
-		if flagClientID != "" {
-			cfg.Reddit.ClientID = flagClientID
-		}
-		if flagClientSecret != "" {
-			cfg.Reddit.ClientSecret = flagClientSecret
-		}
-		if flagUsername != "" {
-			cfg.Reddit.Username = flagUsername
-		}
-		if flagConcurrency > 0 {
-			cfg.Download.Concurrency = flagConcurrency
-		}
-		if flagFetchLimit > 0 {
-			cfg.Download.FetchLimit = flagFetchLimit
-		}
-		if flagBackoffBase > 0 {
-			cfg.Backoff.Base = flagBackoffBase
-		}
-		if flagBackoffMax > 0 {
-			cfg.Backoff.Max = flagBackoffMax
-		}
-		cfg.SmartPolling.ReCheck = flagReCheck
-		if flagRetryThreshold > 0 {
-			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
-		}
+		applyFlagOverrides(cfg)
 	}
 
 	// Note: cfg.Auth is intentionally only set from CLI flags (--auth)
@@ -232,6 +214,28 @@ func Load() (*Config, error) {
 
 // Validate checks that all required configuration is present
 func (c *Config) Validate() error {
+	if err := c.validateRequiredFields(); err != nil {
+		return err
+	}
+	if err := c.validateDownloadSettings(); err != nil {
+		return err
+	}
+	if err := c.validateLogLevel(); err != nil {
+		return err
+	}
+	if err := c.validateBackoffSettings(); err != nil {
+		return err
+	}
+	if err := c.validateRetrySettings(); err != nil {
+		return err
+	}
+	if err := c.validateMigrationSettings(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) validateRequiredFields() error {
 	var missing []string
 
 	if c.Reddit.ClientID == "" {
@@ -243,34 +247,35 @@ func (c *Config) Validate() error {
 	if c.Reddit.Username == "" {
 		missing = append(missing, "REDDIT_USERNAME")
 	}
-
-	// Skip password/refresh token check when in auth mode
-	if !c.Auth {
-		// Require either password or refresh token
-		if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
-			missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
-		}
+	if !c.Auth && c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
+		missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
 	}
 
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
+	return nil
+}
 
-	// Validate numeric values
+func (c *Config) validateDownloadSettings() error {
 	if c.Download.Concurrency <= 0 {
 		return fmt.Errorf("CONCURRENCY must be greater than 0, got %d", c.Download.Concurrency)
 	}
 	if c.Download.FetchLimit <= 0 {
 		return fmt.Errorf("FETCH_LIMIT must be greater than 0, got %d", c.Download.FetchLimit)
 	}
+	return nil
+}
 
-	// Validate log level
+func (c *Config) validateLogLevel() error {
 	validLogLevels := []string{"debug", "info", "warn", "error"}
 	if !contains(validLogLevels, strings.ToLower(c.Log.Level)) {
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error, got %s", c.Log.Level)
 	}
+	return nil
+}
 
-	// Validate backoff settings
+func (c *Config) validateBackoffSettings() error {
 	if c.Backoff.Base <= 0 {
 		return fmt.Errorf("BACKOFF_BASE must be greater than 0, got %v", c.Backoff.Base)
 	}
@@ -278,22 +283,25 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("BACKOFF_MAX must be greater than 0, got %v", c.Backoff.Max)
 	}
 	if c.Backoff.Base > c.Backoff.Max {
-		return fmt.Errorf("BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)", c.Backoff.Base, c.Backoff.Max)
+		return fmt.Errorf(
+			"BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)",
+			c.Backoff.Base, c.Backoff.Max,
+		)
 	}
+	return nil
+}
 
-	// Validate retry threshold
+func (c *Config) validateRetrySettings() error {
 	if c.SmartPolling.RetryThreshold < 0 {
 		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
 	}
+	return nil
+}
 
-	// Validate migration configuration
-	if c.Migrate.ReorganizeEnabled {
-		src := strings.TrimSpace(c.Migrate.SourceDir)
-		if src == "" {
-			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
-		}
+func (c *Config) validateMigrationSettings() error {
+	if c.Migrate.ReorganizeEnabled && strings.TrimSpace(c.Migrate.SourceDir) == "" {
+		return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
 	}
-
 	return nil
 }
 
@@ -353,4 +361,33 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// applyFlagOverrides applies CLI flag values to the config when flags were explicitly set.
+func applyFlagOverrides(cfg *Config) {
+	if flagClientID != "" {
+		cfg.Reddit.ClientID = flagClientID
+	}
+	if flagClientSecret != "" {
+		cfg.Reddit.ClientSecret = flagClientSecret
+	}
+	if flagUsername != "" {
+		cfg.Reddit.Username = flagUsername
+	}
+	if flagConcurrency > 0 {
+		cfg.Download.Concurrency = flagConcurrency
+	}
+	if flagFetchLimit > 0 {
+		cfg.Download.FetchLimit = flagFetchLimit
+	}
+	if flagBackoffBase > 0 {
+		cfg.Backoff.Base = flagBackoffBase
+	}
+	if flagBackoffMax > 0 {
+		cfg.Backoff.Max = flagBackoffMax
+	}
+	cfg.SmartPolling.ReCheck = flagReCheck
+	if flagRetryThreshold > 0 {
+		cfg.SmartPolling.RetryThreshold = flagRetryThreshold
+	}
 }

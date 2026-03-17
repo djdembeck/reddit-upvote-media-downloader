@@ -20,6 +20,8 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
+const statusPending = "pending"
+
 func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 	t.Helper()
 
@@ -69,7 +71,7 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 
 		_, err := os.Stat(p.FilePath)
 		if err != nil {
-			assert.NoError(t, db.ResetRetry(ctx, p.ID), "Error resetting retry for %s", p.ID)
+			require.NoError(t, db.ResetRetry(ctx, p.ID), "Error resetting retry for %s", p.ID)
 			missingCount++
 		}
 	}
@@ -325,15 +327,15 @@ func TestExponentialBackoffCalculation(t *testing.T) {
 	}
 }
 
-func calculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+func calculateBackoffDelay(retryCount int, base, maxVal time.Duration) time.Duration {
 	if retryCount < 0 || base <= 0 {
 		return 0
 	}
 
 	delay := base * time.Duration(1<<uint(retryCount))
 
-	if max > 0 && delay > max {
-		return max
+	if maxVal > 0 && delay > maxVal {
+		return maxVal
 	}
 	return delay
 }
@@ -361,7 +363,7 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 			setupFunc: func(id string) (*storage.Post, error) {
 				filePath := filepath.Join(tempDir, id+".jpg")
 				if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
-					return nil, err
+					return nil, fmt.Errorf("write file: %w", err)
 				}
 				return &storage.Post{
 					ID:           id,
@@ -551,6 +553,7 @@ func TestReCheckMode_NoFilePath(t *testing.T) {
 // ============================================================================
 
 type mockRedditClient struct {
+	//nolint:govet // Field order kept for readability
 	upvoted      []storage.Post
 	saved        []storage.Post
 	callCount    int
@@ -558,7 +561,7 @@ type mockRedditClient struct {
 	savedCalls   int
 }
 
-func (m *mockRedditClient) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *mockRedditClient) GetUpvoted(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.upvotedCalls++
 	if limit >= len(m.upvoted) {
@@ -567,7 +570,7 @@ func (m *mockRedditClient) GetUpvoted(ctx context.Context, limit int) ([]storage
 	return m.upvoted[:limit], nil
 }
 
-func (m *mockRedditClient) GetSaved(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *mockRedditClient) GetSaved(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.savedCalls++
 	if limit >= len(m.saved) {
@@ -633,7 +636,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
 	}
-	if err := db.SetMetadata(ctx, "full_sync_once", "pending"); err != nil {
+	if err := db.SetMetadata(ctx, "full_sync_once", statusPending); err != nil {
 		t.Fatalf("Failed to set full_sync_once: %v", err)
 	}
 
@@ -649,8 +652,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once: %v", err)
 	}
-	if fullSyncOnce != "pending" {
-		t.Errorf("Expected full_sync_once=pending, got: %s", fullSyncOnce)
+	if fullSyncOnce != statusPending {
+		t.Errorf("Expected full_sync_once=%s, got: %s", statusPending, fullSyncOnce)
 	}
 
 	t.Log("Migration phase completed successfully")
@@ -703,8 +706,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after first run: %v", err)
 	}
-	if fullSyncOnce != "pending" {
-		t.Errorf("Expected full_sync_once=pending after first run with errors, got: %s", fullSyncOnce)
+	if fullSyncOnce != statusPending {
+		t.Errorf("Expected full_sync_once=%s after first run with errors, got: %s", statusPending, fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {
@@ -725,8 +728,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after second run: %v", err)
 	}
-	if fullSyncOnce != "pending" {
-		t.Errorf("Expected full_sync_once=pending after second run with errors, got: %s", fullSyncOnce)
+	if fullSyncOnce != statusPending {
+		t.Errorf("Expected full_sync_once=%s after second run with errors, got: %s", statusPending, fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {
@@ -1205,6 +1208,7 @@ func TestE2E_ReCheckMissingFiles(t *testing.T) {
 }
 
 type capturingMockClient struct {
+	//nolint:govet // Field order kept for readability
 	upvoted      []storage.Post
 	saved        []storage.Post
 	callCount    int
@@ -1212,7 +1216,7 @@ type capturingMockClient struct {
 	savedLimit   int
 }
 
-func (m *capturingMockClient) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *capturingMockClient) GetUpvoted(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.upvotedLimit = limit
 	if limit >= len(m.upvoted) {
@@ -1254,7 +1258,7 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
 	}
-	if err := db.SetMetadata(ctx, "full_sync_once", "pending"); err != nil {
+	if err := db.SetMetadata(ctx, "full_sync_once", statusPending); err != nil {
 		t.Fatalf("Failed to set full_sync_once: %v", err)
 	}
 

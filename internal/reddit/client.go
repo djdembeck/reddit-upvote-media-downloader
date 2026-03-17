@@ -43,6 +43,8 @@ var (
 )
 
 // Config holds the Reddit OAuth configuration.
+//
+//nolint:gosec // G117: ClientSecret is intentionally named for OAuth2 - not a hardcoded credential
 type Config struct {
 	ClientID     string
 	ClientSecret string
@@ -61,6 +63,8 @@ type TokenStore interface {
 }
 
 // RedditClient defines the interface for Reddit API operations.
+//
+//nolint:revive
 type RedditClient interface {
 	// GetUpvoted fetches upvoted posts with the specified limit.
 	GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error)
@@ -71,6 +75,8 @@ type RedditClient interface {
 }
 
 // Client provides authenticated access to the Reddit API.
+//
+//nolint:govet // Field order kept for readability (config fields first, then mutexes)
 type Client struct {
 	config      *Config
 	tokenStore  TokenStore
@@ -83,6 +89,8 @@ type Client struct {
 }
 
 // rateLimiter implements token bucket rate limiting for Reddit API requests.
+//
+//nolint:govet // Field order kept for readability (mutex first)
 type rateLimiter struct {
 	mu          sync.Mutex
 	tokens      int
@@ -100,7 +108,7 @@ func newRateLimiter(requestsPerMinute int) *rateLimiter {
 }
 
 // Wait blocks until a token is available for the next request.
-// Returns an error if the context is cancelled.
+// Returns an error if the context is canceled.
 func (rl *rateLimiter) Wait(ctx context.Context) error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -109,7 +117,7 @@ func (rl *rateLimiter) Wait(ctx context.Context) error {
 	elapsed := time.Since(rl.lastRequest)
 	tokensToAdd := int(elapsed / rl.refillRate)
 	if tokensToAdd > 0 {
-		rl.tokens = min(rl.tokens+tokensToAdd, RateLimitPerMinute)
+		rl.tokens = minVal(rl.tokens+tokensToAdd, RateLimitPerMinute)
 		rl.lastRequest = time.Now()
 	}
 
@@ -133,8 +141,8 @@ func (rl *rateLimiter) Wait(ctx context.Context) error {
 	return nil
 }
 
-// min returns the minimum of two integers.
-func min(a, b int) int {
+// minVal returns the minimum of two integers.
+func minVal(a, b int) int {
 	if a < b {
 		return a
 	}
@@ -240,7 +248,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 	data.Set("username", c.config.Username)
 	data.Set("password", c.config.Password)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(
+		ctx, http.MethodPost, c.oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()),
+	)
 	if err != nil {
 		return fmt.Errorf("creating token request: %w", err)
 	}
@@ -254,7 +264,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 		return fmt.Errorf("token request failed: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("failed to close response body", "error", err)
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
@@ -311,7 +323,10 @@ func (c *Client) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource)
 		lastErr = err
 		if attempt < maxRetries-1 {
 			delay := baseDelay * time.Duration(1<<attempt) // Exponential backoff: 1s, 2s, 4s
-			slog.Warn("Token refresh attempt failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "delay", delay, "error", err)
+			slog.Warn(
+				"Token refresh attempt failed, retrying",
+				"attempt", attempt+1, "maxRetries", maxRetries, "delay", delay, "error", err,
+			)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -393,13 +408,17 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 
 	// Handle rate limit errors
 	if resp.StatusCode == http.StatusTooManyRequests {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("failed to close response body", "error", err)
+		}
 		return nil, ErrRateLimited
 	}
 
 	// Handle unauthorized errors
 	if resp.StatusCode == http.StatusUnauthorized {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("failed to close response body", "error", err)
+		}
 		// Try to refresh token and retry once
 		if err := c.authenticate(ctx); err != nil {
 			return nil, ErrUnauthorized
@@ -439,7 +458,7 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 	for len(allPosts) < limit {
 		// Calculate how many to fetch in this request
 		remaining := limit - len(allPosts)
-		fetchCount := min(remaining, MaxPostsPerRequest)
+		fetchCount := minVal(remaining, MaxPostsPerRequest)
 
 		params := url.Values{}
 		params.Set("limit", strconv.Itoa(fetchCount))
@@ -458,10 +477,14 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 
 		var listing RedditListing
 		if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
-			_ = resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				slog.Debug("failed to close response body", "error", closeErr)
+			}
 			return nil, fmt.Errorf("decoding response: %w", err)
 		}
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("failed to close response body", "error", err)
+		}
 
 		// Check for errors in response
 		if listing.Kind != "Listing" {
@@ -499,7 +522,9 @@ func (c *Client) Close() error {
 	c.mu.RUnlock()
 
 	if c.tokenStore != nil && token != nil {
-		return c.tokenStore.SaveToken(token)
+		if err := c.tokenStore.SaveToken(token); err != nil {
+			return fmt.Errorf("save token: %w", err)
+		}
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,7 +131,7 @@ func TestGetPost_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	retrieved, err := db.GetPost(ctx, "nonexistent")
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrPostNotFound) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 	if retrieved != nil {
@@ -399,10 +400,8 @@ func TestFilenamePattern(t *testing.T) {
 			if matches[1] != tc.expectID {
 				t.Errorf("Expected ID %s for %s, got %s", tc.expectID, tc.filename, matches[1])
 			}
-		} else {
-			if matches != nil {
-				t.Errorf("Expected %s to NOT match pattern", tc.filename)
-			}
+		} else if matches != nil {
+			t.Errorf("Expected %s to NOT match pattern", tc.filename)
 		}
 	}
 }
@@ -565,7 +564,9 @@ func TestGetPostByHash_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	retrieved, err := db.GetPostByHash(ctx, "nonexistenthash")
-	require.NoError(t, err, "Unexpected error")
+	if err != nil && !errors.Is(err, ErrPostNotFound) {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 	assert.Nil(t, retrieved, "Expected nil for non-existent hash")
 }
 

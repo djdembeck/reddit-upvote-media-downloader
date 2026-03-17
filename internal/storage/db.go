@@ -5,7 +5,9 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,7 +15,12 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Register SQLite driver
+)
+
+// Sentinel errors for database operations.
+var (
+	ErrPostNotFound = errors.New("post not found")
 )
 
 // DB wraps the database connection.
@@ -67,7 +74,9 @@ func (db *DB) runMigrations() error {
 		return fmt.Errorf("failed to query table info: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Debug("failed to close rows", "error", err)
+		}
 	}()
 
 	existingColumns := make(map[string]bool)
@@ -76,7 +85,7 @@ func (db *DB) runMigrations() error {
 		var name string
 		var type_ string
 		var notnull int
-		var dflt_value interface{}
+		var dflt_value any
 		var pk int
 		if err := rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk); err != nil {
 			return fmt.Errorf("failed to scan table info: %w", err)
@@ -115,7 +124,7 @@ func (db *DB) runMigrations() error {
 func NewDB(dbPath string) (*DB, error) {
 	// Ensure the directory exists
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
@@ -144,14 +153,18 @@ func NewDB(dbPath string) (*DB, error) {
 	// Migration: Add hash column if not exists (preserve existing data)
 	_, err = conn.Exec(`ALTER TABLE posts ADD COLUMN hash TEXT`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		_ = conn.Close()
+		if err := conn.Close(); err != nil {
+			slog.Debug("failed to close connection", "error", err)
+		}
 		return nil, fmt.Errorf("failed to add hash column: %w", err)
 	}
 
 	// Create index on hash column for fast lookups
 	_, err = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
 	if err != nil {
-		_ = conn.Close()
+		if err := conn.Close(); err != nil {
+			slog.Debug("failed to close connection", "error", err)
+		}
 		return nil, fmt.Errorf("failed to create hash index: %w", err)
 	}
 
@@ -161,7 +174,9 @@ func NewDB(dbPath string) (*DB, error) {
 // Close closes the database connection.
 func (db *DB) Close() error {
 	if db.conn != nil {
-		return db.conn.Close()
+		if err := db.conn.Close(); err != nil {
+			return fmt.Errorf("close connection: %w", err)
+		}
 	}
 	return nil
 }
@@ -235,83 +250,91 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	row := db.conn.QueryRowContext(ctx, query, id)
 
 	var post Post
-	var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
-	var createdAtUnix, downloadedAtUnix sql.NullInt64
-	var retryCount sql.NullInt64
-	var lastError sql.NullString
-	var lastAttempt sql.NullInt64
-	var hash sql.NullString
+	nulls := &postNullFields{}
 
 	err := row.Scan(
 		&post.ID,
-		&title,
-		&subreddit,
-		&author,
-		&url,
-		&permalink,
-		&createdAtUnix,
-		&downloadedAtUnix,
-		&mediaType,
-		&filePath,
-		&source,
-		&retryCount,
-		&lastError,
-		&lastAttempt,
-		&hash,
+		&nulls.title,
+		&nulls.subreddit,
+		&nulls.author,
+		&nulls.url,
+		&nulls.permalink,
+		&nulls.createdAt,
+		&nulls.downloadedAt,
+		&nulls.mediaType,
+		&nulls.filePath,
+		&nulls.source,
+		&nulls.retryCount,
+		&nulls.lastError,
+		&nulls.lastAttempt,
+		&nulls.hash,
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
 
-	if createdAtUnix.Valid {
-		post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
-	}
-	if downloadedAtUnix.Valid {
-		post.DownloadedAt = time.Unix(downloadedAtUnix.Int64, 0)
-	}
-
-	if title.Valid {
-		post.Title = title.String
-	}
-	if subreddit.Valid {
-		post.Subreddit = subreddit.String
-	}
-	if author.Valid {
-		post.Author = author.String
-	}
-	if url.Valid {
-		post.URL = url.String
-	}
-	if permalink.Valid {
-		post.Permalink = permalink.String
-	}
-	if mediaType.Valid {
-		post.MediaType = mediaType.String
-	}
-	if filePath.Valid {
-		post.FilePath = filePath.String
-	}
-	if source.Valid {
-		post.Source = source.String
-	}
-	if retryCount.Valid {
-		post.RetryCount = int(retryCount.Int64)
-	}
-	if lastError.Valid {
-		post.LastError = lastError.String
-	}
-	if lastAttempt.Valid {
-		post.LastAttempt = time.Unix(lastAttempt.Int64, 0)
-	}
-	if hash.Valid {
-		post.Hash = hash.String
-	}
-
+	nulls.applyTo(&post)
 	return &post, nil
+}
+
+// postNullFields holds sql.Null types for scanning Post rows.
+type postNullFields struct {
+	title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
+	createdAt, downloadedAt                                               sql.NullInt64
+	retryCount                                                            sql.NullInt64
+	lastError                                                             sql.NullString
+	lastAttempt                                                           sql.NullInt64
+	hash                                                                  sql.NullString
+}
+
+// applyTo copies non-null values from sql.Null fields to a Post struct.
+func (n *postNullFields) applyTo(post *Post) {
+	if n.createdAt.Valid {
+		post.CreatedAt = time.Unix(n.createdAt.Int64, 0)
+	}
+	if n.downloadedAt.Valid {
+		post.DownloadedAt = time.Unix(n.downloadedAt.Int64, 0)
+	}
+	if n.title.Valid {
+		post.Title = n.title.String
+	}
+	if n.subreddit.Valid {
+		post.Subreddit = n.subreddit.String
+	}
+	if n.author.Valid {
+		post.Author = n.author.String
+	}
+	if n.url.Valid {
+		post.URL = n.url.String
+	}
+	if n.permalink.Valid {
+		post.Permalink = n.permalink.String
+	}
+	if n.mediaType.Valid {
+		post.MediaType = n.mediaType.String
+	}
+	if n.filePath.Valid {
+		post.FilePath = n.filePath.String
+	}
+	if n.source.Valid {
+		post.Source = n.source.String
+	}
+	if n.retryCount.Valid {
+		post.RetryCount = int(n.retryCount.Int64)
+	}
+	if n.lastError.Valid {
+		post.LastError = n.lastError.String
+	}
+	if n.lastAttempt.Valid {
+		post.LastAttempt = time.Unix(n.lastAttempt.Int64, 0)
+	}
+	if n.hash.Valid {
+		post.Hash = n.hash.String
+	}
 }
 
 // IsDownloaded checks if a post has been downloaded.
@@ -335,12 +358,6 @@ func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
 //   - backoffBase: base delay for exponential backoff calculation (0 = ignore)
 //   - backoffMax: max delay cap for backoff calculation (0 = ignore)
 func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, backoffBase, backoffMax time.Duration) (*PostStatus, error) {
-	query := `
-		SELECT retry_count, last_error, last_attempt, file_path
-		FROM posts
-		WHERE id = ?
-	`
-
 	status := &PostStatus{
 		Exists:        false,
 		FileExists:    false,
@@ -349,84 +366,121 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 		RetryEligible: true,
 	}
 
-	var lastError sql.NullString
-	var lastAttempt sql.NullInt64
-	var filePath sql.NullString
-	var retryCount sql.NullInt64
-
-	err := db.conn.QueryRowContext(ctx, query, id).Scan(
-		&retryCount,
-		&lastError,
-		&lastAttempt,
-		&filePath,
-	)
-
-	if err == sql.ErrNoRows {
-		// Post doesn't exist - eligible for download
-		return status, nil
-	}
+	rowData, err := db.fetchPostStatusRow(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check post status: %w", err)
+		return nil, err
 	}
-
-	// Post exists in DB
-	status.Exists = true
-	status.RetryEligible = false // Will be set to true if eligible for retry
-
-	// Extract values from NULLable columns
-	if retryCount.Valid {
-		status.RetryCount = int(retryCount.Int64)
-	}
-	if lastError.Valid {
-		status.LastError = lastError.String
-	}
-	if lastAttempt.Valid {
-		status.LastAttempt = time.Unix(lastAttempt.Int64, 0)
-	}
-	if filePath.Valid {
-		status.FilePath = filePath.String
-	}
-
-	// Check 1: Retry count exceeds threshold (permanent skip)
-	if threshold > 0 && status.RetryCount >= threshold {
-		status.ShouldSkip = true
-		status.RetryEligible = false
+	if rowData == nil {
 		return status, nil
 	}
 
-	// Check 2: File exists on disk (if file_path is set)
-	if status.FilePath != "" {
-		if _, err := os.Stat(status.FilePath); err == nil {
-			status.FileExists = true
-			status.ShouldSkip = true
-			status.RetryEligible = false
-			return status, nil
-		}
+	status.Exists = true
+	status.RetryEligible = false
+	rowData.applyTo(status)
+
+	if db.shouldSkipDueToRetries(status, threshold) {
+		return status, nil
+	}
+	if db.shouldSkipDueToFileExists(status) {
+		return status, nil
+	}
+	if db.shouldSkipDueToBackoff(status, backoffBase, backoffMax) {
+		return status, nil
 	}
 
-	// Check 3: Backoff window - if last_attempt is within backoff window, skip retry
-	if backoffBase > 0 && !status.LastAttempt.IsZero() {
-		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
-		if backoffMax > 0 && backoffDelay > backoffMax {
-			backoffDelay = backoffMax
-		}
-
-		// Check if we're still within the backoff window
-		elapsed := time.Since(status.LastAttempt)
-		if elapsed < backoffDelay {
-			// Within backoff window - skip this cycle
-			status.ShouldSkip = true
-			status.RetryEligible = false
-			return status, nil
-		}
-	}
-
-	// If we got here, the post is eligible for retry
 	status.RetryEligible = true
 	return status, nil
 }
 
+// statusRowData holds raw database row data for CheckPostStatus.
+type statusRowData struct {
+	retryCount  sql.NullInt64
+	lastError   sql.NullString
+	lastAttempt sql.NullInt64
+	filePath    sql.NullString
+}
+
+// applyTo copies non-null values to PostStatus.
+func (s *statusRowData) applyTo(status *PostStatus) {
+	if s.retryCount.Valid {
+		status.RetryCount = int(s.retryCount.Int64)
+	}
+	if s.lastError.Valid {
+		status.LastError = s.lastError.String
+	}
+	if s.lastAttempt.Valid {
+		status.LastAttempt = time.Unix(s.lastAttempt.Int64, 0)
+	}
+	if s.filePath.Valid {
+		status.FilePath = s.filePath.String
+	}
+}
+
+func (db *DB) fetchPostStatusRow(ctx context.Context, id string) (*statusRowData, error) {
+	query := `
+		SELECT retry_count, last_error, last_attempt, file_path
+		FROM posts
+		WHERE id = ?
+	`
+
+	rowData := &statusRowData{}
+	err := db.conn.QueryRowContext(ctx, query, id).Scan(
+		&rowData.retryCount,
+		&rowData.lastError,
+		&rowData.lastAttempt,
+		&rowData.filePath,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to check post status: %w", err)
+	}
+	return rowData, nil
+}
+
+func (db *DB) shouldSkipDueToRetries(status *PostStatus, threshold int) bool {
+	if threshold > 0 && status.RetryCount >= threshold {
+		status.ShouldSkip = true
+		status.RetryEligible = false
+		return true
+	}
+	return false
+}
+
+func (db *DB) shouldSkipDueToFileExists(status *PostStatus) bool {
+	if status.FilePath == "" {
+		return false
+	}
+	if _, err := os.Stat(status.FilePath); err != nil {
+		return false
+	}
+	status.FileExists = true
+	status.ShouldSkip = true
+	status.RetryEligible = false
+	return true
+}
+
+func (db *DB) shouldSkipDueToBackoff(status *PostStatus, backoffBase, backoffMax time.Duration) bool {
+	if backoffBase <= 0 || status.LastAttempt.IsZero() {
+		return false
+	}
+
+	backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
+	if backoffMax > 0 && backoffDelay > backoffMax {
+		backoffDelay = backoffMax
+	}
+
+	if time.Since(status.LastAttempt) < backoffDelay {
+		status.ShouldSkip = true
+		status.RetryEligible = false
+		return true
+	}
+	return false
+}
+
+// HashExists checks if a hash already exists in the database.
 func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE hash = ?)`
 
@@ -472,7 +526,7 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post by hash: %w", err)
@@ -537,7 +591,9 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get source counts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Debug("failed to close rows", "error", err)
+		}
 	}()
 
 	for rows.Next() {
@@ -558,7 +614,9 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get subreddit counts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Debug("failed to close rows", "error", err)
+		}
 	}()
 
 	for rows.Next() {
@@ -579,7 +637,9 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get media type counts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Debug("failed to close rows", "error", err)
+		}
 	}()
 
 	for rows.Next() {
@@ -602,12 +662,14 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 //
 //nolint:cyclop
 func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return 0, fmt.Errorf("failed to open idList file: %w", err)
 	}
 	defer func() {
-		_ = file.Close()
+		if err := file.Close(); err != nil {
+			slog.Debug("failed to close file", "error", err)
+		}
 	}()
 
 	scanner := bufio.NewScanner(file)
@@ -843,7 +905,9 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 		return nil, fmt.Errorf("failed to query all posts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Debug("failed to close rows", "error", err)
+		}
 	}()
 
 	var posts []Post
@@ -990,7 +1054,9 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 		return nil, fmt.Errorf("failed to query posts to retry: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		if err := rows.Close(); err != nil {
+			slog.Debug("failed to close rows", "error", err)
+		}
 	}()
 
 	var eligiblePosts []string

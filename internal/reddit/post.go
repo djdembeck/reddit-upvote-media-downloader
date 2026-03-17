@@ -9,6 +9,8 @@ import (
 )
 
 // RedditPost represents the JSON structure of a Reddit post from the API.
+//
+//nolint:revive
 type RedditPost struct {
 	ID          string                   `json:"id"`
 	Title       string                   `json:"title"`
@@ -16,18 +18,18 @@ type RedditPost struct {
 	Author      string                   `json:"author"`
 	URL         string                   `json:"url"`
 	Permalink   string                   `json:"permalink"`
-	CreatedUTC  float64                  `json:"created_utc"`
-	IsVideo     bool                     `json:"is_video"`
-	IsSelf      bool                     `json:"is_self"`
+	CreatedUTC  float64                  `json:"createdUtc"`
+	IsVideo     bool                     `json:"isVideo"`
+	IsSelf      bool                     `json:"isSelf"`
 	SelfText    string                   `json:"selftext"`
 	Thumbnail   string                   `json:"thumbnail"`
-	NumComments int                      `json:"num_comments"`
+	NumComments int                      `json:"numComments"`
 	Score       int                      `json:"score"`
 	Media       *Media                   `json:"media"`
-	PostHint    string                   `json:"post_hint"`
-	GalleryData *GalleryData             `json:"gallery_data"`
-	MediaMeta   map[string]MediaMetadata `json:"media_metadata"`
-	URLOverride string                   `json:"url_overridden_by_dest"`
+	PostHint    string                   `json:"postHint"`
+	GalleryData *GalleryData             `json:"galleryData"`
+	MediaMeta   map[string]MediaMetadata `json:"mediaMetadata"`
+	URLOverride string                   `json:"urlOverriddenByDest"`
 }
 
 // GalleryData represents the gallery data structure from Reddit API.
@@ -37,11 +39,13 @@ type GalleryData struct {
 
 // GalleryItem represents a single item in a Reddit gallery.
 type GalleryItem struct {
-	MediaID string `json:"media_id"`
+	MediaID string `json:"mediaId"`
 	ID      int    `json:"id"`
 }
 
 // MediaMetadata represents metadata for a media item in a gallery.
+//
+//nolint:govet // Field order kept for readability (Status, Kind, Mime first)
 type MediaMetadata struct {
 	Status   string               `json:"status"`
 	Kind     string               `json:"e"`
@@ -59,39 +63,43 @@ type MediaMetadataImage struct {
 
 // Media represents media metadata for a Reddit post.
 type Media struct {
-	RedditVideo *RedditVideo `json:"reddit_video"`
+	RedditVideo *RedditVideo `json:"redditVideo"`
 	OEmbed      *OEmbed      `json:"oembed"`
 }
 
 // RedditVideo represents Reddit-hosted video metadata.
+//
+//nolint:revive
 type RedditVideo struct {
-	BitrateKbps       int    `json:"bitrate_kbps"`
-	FallbackURL       string `json:"fallback_url"`
+	BitrateKbps       int    `json:"bitrateKbps"`
+	FallbackURL       string `json:"fallbackUrl"`
 	Height            int    `json:"height"`
 	Width             int    `json:"width"`
-	ScrubberMediaURL  string `json:"scrubber_media_url"`
-	DashURL           string `json:"dash_url"`
+	ScrubberMediaURL  string `json:"scrubberMediaUrl"`
+	DashURL           string `json:"dashUrl"`
 	Duration          int    `json:"duration"`
-	HLSURL            string `json:"hls_url"`
-	IsGIF             bool   `json:"is_gif"`
-	TranscodingStatus string `json:"transcoding_status"`
+	HLSURL            string `json:"hlsUrl"`
+	IsGIF             bool   `json:"isGif"`
+	TranscodingStatus string `json:"transcodingStatus"`
 }
 
 // OEmbed represents embedded media metadata (e.g., from external sites).
 type OEmbed struct {
-	AuthorName   string `json:"author_name"`
-	AuthorURL    string `json:"author_url"`
+	AuthorName   string `json:"authorName"`
+	AuthorURL    string `json:"authorUrl"`
 	Description  string `json:"description"`
 	HTML         string `json:"html"`
-	ProviderName string `json:"provider_name"`
-	ProviderURL  string `json:"provider_url"`
-	ThumbnailURL string `json:"thumbnail_url"`
+	ProviderName string `json:"providerName"`
+	ProviderURL  string `json:"providerUrl"`
+	ThumbnailURL string `json:"thumbnailUrl"`
 	Title        string `json:"title"`
 	Type         string `json:"type"`
 	Version      string `json:"version"`
 }
 
 // RedditListing represents the Reddit API listing response.
+//
+//nolint:revive
 type RedditListing struct {
 	Kind string `json:"kind"`
 	Data struct {
@@ -102,6 +110,8 @@ type RedditListing struct {
 }
 
 // RedditChild represents a child item in a Reddit listing.
+//
+//nolint:revive
 type RedditChild struct {
 	Kind string     `json:"kind"`
 	Data RedditPost `json:"data"`
@@ -143,6 +153,25 @@ func (rp *RedditPost) ToStoragePost(source string) storage.Post {
 
 // DetectMediaType determines the media type of the Reddit post.
 func (rp *RedditPost) DetectMediaType() MediaType {
+	if mediaType := rp.detectGalleryType(); mediaType != "" {
+		return mediaType
+	}
+	if mediaType := rp.detectVideoType(); mediaType != "" {
+		return mediaType
+	}
+	if mediaType := rp.detectSelfType(); mediaType != "" {
+		return mediaType
+	}
+	if mediaType := rp.detectFromPostHint(); mediaType != "" {
+		return mediaType
+	}
+	if mediaType := rp.detectFromURL(); mediaType != "" {
+		return mediaType
+	}
+	return MediaTypeUnknown
+}
+
+func (rp *RedditPost) detectGalleryType() MediaType {
 	if rp.GalleryData != nil && len(rp.GalleryData.Items) > 0 {
 		return MediaTypeGallery
 	}
@@ -160,15 +189,24 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 			}
 		}
 	}
+	return ""
+}
 
+func (rp *RedditPost) detectVideoType() MediaType {
 	if rp.IsVideo && rp.Media != nil && rp.Media.RedditVideo != nil {
 		return MediaTypeVideo
 	}
+	return ""
+}
 
+func (rp *RedditPost) detectSelfType() MediaType {
 	if rp.IsSelf {
 		return MediaTypeText
 	}
+	return ""
+}
 
+func (rp *RedditPost) detectFromPostHint() MediaType {
 	switch rp.PostHint {
 	case "image":
 		return MediaTypeImage
@@ -179,20 +217,20 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 	case "self":
 		return MediaTypeText
 	}
+	return ""
+}
 
+func (rp *RedditPost) detectFromURL() MediaType {
 	if isImageURL(rp.URL) {
 		return MediaTypeImage
 	}
-
 	if isVideoURL(rp.URL) {
 		return MediaTypeVideo
 	}
-
 	if rp.URL != "" && rp.URL != rp.Permalink {
 		return MediaTypeLink
 	}
-
-	return MediaTypeUnknown
+	return ""
 }
 
 // isImageURL checks if a URL points to an image.

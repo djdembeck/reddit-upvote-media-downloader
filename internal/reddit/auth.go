@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os/exec"
@@ -98,7 +99,7 @@ func generateRandomState(n int) (string, error) {
 	for i := range result {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("generate random int: %w", err)
 		}
 		result[i] = letters[num.Int64()]
 	}
@@ -110,15 +111,21 @@ func openURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
+		//nolint:gosec // G204: url is fixed OAuth URL, not user input
 		cmd = exec.Command("open", url)
 	case "linux":
+		//nolint:gosec // G204: url is fixed OAuth URL, not user input
 		cmd = exec.Command("xdg-open", url)
 	case "windows":
+		//nolint:gosec // G204: url is fixed OAuth URL, not user input
 		cmd = exec.Command("cmd", "/C", "start", "", url)
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start command: %w", err)
+	}
+	return nil
 }
 
 // waitForCallback starts an HTTP server and waits for the OAuth callback.
@@ -133,14 +140,18 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			escapedErrMsg := html.EscapeString(errMsg)
 			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
-			_, _ = fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
+			if _, err := fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc); err != nil {
+				slog.Debug("failed to write error response", "error", err)
+			}
 			errorChan <- fmt.Errorf("oauth error: %s - %s", escapedErrMsg, escapedDesc)
 			return
 		}
 
 		// Verify state matches
 		if r.URL.Query().Get("state") != state {
-			_, _ = fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>")
+			if _, err := fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>"); err != nil {
+				slog.Debug("failed to write state mismatch response", "error", err)
+			}
 			errorChan <- errors.New("state mismatch")
 			return
 		}
@@ -150,18 +161,26 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		token, err := exchangeCodeForToken(r.Context(), code, oauthConfig)
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
-			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
+			if _, err := fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr); err != nil {
+				slog.Debug("failed to write token exchange error response", "error", err)
+			}
 			errorChan <- fmt.Errorf("exchanging code for token: %s", escapedErr)
 			return
 		}
 
 		// Success - show token
-		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
+		if _, err := fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>"); err != nil {
+			slog.Debug("failed to write success response", "error", err)
+		}
 		resultChan <- token
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	// Start server in goroutine and capture errors
 	errChan := make(chan error, 1)
@@ -172,22 +191,32 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
-		_ = server.Close()
+		if err := server.Close(); err != nil {
+			slog.Debug("failed to close server", "error", err)
+		}
 		timer.Stop()
 	}()
 
 	select {
 	case token := <-resultChan:
-		_ = server.Close()
+		if err := server.Close(); err != nil {
+			slog.Debug("failed to close server", "error", err)
+		}
 		return token, nil
 	case err := <-errorChan:
-		_ = server.Close()
+		if err := server.Close(); err != nil {
+			slog.Debug("failed to close server", "error", err)
+		}
 		return "", err
 	case err := <-errChan:
-		_ = server.Close()
+		if err := server.Close(); err != nil {
+			slog.Debug("failed to close server", "error", err)
+		}
 		return "", fmt.Errorf("server error: %w", err)
 	case <-timer.C:
-		_ = server.Close()
+		if err := server.Close(); err != nil {
+			slog.Debug("failed to close server", "error", err)
+		}
 		return "", errors.New("timeout waiting for OAuth callback (30 seconds)")
 	}
 }

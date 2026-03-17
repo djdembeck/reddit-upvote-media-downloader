@@ -27,6 +27,8 @@ func contextChecker(ctx context.Context) error {
 }
 
 // Migrator handles file reorganization from flat to subreddit-based structure.
+//
+//nolint:govet // Field order kept for readability (config fields first, then state)
 type Migrator struct {
 	SourceDir string
 	DestDir   string
@@ -39,6 +41,8 @@ type Migrator struct {
 }
 
 // FileHashInfo tracks file hash information for duplicate detection.
+//
+//nolint:govet // Field order kept for readability (PostID first)
 type FileHashInfo struct {
 	PostID     string
 	SourcePath string
@@ -71,7 +75,7 @@ func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 		return err
 	}
 
-	data, err := os.ReadFile(logPath)
+	data, err := os.ReadFile(filepath.Clean(logPath))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // No existing log, first run
@@ -124,7 +128,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		name    string
 		modTime time.Time
 	}
-	var files []fileEntry
+	files := make([]fileEntry, 0, len(entries))
 	var firstErr error
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -281,7 +285,10 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		}
 
 		if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
-			m.recordSuccessWithWarning(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash, fmt.Errorf("save post to db: %w", saveErr))
+			m.recordSuccessWithWarning(
+				filename, postID, destPath, postInfo, fileInfo.Size(), fileHash,
+				fmt.Errorf("save post to db: %w", saveErr),
+			)
 			m.seenHashes[fileHash] = FileHashInfo{
 				PostID:     postID,
 				SourcePath: sourcePath,
@@ -303,11 +310,12 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 
 func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 	var subdir string
-	if info.IsUserPost && info.Username != "" {
+	switch {
+	case info.IsUserPost && info.Username != "":
 		subdir = filepath.Join("users", info.Username)
-	} else if info.Subreddit != "" {
+	case info.Subreddit != "":
 		subdir = SanitizePath(info.Subreddit)
-	} else {
+	default:
 		subdir = "unknown"
 	}
 	return filepath.Join(m.DestDir, subdir, filename)
@@ -316,7 +324,7 @@ func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 func (m *Migrator) moveFile(src, dst string) error {
 	// Create directory
 	dir := filepath.Dir(dst)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
@@ -328,16 +336,22 @@ func (m *Migrator) moveFile(src, dst string) error {
 	// Verify
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		_ = os.Remove(dst)
+		if rmErr := os.Remove(dst); rmErr != nil {
+			slog.Debug("failed to remove dst after stat error", "error", rmErr)
+		}
 		return fmt.Errorf("stat source file %s: %w", src, err)
 	}
 	dstInfo, err := os.Stat(dst)
 	if err != nil {
-		_ = os.Remove(dst)
+		if rmErr := os.Remove(dst); rmErr != nil {
+			slog.Debug("failed to remove dst after stat error", "error", rmErr)
+		}
 		return fmt.Errorf("stat destination file %s: %w", dst, err)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		_ = os.Remove(dst)
+		if rmErr := os.Remove(dst); rmErr != nil {
+			slog.Debug("failed to remove dst after size mismatch", "error", rmErr)
+		}
 		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 	}
 
@@ -350,45 +364,60 @@ func (m *Migrator) moveFile(src, dst string) error {
 }
 
 func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
+	sourceFile, err := os.Open(filepath.Clean(src))
 	if err != nil {
-		return err
+		return fmt.Errorf("open source file: %w", err)
 	}
 	defer func() {
-		_ = sourceFile.Close()
+		if err := sourceFile.Close(); err != nil {
+			slog.Debug("failed to close source file", "error", err)
+		}
 	}()
 
-	destFile, err := os.Create(dst)
+	destFile, err := os.Create(filepath.Clean(dst))
 	if err != nil {
-		return err
+		return fmt.Errorf("create dest file: %w", err)
 	}
 	defer func() {
-		_ = destFile.Close()
+		if err := destFile.Close(); err != nil {
+			slog.Debug("failed to close dest file", "error", err)
+		}
 	}()
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return err
+		return fmt.Errorf("copy file: %w", err)
 	}
 
-	return destFile.Sync()
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("sync file: %w", err)
+	}
+
+	return nil
 }
 
+// SaveLog saves the migration log to the specified path.
 func (m *Migrator) SaveLog(ctx context.Context, logPath string) error {
 	if err := contextChecker(ctx); err != nil {
-		return err
+		return fmt.Errorf("context check: %w", err)
 	}
 
-	file, err := os.Create(logPath)
+	file, err := os.Create(filepath.Clean(logPath))
 	if err != nil {
-		return err
+		return fmt.Errorf("create log file: %w", err)
 	}
 	defer func() {
-		_ = file.Close()
+		if err := file.Close(); err != nil {
+			slog.Debug("failed to close log file", "error", err)
+		}
 	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(m.Log)
+	if err := encoder.Encode(m.Log); err != nil {
+		return fmt.Errorf("encode log: %w", err)
+	}
+
+	return nil
 }
 
 // Recording methods
@@ -465,12 +494,14 @@ func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, i
 
 // calculateHash computes BLAKE3 hash of a file
 func calculateHash(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", filePath, err)
 	}
 	defer func() {
-		_ = file.Close()
+		if err := file.Close(); err != nil {
+			slog.Debug("failed to close file", "error", err)
+		}
 	}()
 
 	hash := blake3.New()
