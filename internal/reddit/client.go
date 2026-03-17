@@ -74,7 +74,6 @@ type RedditClient interface {
 type Client struct {
 	config      *Config
 	tokenStore  TokenStore
-	httpClient  *http.Client
 	oauthConfig *oauth2.Config
 	token       *oauth2.Token
 	mu          sync.RWMutex
@@ -250,7 +249,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("token request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("token request failed with status %d", resp.StatusCode)
@@ -273,7 +274,7 @@ func (c *Client) authenticate(ctx context.Context) error {
 	if c.tokenStore != nil {
 		if err := c.tokenStore.SaveToken(c.token); err != nil {
 			// Log but don't fail if save fails
-			// fmt.Printf("warning: failed to save token: %v\n", err)
+			slog.Warn("Failed to save token", "error", err)
 		}
 	}
 
@@ -386,13 +387,13 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 
 	// Handle rate limit errors
 	if resp.StatusCode == http.StatusTooManyRequests {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, ErrRateLimited
 	}
 
 	// Handle unauthorized errors
 	if resp.StatusCode == http.StatusUnauthorized {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		// Try to refresh token and retry once
 		if err := c.authenticate(ctx); err != nil {
 			return nil, ErrUnauthorized
@@ -449,10 +450,10 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 
 		var listing RedditListing
 		if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("decoding response: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Check for errors in response
 		if listing.Kind != "Listing" {

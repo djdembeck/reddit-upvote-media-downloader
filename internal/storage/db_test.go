@@ -26,7 +26,7 @@ func setupTestDB(t *testing.T) (*DB, string) {
 
 	// Register cleanup
 	t.Cleanup(func() {
-		db.Close()
+		_ = db.Close()
 	})
 
 	return db, tempDir
@@ -575,7 +575,7 @@ func TestHashColumnMigration(t *testing.T) {
 
 	db, err := NewDB(dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx := context.Background()
 

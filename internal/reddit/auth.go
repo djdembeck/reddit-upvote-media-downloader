@@ -133,14 +133,14 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			escapedErrMsg := html.EscapeString(errMsg)
 			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
-			fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
 			errorChan <- fmt.Errorf("oauth error: %s - %s", escapedErrMsg, escapedDesc)
 			return
 		}
 
 		// Verify state matches
 		if r.URL.Query().Get("state") != state {
-			fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>")
+			_, _ = fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>")
 			errorChan <- errors.New("state mismatch")
 			return
 		}
@@ -150,13 +150,13 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		token, err := exchangeCodeForToken(code, oauthConfig)
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
-			fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
 			errorChan <- fmt.Errorf("exchanging code for token: %s", escapedErr)
 			return
 		}
 
 		// Success - show token
-		fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
+		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
 		resultChan <- token
 	})
 

@@ -64,7 +64,9 @@ func (db *DB) runMigrations() error {
 	if err != nil {
 		return fmt.Errorf("failed to query table info: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	existingColumns := make(map[string]bool)
 	for rows.Next() {
@@ -140,14 +142,14 @@ func NewDB(dbPath string) (*DB, error) {
 	// Migration: Add hash column if not exists (preserve existing data)
 	_, err = conn.Exec(`ALTER TABLE posts ADD COLUMN hash TEXT`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to add hash column: %w", err)
 	}
 
 	// Create index on hash column for fast lookups
 	_, err = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create hash index: %w", err)
 	}
 
@@ -528,7 +530,9 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source counts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	for rows.Next() {
 		var source string
@@ -547,7 +551,9 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subreddit counts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	for rows.Next() {
 		var subreddit string
@@ -566,7 +572,9 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get media type counts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	for rows.Next() {
 		var mediaType string
@@ -590,7 +598,9 @@ func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error
 	if err != nil {
 		return 0, fmt.Errorf("failed to open idList file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	scanner := bufio.NewScanner(file)
 	imported := 0
@@ -822,7 +832,9 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all posts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var posts []Post
 
@@ -967,7 +979,9 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posts to retry: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var eligiblePosts []string
 
