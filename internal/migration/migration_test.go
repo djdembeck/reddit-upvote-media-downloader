@@ -462,7 +462,7 @@ func TestRollbackPathValidation(t *testing.T) {
 				if err := os.WriteFile(tt.setupFile, []byte("test content"), 0644); err != nil {
 					t.Fatalf("Failed to write test file: %v", err)
 				}
-				defer os.Remove(tt.setupFile)
+				defer func() { _ = os.Remove(tt.setupFile) }()
 			}
 
 			log := MigrationLog{
@@ -486,7 +486,7 @@ func TestRollbackPathValidation(t *testing.T) {
 			if err := os.WriteFile(logPath, logData, 0644); err != nil {
 				t.Fatalf("Failed to write log file: %v", err)
 			}
-			defer os.Remove(logPath)
+			defer func() { _ = os.Remove(logPath) }()
 
 			rb := NewRollback(logPath, nil, trustedSource, trustedDest)
 			rollbackLog, err := rb.Execute(context.Background())
@@ -572,8 +572,8 @@ func TestDuplicateHandling(t *testing.T) {
 				require.NoError(t, os.Rename(file1, newFile1), "Failed to rename file1")
 				require.NoError(t, os.Rename(file2, newFile2), "Failed to rename file2")
 
-				file1 = newFile1
-				file2 = newFile2
+				_ = newFile1 // used for side effect only
+				_ = newFile2
 			}
 
 			migrator := NewMigrator(sourceDir, destDir, postMap, false, nil)
@@ -1164,7 +1164,7 @@ func TestMigrationSuite(t *testing.T) {
 
 			db, err := storage.NewDB(dbPath)
 			require.NoError(t, err, "Failed to create database")
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			if tt.prePopulateDB != nil {
 				tt.prePopulateDB(t, db, sourceDir)

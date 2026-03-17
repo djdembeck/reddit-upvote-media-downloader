@@ -326,16 +326,16 @@ func (m *Migrator) moveFile(src, dst string) error {
 	// Verify
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("stat source file %s: %w", src, err)
 	}
 	dstInfo, err := os.Stat(dst)
 	if err != nil {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("stat destination file %s: %w", dst, err)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		os.Remove(dst)
+		_ = os.Remove(dst)
 		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 	}
 
@@ -352,13 +352,17 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer func() {
+		_ = sourceFile.Close()
+	}()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer func() {
+		_ = destFile.Close()
+	}()
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
 		return err
@@ -376,7 +380,9 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -422,17 +428,6 @@ func (m *Migrator) recordError(filename, postID, operation string, err error) {
 	m.Log.ErrorCount++
 }
 
-func (m *Migrator) recordWarning(filename, postID, operation string, err error) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
-		PostID:     postID,
-		SourcePath: filepath.Join(m.SourceDir, filename),
-		Status:     "moved_with_warning",
-		Error:      fmt.Sprintf("warning: %s: %v", operation, err),
-		Timestamp:  time.Now(),
-	})
-	m.Log.WarningCount++
-}
-
 func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64, hash string) {
 	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
 		PostID:     postID,
@@ -472,7 +467,9 @@ func calculateHash(filePath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	hash := blake3.New()
 	if _, err := io.Copy(hash, file); err != nil {

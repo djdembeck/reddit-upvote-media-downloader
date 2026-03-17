@@ -53,7 +53,9 @@ func (r *Rollback) loadLog() (*MigrationLog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open log: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	var migLog MigrationLog
 	if err := json.NewDecoder(file).Decode(&migLog); err != nil {
@@ -169,7 +171,7 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 		return record
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		os.Remove(op.SourcePath)
+		_ = os.Remove(op.SourcePath)
 		record.Status = "error"
 		record.Error = fmt.Sprintf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 		return record
@@ -184,7 +186,7 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 	// Attempt to remove empty destination directory (ignore errors if not empty)
 	destDir := filepath.Dir(op.DestPath)
 	if entries, err := os.ReadDir(destDir); err == nil && len(entries) == 0 {
-		os.Remove(destDir)
+		_ = os.Remove(destDir)
 	}
 
 	record.Status = "success"
@@ -226,7 +228,9 @@ func SaveRollbackLog(log *RollbackLog, path string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
