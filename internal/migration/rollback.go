@@ -217,20 +217,36 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 		return fmt.Errorf("resolve root: %w", err)
 	}
 
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		return fmt.Errorf("resolve symlinks for path: %w", err)
-	}
-
+	// Resolve symlinks for root directory
 	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
 		return fmt.Errorf("resolve symlinks for root: %w", err)
 	}
 
+	// For the path, we need to handle cases where the file doesn't exist yet
+	// (during rollback, the source file path doesn't exist until we restore it).
+	// First check the non-resolved path to catch obvious escapes
 	resolvedRoot += string(filepath.Separator)
-	if !strings.HasPrefix(resolvedPath+string(filepath.Separator), resolvedRoot) {
+	if !strings.HasPrefix(absPath+string(filepath.Separator), resolvedRoot) {
 		return fmt.Errorf("path %s escapes root %s", absPath, root)
 	}
+
+	// Also validate the directory containing the file to handle symlink attacks
+	// Only resolve symlinks if the directory exists
+	pathDir := filepath.Dir(absPath)
+	if dirInfo, err := os.Stat(pathDir); err == nil && dirInfo.IsDir() {
+		// Directory exists, resolve symlinks for additional security
+		resolvedPathDir, err := filepath.EvalSymlinks(pathDir)
+		if err != nil {
+			return fmt.Errorf("resolve symlinks for path directory: %w", err)
+		}
+		if !strings.HasPrefix(resolvedPathDir+string(filepath.Separator), resolvedRoot) {
+			return fmt.Errorf("path %s escapes root %s", absPath, root)
+		}
+	}
+	// If directory doesn't exist, the prefix check above is sufficient
+	// (we'll create the directory later if needed)
+
 	return nil
 }
 
