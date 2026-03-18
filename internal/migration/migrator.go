@@ -314,34 +314,39 @@ func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 }
 
 func (m *Migrator) moveFile(src, dst string) error {
-	// Create directory
 	dir := filepath.Dir(dst)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
-	// Copy
 	if err := copyFile(src, dst); err != nil {
+		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("copy file failed: %w; cleanup also failed: %v", err, removeErr)
+		}
 		return fmt.Errorf("copy file: %w", err)
 	}
 
-	// Verify
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		_ = os.Remove(dst)
+		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("stat source file %s failed: %w; cleanup also failed: %v", src, err, removeErr)
+		}
 		return fmt.Errorf("stat source file %s: %w", src, err)
 	}
 	dstInfo, err := os.Stat(dst)
 	if err != nil {
-		_ = os.Remove(dst)
+		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("stat destination file %s failed: %w; cleanup also failed: %v", dst, err, removeErr)
+		}
 		return fmt.Errorf("stat destination file %s: %w", dst, err)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		_ = os.Remove(dst)
+		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+			return fmt.Errorf("size mismatch after copy: expected %d, got %d; cleanup also failed: %v", srcInfo.Size(), dstInfo.Size(), removeErr)
+		}
 		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 	}
 
-	// Delete source
 	if err := os.Remove(src); err != nil {
 		return fmt.Errorf("remove source %s: %w", src, err)
 	}

@@ -216,8 +216,19 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 	if err != nil {
 		return fmt.Errorf("resolve root: %w", err)
 	}
-	rootAbs += string(filepath.Separator)
-	if !strings.HasPrefix(absPath+string(filepath.Separator), rootAbs) {
+
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return fmt.Errorf("resolve symlinks for path: %w", err)
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return fmt.Errorf("resolve symlinks for root: %w", err)
+	}
+
+	resolvedRoot += string(filepath.Separator)
+	if !strings.HasPrefix(resolvedPath+string(filepath.Separator), resolvedRoot) {
 		return fmt.Errorf("path %s escapes root %s", absPath, root)
 	}
 	return nil

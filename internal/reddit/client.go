@@ -254,7 +254,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 		return fmt.Errorf("token request failed: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Error("failed to close response body", "error", closeErr)
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
@@ -391,20 +393,38 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
-	// Handle rate limit errors
 	if resp.StatusCode == http.StatusTooManyRequests {
-		_ = resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Error("failed to close response body", "error", closeErr)
+		}
 		return nil, ErrRateLimited
 	}
 
-	// Handle unauthorized errors
 	if resp.StatusCode == http.StatusUnauthorized {
-		_ = resp.Body.Close()
-		// Try to refresh token and retry once
-		if err := c.authenticate(ctx); err != nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Error("failed to close response body", "error", closeErr)
+		}
+		if authErr := c.authenticate(ctx); authErr != nil {
+			return nil, fmt.Errorf("%w: authentication failed: %v", ErrUnauthorized, authErr)
+		}
+		retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(params.Encode()))
+		if retryReqErr != nil {
+			return nil, fmt.Errorf("creating retry request: %w", retryReqErr)
+		}
+		retryReq.Header.Set("User-Agent", c.config.UserAgent)
+		retryReq.Header.Set("Accept", "application/json")
+		retryReq.Header.Set("Authorization", "Bearer "+c.token.AccessToken)
+		retryResp, retryErr := httpClient.Do(retryReq)
+		if retryErr != nil {
+			return nil, fmt.Errorf("retry request failed: %w", retryErr)
+		}
+		if retryResp.StatusCode == http.StatusUnauthorized {
+			if closeErr := retryResp.Body.Close(); closeErr != nil {
+				slog.Error("failed to close retry response body", "error", closeErr)
+			}
 			return nil, ErrUnauthorized
 		}
-		return c.doRequest(ctx, method, endpoint, params)
+		return retryResp, nil
 	}
 
 	return resp, nil
@@ -458,10 +478,14 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 
 		var listing RedditListing
 		if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
-			_ = resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				slog.Error("failed to close response body", "error", closeErr)
+			}
 			return nil, fmt.Errorf("decoding response: %w", err)
 		}
-		_ = resp.Body.Close()
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Error("failed to close response body", "error", closeErr)
+		}
 
 		// Check for errors in response
 		if listing.Kind != "Listing" {

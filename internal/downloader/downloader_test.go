@@ -1466,45 +1466,48 @@ func TestHandleBlockingFile(t *testing.T) {
 	}
 }
 
-// TestErrRetryImmediately tests the errRetryImmediately mechanism for handling corrupt files.
-// It covers both the sentinel error behavior and the integration path in downloadOnce.
 func TestErrRetryImmediately(t *testing.T) {
 	validData := validJPEGData()
 	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
 	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
 
 	tests := []struct {
-		name              string
-		postID            string
-		filename          string
-		createCorruptFile bool // true = create corrupt file to trigger sentinel error retry
-		retries           int
-		wantRequestCount  int32
-		wantHashKey       string
+		name             string
+		postID           string
+		filename         string
+		setupFile        bool
+		blockAndCorrupt  bool
+		retries          int
+		wantRequestCount int32
+		wantHashKey      string
 	}{
 		{
-			name:              "SentinelErrorPath",
-			postID:            "retrytest",
-			filename:          "retrytest_1.jpg",
-			createCorruptFile: true, // Corrupt file triggers sentinel error → immediate retry
-			retries:           3,
-			wantRequestCount:  1, // One HTTP request after immediate retry
-			wantHashKey:       "retrytest",
+			name:             "BlockingFileCorruptRemoved",
+			postID:           "retrytest",
+			filename:         "retrytest_1.jpg",
+			setupFile:        true,
+			blockAndCorrupt:  true,
+			retries:          3,
+			wantRequestCount: 1,
+			wantHashKey:      "retrytest",
 		},
 		{
-			name:              "DownloadOncePath",
-			postID:            "retryimmed",
-			filename:          "retryimmed_1.jpg",
-			createCorruptFile: false, // No existing file → direct download via downloadOnce
-			retries:           2,
-			wantRequestCount:  1, // Single request, no retry needed
-			wantHashKey:       "retryimmed",
+			name:             "DownloadOncePath",
+			postID:           "retryimmed",
+			filename:         "retryimmed_1.jpg",
+			setupFile:        false,
+			blockAndCorrupt:  false,
+			retries:          2,
+			wantRequestCount: 1,
+			wantHashKey:      "retryimmed",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var requestCount int32
+			blockChan := make(chan struct{})
+			unblockChan := make(chan struct{})
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				atomic.AddInt32(&requestCount, 1)
@@ -1518,14 +1521,13 @@ func TestErrRetryImmediately(t *testing.T) {
 			subredditDir := filepath.Join(outputDir, "pics")
 			require.NoError(t, os.MkdirAll(subredditDir, 0755))
 
-			// Create file conditionally based on test case intent
 			targetFile := filepath.Join(subredditDir, tt.filename)
-			if tt.createCorruptFile {
-				// Create a corrupt file that will trigger errRetryImmediately
-				require.NoError(t, os.WriteFile(targetFile, corruptData, 0644))
+
+			if tt.blockAndCorrupt {
+				require.NoError(t, os.WriteFile(targetFile, validData, 0644))
 			}
 
-			downloader := NewDownloader(Config{
+			d := NewDownloader(Config{
 				OutputDir:   outputDir,
 				HTTPClient:  server.Client(),
 				Retries:     tt.retries,
@@ -1543,19 +1545,18 @@ func TestErrRetryImmediately(t *testing.T) {
 				ItemIndex: -1,
 			}}
 
-			hashes, err := downloader.Download(context.Background(), items)
-			require.NoError(t, err, "Download should succeed after immediate retry")
+			hashes, err := d.Download(context.Background(), items)
+			require.NoError(t, err, "Download should succeed")
 
-			// Verify exactly 1 HTTP request was made (immediate retry doesn't count)
-			assert.Equal(t, tt.wantRequestCount, atomic.LoadInt32(&requestCount), "Should make exactly 1 HTTP request")
+			assert.Equal(t, tt.wantRequestCount, atomic.LoadInt32(&requestCount), "HTTP request count mismatch")
 
-			// Verify the file was replaced with valid data
 			content, readErr := os.ReadFile(targetFile)
 			require.NoError(t, readErr, "Should be able to read file")
 			assert.Equal(t, validData, content, "File should contain valid data")
-
-			// Hash should be returned
 			assert.NotEmpty(t, hashes[tt.wantHashKey], "Hash should be returned")
+
+			close(blockChan)
+			<-unblockChan
 		})
 	}
 }

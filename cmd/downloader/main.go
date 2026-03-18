@@ -3,11 +3,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -137,7 +140,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		os.Exit(1)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() {
+		if err := db.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+		}
+	}()
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
@@ -182,7 +189,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		_ = redditClient.Close()
+		if err := redditClient.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing Reddit client: %v\n", err)
+		}
 	}()
 
 	// Parse log level from configuration
@@ -611,13 +620,43 @@ func findHashForPost(hashes map[string]string, postID string) string {
 	if hash, ok := hashes[postID]; ok {
 		return hash
 	}
+
+	var itemHashes []struct {
+		index int
+		hash  string
+	}
 	for key, hash := range hashes {
 		parts := strings.Split(key, "_")
 		if len(parts) == 2 && parts[0] == postID && isNumeric(parts[1]) {
-			return hash
+			idx, _ := strconv.Atoi(parts[1])
+			itemHashes = append(itemHashes, struct {
+				index int
+				hash  string
+			}{index: idx, hash: hash})
 		}
 	}
-	return ""
+
+	if len(itemHashes) == 0 {
+		return ""
+	}
+	if len(itemHashes) == 1 {
+		return itemHashes[0].hash
+	}
+
+	sort.Slice(itemHashes, func(i, j int) bool {
+		return itemHashes[i].index < itemHashes[j].index
+	})
+
+	var combined strings.Builder
+	for i, item := range itemHashes {
+		if i > 0 {
+			combined.WriteByte(',')
+		}
+		combined.WriteString(item.hash)
+	}
+
+	aggregateHash := sha256.Sum256([]byte(combined.String()))
+	return fmt.Sprintf("%x", aggregateHash)
 }
 
 func isNumeric(s string) bool {

@@ -979,6 +979,8 @@ func (db *DB) DeletePost(ctx context.Context, id string) error {
 // - retry_count < threshold (not permanently skipped)
 // - Either retry_count == 0 (never tried) OR enough time has passed since last_attempt
 // backoffDelay = min(backoffBase * 2^(retryCount-1), backoffMax)
+//
+//nolint:cyclop // complexity required for backoff calculation and eligibility logic
 func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.Duration, threshold int) ([]string, error) {
 	query := `
 		SELECT id, retry_count, last_attempt FROM posts

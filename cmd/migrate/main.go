@@ -31,20 +31,18 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error: --log-file required for rollback")
 			os.Exit(1)
 		}
+		if *sourceDir == "" || *destDir == "" {
+			fmt.Fprintln(os.Stderr, "Error: --source and --dest are required for rollback (must be explicitly provided by operator)")
+			os.Exit(1)
+		}
 		logSourceRoot, logDestRoot, err := readRootsFromLog(*logFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if *sourceDir == "" {
-			*sourceDir = logSourceRoot
-		}
-		if *destDir == "" {
-			*destDir = logDestRoot
-		}
-		if *sourceDir == "" || *destDir == "" {
-			fmt.Fprintln(os.Stderr, "Error: --source and --dest are required when migration log is missing source_dir or dest_dir")
-			os.Exit(1)
+		if logSourceRoot != "" || logDestRoot != "" {
+			fmt.Printf("Log source directory: %s\n", logSourceRoot)
+			fmt.Printf("Log destination directory: %s\n", logDestRoot)
 		}
 		runRollback(*logFile, *sourceDir, *destDir)
 		return
@@ -115,7 +113,9 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 			return fmt.Errorf("open database: %w", err)
 		}
 		defer func() {
-			_ = db.Close()
+			if err := db.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+			}
 		}()
 	}
 
@@ -183,17 +183,19 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 			os.Exit(1)
 		}
-		defer func() { _ = db.Close() }()
+		defer func() {
+			if err := db.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+			}
+		}()
 	}
 
-	// Read roots from log for audit purposes only
 	logSourceRoot, logDestRoot, err := readRootsFromLog(logPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Validate that CLI roots match log roots (audit check)
 	if logSourceRoot != "" && logSourceRoot != sourceRoot {
 		fmt.Fprintf(os.Stderr, "Error: Log source directory (%s) does not match CLI source directory (%s)\n", logSourceRoot, sourceRoot)
 		os.Exit(1)
@@ -203,7 +205,6 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		os.Exit(1)
 	}
 
-	// Use CLI roots as authoritative (not from log)
 	rb := migration.NewRollback(logPath, db, sourceRoot, destRoot)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {

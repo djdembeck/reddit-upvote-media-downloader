@@ -443,11 +443,15 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 			switch tc.name {
 			case "missing_file_after_backoff":
 				for i := 0; i < 1; i++ {
-					_ = db.IncrementRetry(ctx, postID, "error")
+					if err := db.IncrementRetry(ctx, postID, "error"); err != nil {
+						t.Fatalf("Failed to increment retry: %v", err)
+					}
 				}
 			case "exceeds_threshold":
 				for i := 0; i < 4; i++ {
-					_ = db.IncrementRetry(ctx, postID, "error")
+					if err := db.IncrementRetry(ctx, postID, "error"); err != nil {
+						t.Fatalf("Failed to increment retry: %v", err)
+					}
 				}
 			}
 

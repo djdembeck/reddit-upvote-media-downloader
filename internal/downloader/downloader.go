@@ -330,8 +330,6 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
 
-// downloadOnce performs a single download attempt with validation.
-// Returns errRetryImmediately if an existing corrupt file was removed.
 func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt, postID string) (err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()
@@ -370,17 +368,13 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		}
 	}
 
+	fileLock := d.getFileLock(filePath)
+	fileLock.Lock()
+	defer fileLock.Unlock()
+
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			blockingFileHandled, handleErr := d.handleBlockingFile(reqCtx, filePath, postID)
-			if handleErr != nil {
-				return handleErr
-			}
-			if blockingFileHandled {
-				return nil
-			}
-
 			existingFilename := filepath.Base(filePath)
 			_, isLocalReuse, wasRemoved, validateErr := d.checkAndHandleExistingFile(reqCtx, filepath.Dir(filePath), postID, existingFilename)
 			if validateErr != nil {
@@ -397,7 +391,6 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		return fmt.Errorf("create file: %w", err)
 	}
 
-	// Deferred cleanup: always close file, remove on failure
 	success := false
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
@@ -631,16 +624,15 @@ func (d *Downloader) getFileLock(filePath string) *sync.Mutex {
 	return actual.(*sync.Mutex)
 }
 
-// checkAndHandleExistingFile checks for existing files matching the expected filename and handles them.
-// Returns the file hash, whether it's a valid local reuse, whether it was removed, and any error.
-// If the file is corrupt, it is removed and wasRemoved is set to true.
-//
-//nolint:cyclop
 func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string, expectedFilename string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
 	existingFile := findExistingFile(outputDir, postID, expectedFilename)
 	if existingFile == "" {
 		return "", false, false, nil
 	}
+
+	fileLock := d.getFileLock(existingFile)
+	fileLock.Lock()
+	defer fileLock.Unlock()
 
 	ext := filepath.Ext(existingFile)
 	if validateErr := validateExistingFile(existingFile, ext); validateErr != nil {
