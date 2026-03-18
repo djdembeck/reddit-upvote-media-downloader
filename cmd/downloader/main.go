@@ -20,6 +20,7 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
 	"golang.org/x/oauth2"
 )
 
@@ -646,7 +647,7 @@ func findHashForPost(hashes map[string]string, postID string) string {
 	var itemHashes []itemHash
 	for key, hash := range hashes {
 		parts := strings.Split(key, "_")
-		if len(parts) == 2 && parts[0] == postID && isNumeric(parts[1]) {
+		if len(parts) == 2 && parts[0] == postID && strutil.IsNumeric(parts[1]) {
 			idx, err := strconv.Atoi(parts[1])
 			if err != nil {
 				slog.Warn("Failed to parse gallery index", "post_id", postID, "key", key, "error", err)
@@ -664,13 +665,4 @@ func findHashForPost(hashes map[string]string, postID string) string {
 	}
 
 	return aggregateItemHashes(itemHashes)
-}
-
-func isNumeric(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return s != ""
 }

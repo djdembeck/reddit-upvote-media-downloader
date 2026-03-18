@@ -229,7 +229,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		m.recordSkipped(filename, postID, "destination already exists")
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
-		m.recordSkipped(filename, postID, fmt.Sprintf("stat error: %v", err))
+		m.recordError(filename, postID, "stat destination", err)
 		return fmt.Errorf("stat destination %s: %w", destPath, err)
 	}
 
@@ -316,6 +316,17 @@ func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 	return filepath.Join(m.DestDir, subdir, filename)
 }
 
+// wrapWithCleanup wraps an error with context and attempts to clean up the destination file.
+// It returns the wrapped error after attempting to remove dst (ignoring os.IsNotExist).
+func wrapWithCleanup(err error, dst, contextFmt string, args ...interface{}) error {
+	contextMsg := fmt.Sprintf(contextFmt, args...)
+	wrappedErr := fmt.Errorf("%s: %w", contextMsg, err)
+	if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+		return fmt.Errorf("%w; cleanup also failed: %v", wrappedErr, removeErr)
+	}
+	return wrappedErr
+}
+
 func (m *Migrator) moveFile(src, dst string) error {
 	dir := filepath.Dir(dst)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -323,31 +334,19 @@ func (m *Migrator) moveFile(src, dst string) error {
 	}
 
 	if err := copyFile(src, dst); err != nil {
-		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
-			return fmt.Errorf("copy file failed: %w; cleanup also failed: %v", err, removeErr)
-		}
-		return fmt.Errorf("copy file: %w", err)
+		return wrapWithCleanup(err, dst, "copy file")
 	}
 
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
-			return fmt.Errorf("stat source file %s failed: %w; cleanup also failed: %v", src, err, removeErr)
-		}
-		return fmt.Errorf("stat source file %s: %w", src, err)
+		return wrapWithCleanup(err, dst, "stat source file %s", src)
 	}
 	dstInfo, err := os.Stat(dst)
 	if err != nil {
-		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
-			return fmt.Errorf("stat destination file %s failed: %w; cleanup also failed: %v", dst, err, removeErr)
-		}
-		return fmt.Errorf("stat destination file %s: %w", dst, err)
+		return wrapWithCleanup(err, dst, "stat destination file %s", dst)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
-			return fmt.Errorf("size mismatch after copy: expected %d, got %d; cleanup also failed: %v", srcInfo.Size(), dstInfo.Size(), removeErr)
-		}
-		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
+		return wrapWithCleanup(fmt.Errorf("size mismatch"), dst, "size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 	}
 
 	if err := os.Remove(src); err != nil {
@@ -360,29 +359,33 @@ func (m *Migrator) moveFile(src, dst string) error {
 func copyFile(src, dst string) (err error) {
 	sourceFile, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source %s: %w", src, err)
 	}
 	defer func() {
 		if cerr := sourceFile.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close source file: %w", cerr)
+			err = fmt.Errorf("close source %s: %w", src, cerr)
 		}
 	}()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
-		return err
+		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close destination file: %w", cerr)
+			err = fmt.Errorf("close dest %s: %w", dst, cerr)
 		}
 	}()
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return err
+		return fmt.Errorf("copy %s->%s: %w", src, dst, err)
 	}
 
-	return destFile.Sync()
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("sync dest %s: %w", dst, err)
+	}
+
+	return nil
 }
 
 func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
@@ -392,17 +395,21 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 
 	file, err := os.Create(logPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("create log file %s: %w", logPath, err)
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close log file: %w", cerr)
+			err = fmt.Errorf("close log file %s: %w", logPath, cerr)
 		}
 	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(m.Log)
+	if err := encoder.Encode(m.Log); err != nil {
+		return fmt.Errorf("encode log to %s: %w", logPath, err)
+	}
+
+	return nil
 }
 
 // Recording methods

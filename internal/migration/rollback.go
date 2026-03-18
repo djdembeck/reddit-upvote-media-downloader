@@ -129,14 +129,19 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 		return record
 	}
 
-	// Check file exists
-	if _, err := os.Stat(op.DestPath); os.IsNotExist(err) {
-		record.Status = "error"
-		record.Error = "file not found at destination"
-		return record
-	} else if err != nil {
+	// Check file exists and is not a symlink
+	if info, err := os.Lstat(op.DestPath); err != nil {
+		if os.IsNotExist(err) {
+			record.Status = "error"
+			record.Error = "file not found at destination"
+			return record
+		}
 		record.Status = "error"
 		record.Error = fmt.Sprintf("stat dest: %v", err)
+		return record
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		record.Status = "error"
+		record.Error = "destination path is a symlink, aborting rollback"
 		return record
 	}
 
@@ -248,29 +253,40 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 		return fmt.Errorf("resolve symlinks for root: %w", err)
 	}
 
-	// For the path, we need to handle cases where the file doesn't exist yet
-	// (during rollback, the source file path doesn't exist until we restore it).
-	// First check the non-resolved path to catch obvious escapes
-	resolvedRoot += string(filepath.Separator)
-	if !strings.HasPrefix(absPath+string(filepath.Separator), resolvedRoot) {
-		return fmt.Errorf("path %s escapes root %s", absPath, root)
+	// Try to resolve symlinks in the path itself if it exists
+	// This prevents TOCTOU attacks where a path component is a symlink
+	resolvedPath := absPath
+	if pathInfo, err := os.Lstat(absPath); err == nil {
+		// Path exists - resolve it fully
+		if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+			resolvedPath = resolved
+		}
+		// If path is a symlink, check if its target is within the root
+		if pathInfo.Mode()&os.ModeSymlink != 0 {
+			if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
+				resolvedPath = resolved
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		// Some other error accessing the path
+		return fmt.Errorf("stat path %s: %w", absPath, err)
+	} else {
+		// Path doesn't exist - try to resolve parent directories
+		pathDir := filepath.Dir(absPath)
+		if dirInfo, err := os.Stat(pathDir); err == nil && dirInfo.IsDir() {
+			if resolvedDir, err := filepath.EvalSymlinks(pathDir); err == nil {
+				// Reconstruct the path with resolved directory
+				base := filepath.Base(absPath)
+				resolvedPath = filepath.Join(resolvedDir, base)
+			}
+		}
 	}
 
-	// Also validate the directory containing the file to handle symlink attacks
-	// Only resolve symlinks if the directory exists
-	pathDir := filepath.Dir(absPath)
-	if dirInfo, err := os.Stat(pathDir); err == nil && dirInfo.IsDir() {
-		// Directory exists, resolve symlinks for additional security
-		resolvedPathDir, err := filepath.EvalSymlinks(pathDir)
-		if err != nil {
-			return fmt.Errorf("resolve symlinks for path directory: %w", err)
-		}
-		if !strings.HasPrefix(resolvedPathDir+string(filepath.Separator), resolvedRoot) {
-			return fmt.Errorf("path %s escapes root %s", absPath, root)
-		}
+	// Check containment using resolved paths
+	resolvedRootWithSep := resolvedRoot + string(filepath.Separator)
+	if !strings.HasPrefix(resolvedPath+string(filepath.Separator), resolvedRootWithSep) {
+		return fmt.Errorf("path %s escapes root %s", absPath, root)
 	}
-	// If directory doesn't exist, the prefix check above is sufficient
-	// (we'll create the directory later if needed)
 
 	return nil
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -647,7 +648,7 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 }
 
 func (d *Downloader) checkAndHandleExistingFileLocked(ctx context.Context, existingFile, postID string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
-	removed, err := d.validateAndMaybeRemove(existingFile, postID)
+	removed, err := d.validateAndMaybeRemove(existingFile)
 	if err != nil {
 		return "", false, false, err
 	}
@@ -658,7 +659,7 @@ func (d *Downloader) checkAndHandleExistingFileLocked(ctx context.Context, exist
 	return d.computeHashAndHandleKnownBad(ctx, existingFile, postID)
 }
 
-func (d *Downloader) validateAndMaybeRemove(existingFile, postID string) (bool, error) {
+func (d *Downloader) validateAndMaybeRemove(existingFile string) (bool, error) {
 	ext := filepath.Ext(existingFile)
 	if validateErr := validateExistingFile(existingFile, ext); validateErr != nil {
 		return d.handlePermanentValidationFailure(existingFile, validateErr)
@@ -808,7 +809,7 @@ func extractGalleryIndex(filename string) string {
 		return ""
 	}
 	// Check if the part before the last (postID) is numeric
-	if idx := parts[len(parts)-2]; isNumeric(idx) {
+	if idx := parts[len(parts)-2]; strutil.IsNumeric(idx) {
 		return idx
 	}
 	return ""
@@ -819,14 +820,4 @@ func itemHashKey(item Downloadable) string {
 		return item.PostID + "_" + strconv.Itoa(item.ItemIndex)
 	}
 	return item.PostID
-}
-
-// isNumeric checks if a string contains only digits.
-func isNumeric(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return s != ""
 }
