@@ -616,15 +616,34 @@ func handleAuth(cfg *config.Config) error {
 	return nil
 }
 
+type itemHash struct {
+	index int
+	hash  string
+}
+
+func aggregateItemHashes(hashes []itemHash) string {
+	sort.Slice(hashes, func(i, j int) bool {
+		return hashes[i].index < hashes[j].index
+	})
+
+	var combined strings.Builder
+	for i, item := range hashes {
+		if i > 0 {
+			combined.WriteByte(',')
+		}
+		combined.WriteString(item.hash)
+	}
+
+	aggregateHash := sha256.Sum256([]byte(combined.String()))
+	return fmt.Sprintf("%x", aggregateHash)
+}
+
 func findHashForPost(hashes map[string]string, postID string) string {
 	if hash, ok := hashes[postID]; ok {
 		return hash
 	}
 
-	var itemHashes []struct {
-		index int
-		hash  string
-	}
+	var itemHashes []itemHash
 	for key, hash := range hashes {
 		parts := strings.Split(key, "_")
 		if len(parts) == 2 && parts[0] == postID && isNumeric(parts[1]) {
@@ -633,10 +652,7 @@ func findHashForPost(hashes map[string]string, postID string) string {
 				slog.Warn("Failed to parse gallery index", "post_id", postID, "key", key, "error", err)
 				continue
 			}
-			itemHashes = append(itemHashes, struct {
-				index int
-				hash  string
-			}{index: idx, hash: hash})
+			itemHashes = append(itemHashes, itemHash{index: idx, hash: hash})
 		}
 	}
 
@@ -647,20 +663,7 @@ func findHashForPost(hashes map[string]string, postID string) string {
 		return itemHashes[0].hash
 	}
 
-	sort.Slice(itemHashes, func(i, j int) bool {
-		return itemHashes[i].index < itemHashes[j].index
-	})
-
-	var combined strings.Builder
-	for i, item := range itemHashes {
-		if i > 0 {
-			combined.WriteByte(',')
-		}
-		combined.WriteString(item.hash)
-	}
-
-	aggregateHash := sha256.Sum256([]byte(combined.String()))
-	return fmt.Sprintf("%x", aggregateHash)
+	return aggregateItemHashes(itemHashes)
 }
 
 func isNumeric(s string) bool {

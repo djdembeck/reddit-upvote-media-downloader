@@ -647,7 +647,7 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 }
 
 func (d *Downloader) checkAndHandleExistingFileLocked(ctx context.Context, existingFile, postID string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
-	removed, err := d.validateAndMaybeRemove(ctx, existingFile, postID)
+	removed, err := d.validateAndMaybeRemove(existingFile, postID)
 	if err != nil {
 		return "", false, false, err
 	}
@@ -658,7 +658,7 @@ func (d *Downloader) checkAndHandleExistingFileLocked(ctx context.Context, exist
 	return d.computeHashAndHandleKnownBad(ctx, existingFile, postID)
 }
 
-func (d *Downloader) validateAndMaybeRemove(ctx context.Context, existingFile, postID string) (bool, error) {
+func (d *Downloader) validateAndMaybeRemove(existingFile, postID string) (bool, error) {
 	ext := filepath.Ext(existingFile)
 	if validateErr := validateExistingFile(existingFile, ext); validateErr != nil {
 		return d.handlePermanentValidationFailure(existingFile, validateErr)

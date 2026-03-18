@@ -228,6 +228,9 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	if _, err := os.Stat(destPath); err == nil {
 		m.recordSkipped(filename, postID, "destination already exists")
 		return nil
+	} else if err != nil && !os.IsNotExist(err) {
+		m.recordSkipped(filename, postID, fmt.Sprintf("stat error: %v", err))
+		return fmt.Errorf("stat destination %s: %w", destPath, err)
 	}
 
 	if m.DryRun {

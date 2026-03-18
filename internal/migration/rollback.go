@@ -87,6 +87,10 @@ func (r *Rollback) Execute(ctx context.Context) (*RollbackLog, error) {
 	}
 
 	for i := len(migLog.Operations) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return rollbackLog, fmt.Errorf("rollback cancelled: %w", err)
+		}
+
 		op := migLog.Operations[i]
 		if op.Status != "moved" && op.Status != "moved_with_warning" {
 			continue
@@ -186,9 +190,12 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 		return record
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		_ = os.Remove(op.SourcePath)
+		cleanupErr := os.Remove(op.SourcePath)
 		record.Status = "error"
 		record.Error = fmt.Sprintf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
+		if cleanupErr != nil {
+			record.Error += fmt.Sprintf("; cleanup failed: %v", cleanupErr)
+		}
 		return record
 	}
 
@@ -198,10 +205,13 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 		return record
 	}
 
-	// Attempt to remove empty destination directory (ignore errors if not empty)
+	// Attempt to remove empty destination directory
 	destDir := filepath.Dir(op.DestPath)
 	if entries, err := os.ReadDir(destDir); err == nil && len(entries) == 0 {
-		_ = os.Remove(destDir)
+		if removeErr := os.Remove(destDir); removeErr != nil {
+			slog.Warn("failed to remove empty destination directory",
+				"dir", destDir, "error", removeErr)
+		}
 	}
 
 	record.Status = "success"
