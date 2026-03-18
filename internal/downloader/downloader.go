@@ -57,6 +57,12 @@ type Config struct {
 	Logger      *slog.Logger
 }
 
+// fileLockEntry holds a mutex and reference count for per-path locking.
+type fileLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
 // Downloader orchestrates media downloads from Reddit posts.
 type Downloader struct {
 	config    Config
@@ -65,6 +71,7 @@ type Downloader struct {
 	db        *storage.DB
 	// fileLocks provides per-path mutexes to prevent race conditions
 	// when validating/removing files created with O_EXCL by another writer.
+	// Uses ref-counted entries to allow cleanup when no longer needed.
 	fileLocks sync.Map
 }
 
@@ -371,9 +378,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		}
 	}
 
-	fileLock := d.getFileLock(filePath)
-	fileLock.Lock()
-	defer fileLock.Unlock()
+	unlock := d.acquireFileLock(filePath)
+	defer unlock()
 
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
@@ -596,9 +602,8 @@ func combineErrors(errs ...error) error {
 func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID string) (handled bool, err error) {
 	// Acquire per-path lock to prevent race conditions with concurrent downloads
 	// to the same destination file (created with O_EXCL by another writer).
-	fileLock := d.getFileLock(filePath)
-	fileLock.Lock()
-	defer fileLock.Unlock()
+	unlock := d.acquireFileLock(filePath)
+	defer unlock()
 
 	if !fileExists(filePath) {
 		return false, nil
@@ -622,12 +627,29 @@ func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID st
 	return true, nil
 }
 
-// getFileLock returns a mutex for the given file path, creating one if necessary.
+// acquireFileLock acquires a lock for the given file path, creating the lock entry if necessary.
+// It increments the reference count and returns an unlock function that decrements
+// the reference count and removes the entry when it reaches zero.
 // This provides per-path locking to prevent race conditions when validating files
 // that may have been created with O_EXCL by another concurrent download.
-func (d *Downloader) getFileLock(filePath string) *sync.Mutex {
-	actual, _ := d.fileLocks.LoadOrStore(filePath, &sync.Mutex{})
-	return actual.(*sync.Mutex)
+func (d *Downloader) acquireFileLock(filePath string) (unlock func()) {
+	// Load or create the lock entry
+	actual, _ := d.fileLocks.LoadOrStore(filePath, &fileLockEntry{})
+	entry := actual.(*fileLockEntry)
+
+	// Lock the mutex and increment reference count
+	entry.mu.Lock()
+	entry.refs++
+
+	// Return unlock function that decrements ref count and cleans up if needed
+	return func() {
+		entry.refs--
+		if entry.refs == 0 {
+			// Use CompareAndDelete to avoid race with concurrent LoadOrStore
+			d.fileLocks.CompareAndDelete(filePath, entry)
+		}
+		entry.mu.Unlock()
+	}
 }
 
 func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, postID string, expectedFilename string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
@@ -636,9 +658,8 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 		return "", false, false, nil
 	}
 
-	fileLock := d.getFileLock(existingFile)
-	fileLock.Lock()
-	defer fileLock.Unlock()
+	unlock := d.acquireFileLock(existingFile)
+	defer unlock()
 
 	if !fileExists(existingFile) {
 		return "", false, false, nil

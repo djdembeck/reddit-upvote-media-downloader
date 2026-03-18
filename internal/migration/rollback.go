@@ -236,6 +236,35 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 	return record
 }
 
+// resolveExistingOrParent resolves a path to its canonical form.
+// If the path exists, it fully resolves symlinks. If the path doesn't exist,
+// it resolves the parent directory and reconstructs the path.
+func resolveExistingOrParent(path string) (string, error) {
+	// Try to resolve the path if it exists
+	if _, err := os.Lstat(path); err == nil {
+		// Path exists - resolve symlinks fully
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve symlinks: %w", err)
+		}
+		return resolved, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat path: %w", err)
+	}
+
+	// Path doesn't exist - resolve parent directory
+	pathDir := filepath.Dir(path)
+	if dirInfo, err := os.Stat(pathDir); err == nil && dirInfo.IsDir() {
+		resolvedDir, err := filepath.EvalSymlinks(pathDir)
+		if err == nil {
+			return filepath.Join(resolvedDir, filepath.Base(path)), nil
+		}
+	}
+
+	// Return original path if parent couldn't be resolved
+	return path, nil
+}
+
 func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 	absPath, err := filepath.Abs(filepath.Clean(pathStr))
 	if err != nil {
@@ -253,33 +282,10 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 		return fmt.Errorf("resolve symlinks for root: %w", err)
 	}
 
-	// Try to resolve symlinks in the path itself if it exists
-	// This prevents TOCTOU attacks where a path component is a symlink
-	resolvedPath := absPath
-	if pathInfo, err := os.Lstat(absPath); err == nil {
-		// Path exists - resolve it fully
-		if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
-			resolvedPath = resolved
-		}
-		// If path is a symlink, check if its target is within the root
-		if pathInfo.Mode()&os.ModeSymlink != 0 {
-			if resolved, err := filepath.EvalSymlinks(absPath); err == nil {
-				resolvedPath = resolved
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		// Some other error accessing the path
-		return fmt.Errorf("stat path %s: %w", absPath, err)
-	} else {
-		// Path doesn't exist - try to resolve parent directories
-		pathDir := filepath.Dir(absPath)
-		if dirInfo, err := os.Stat(pathDir); err == nil && dirInfo.IsDir() {
-			if resolvedDir, err := filepath.EvalSymlinks(pathDir); err == nil {
-				// Reconstruct the path with resolved directory
-				base := filepath.Base(absPath)
-				resolvedPath = filepath.Join(resolvedDir, base)
-			}
-		}
+	// Resolve the path (existing or parent-based)
+	resolvedPath, err := resolveExistingOrParent(absPath)
+	if err != nil {
+		return fmt.Errorf("resolve path: %w", err)
 	}
 
 	// Check containment using resolved paths

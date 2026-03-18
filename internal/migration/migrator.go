@@ -135,6 +135,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		}
 		info, err := entry.Info()
 		if err != nil {
+			m.Log.TotalFiles++
 			m.recordError(entry.Name(), "", "stat_file", err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("stat file %s: %w", entry.Name(), err)
@@ -290,7 +291,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 				SourcePath: sourcePath,
 				Timestamp:  time.Now(),
 			}
-			return nil
+			return fmt.Errorf("save post to db: %w", saveErr)
 		}
 	}
 
