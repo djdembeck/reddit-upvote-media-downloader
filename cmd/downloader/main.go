@@ -628,7 +628,11 @@ func findHashForPost(hashes map[string]string, postID string) string {
 	for key, hash := range hashes {
 		parts := strings.Split(key, "_")
 		if len(parts) == 2 && parts[0] == postID && isNumeric(parts[1]) {
-			idx, _ := strconv.Atoi(parts[1])
+			idx, err := strconv.Atoi(parts[1])
+			if err != nil {
+				slog.Warn("Failed to parse gallery index", "post_id", postID, "key", key, "error", err)
+				continue
+			}
 			itemHashes = append(itemHashes, struct {
 				index int
 				hash  string

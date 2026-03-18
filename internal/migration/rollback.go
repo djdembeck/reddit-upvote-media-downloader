@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,9 @@ func (r *Rollback) loadLog() (*MigrationLog, error) {
 		return nil, fmt.Errorf("open log: %w", err)
 	}
 	defer func() {
-		_ = file.Close()
+		if cerr := file.Close(); cerr != nil {
+			slog.Error("failed to close rollback log file", "path", r.LogPath, "error", cerr)
+		}
 	}()
 
 	var migLog MigrationLog
@@ -138,6 +141,18 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op MigrationRecord) Ro
 	if err := os.MkdirAll(sourceDir, 0755); err != nil {
 		record.Status = "error"
 		record.Error = fmt.Sprintf("create dir: %v", err)
+		return record
+	}
+
+	// Re-validate paths after MkdirAll to prevent TOCTOU symlink attacks
+	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("source path validation failed after mkdir: %v", err)
+		return record
+	}
+	if err := r.validatePathAgainstRoot(op.DestPath, r.DestRoot); err != nil {
+		record.Status = "error"
+		record.Error = fmt.Sprintf("dest path validation failed after mkdir: %v", err)
 		return record
 	}
 
@@ -256,7 +271,9 @@ func SaveRollbackLog(log *RollbackLog, path string) error {
 		return err
 	}
 	defer func() {
-		_ = file.Close()
+		if cerr := file.Close(); cerr != nil {
+			slog.Error("failed to close rollback log file", "path", path, "error", cerr)
+		}
 	}()
 
 	encoder := json.NewEncoder(file)

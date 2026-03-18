@@ -346,7 +346,9 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if cerr := resp.Body.Close(); cerr != nil {
+			d.logger.Warn("failed to close response body", "error", cerr)
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
@@ -375,18 +377,21 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			existingFilename := filepath.Base(filePath)
-			_, isLocalReuse, wasRemoved, validateErr := d.checkAndHandleExistingFile(reqCtx, filepath.Dir(filePath), postID, existingFilename)
-			if validateErr != nil {
-				return fmt.Errorf("existing file validation failed: %w", validateErr)
+			existingFile := findExistingFile(filepath.Dir(filePath), postID, filepath.Base(filePath))
+			if existingFile != "" {
+				_, isLocalReuse, wasRemoved, validateErr := d.checkAndHandleExistingFileLocked(reqCtx, existingFile, postID)
+				if validateErr != nil {
+					return fmt.Errorf("existing file validation failed: %w", validateErr)
+				}
+				if wasRemoved {
+					return errRetryImmediately
+				}
+				if !isLocalReuse {
+					return fmt.Errorf("existing file failed validation but was not removed (transient error): %s", filePath)
+				}
+				return nil
 			}
-			if wasRemoved {
-				return errRetryImmediately
-			}
-			if !isLocalReuse {
-				return fmt.Errorf("file reported as existing but not found during validation: %s", filePath)
-			}
-			return nil
+			return fmt.Errorf("file reported as existing but not found: %s", filePath)
 		}
 		return fmt.Errorf("create file: %w", err)
 	}
@@ -634,25 +639,49 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 	fileLock.Lock()
 	defer fileLock.Unlock()
 
-	ext := filepath.Ext(existingFile)
-	if validateErr := validateExistingFile(existingFile, ext); validateErr != nil {
-		// Only delete on permanent validation errors (size, magic, HTML)
-		// Transient I/O errors should not cause deletion
-		var validationErr ValidationError
-		if errors.As(validateErr, &validationErr) && validationErr.Permanent {
-			d.logger.Warn("existing file is corrupt, re-downloading",
-				"path", existingFile, "error", validateErr)
-			if removeErr := os.Remove(existingFile); removeErr != nil {
-				d.logger.Error("failed to remove corrupt file",
-					"path", existingFile, "error", removeErr)
-				return "", false, false, fmt.Errorf("failed to remove corrupt file %s: %w", existingFile, removeErr)
-			}
-			return "", false, true, nil
-		}
-		// Transient I/O errors - return wrapped error without deleting
-		return "", false, false, fmt.Errorf("failed to validate existing file %s: %w", existingFile, validateErr)
+	if !fileExists(existingFile) {
+		return "", false, false, nil
 	}
 
+	return d.checkAndHandleExistingFileLocked(ctx, existingFile, postID)
+}
+
+func (d *Downloader) checkAndHandleExistingFileLocked(ctx context.Context, existingFile, postID string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
+	removed, err := d.validateAndMaybeRemove(ctx, existingFile, postID)
+	if err != nil {
+		return "", false, false, err
+	}
+	if removed {
+		return "", false, true, nil
+	}
+
+	return d.computeHashAndHandleKnownBad(ctx, existingFile, postID)
+}
+
+func (d *Downloader) validateAndMaybeRemove(ctx context.Context, existingFile, postID string) (bool, error) {
+	ext := filepath.Ext(existingFile)
+	if validateErr := validateExistingFile(existingFile, ext); validateErr != nil {
+		return d.handlePermanentValidationFailure(existingFile, validateErr)
+	}
+	return false, nil
+}
+
+func (d *Downloader) handlePermanentValidationFailure(existingFile string, validateErr error) (bool, error) {
+	var validationErr ValidationError
+	if errors.As(validateErr, &validationErr) && validationErr.Permanent {
+		d.logger.Warn("existing file is corrupt, re-downloading",
+			"path", existingFile, "error", validateErr)
+		if removeErr := os.Remove(existingFile); removeErr != nil {
+			d.logger.Error("failed to remove corrupt file",
+				"path", existingFile, "error", removeErr)
+			return false, fmt.Errorf("failed to remove corrupt file %s: %w", existingFile, removeErr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("failed to validate existing file %s: %w", existingFile, validateErr)
+}
+
+func (d *Downloader) computeHashAndHandleKnownBad(ctx context.Context, existingFile, postID string) (hash string, isLocalReuse bool, wasRemoved bool, err error) {
 	d.logger.Info("skip existing file", "path", existingFile)
 	hash, err = CalculateFileHash(existingFile)
 	if err != nil {
@@ -660,11 +689,9 @@ func (d *Downloader) checkAndHandleExistingFile(ctx context.Context, outputDir, 
 		return "", false, false, fmt.Errorf("failed to hash file %s: %w", existingFile, err)
 	}
 
-	// Check for known bad hashes (corrupted/error content from old bugs)
 	if knownBadHashes[hash] {
 		d.logger.Error("detected known bad hash in existing file (corrupted content)", "hash", hash, "post_id", postID, "path", existingFile)
 		removeErr := os.Remove(existingFile)
-		// Save error to database even if removal fails (so we don't retry known-bad content)
 		if d.db != nil {
 			if saveErr := d.db.IncrementRetry(ctx, postID, errReasonKnownBadHash); saveErr != nil {
 				return "", false, false, fmt.Errorf("failed to persist bad hash error for post %s: IncrementRetry failed: %w", postID, saveErr)

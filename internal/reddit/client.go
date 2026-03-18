@@ -407,13 +407,23 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 		if authErr := c.authenticate(ctx); authErr != nil {
 			return nil, fmt.Errorf("%w: authentication failed: %v", ErrUnauthorized, authErr)
 		}
+		// Acquire lock to safely access token for the retry request
+		c.mu.RLock()
+		accessToken := ""
+		if c.token != nil {
+			accessToken = c.token.AccessToken
+		}
+		c.mu.RUnlock()
+		if accessToken == "" {
+			return nil, fmt.Errorf("%w: no access token after authentication", ErrUnauthorized)
+		}
 		retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(params.Encode()))
 		if retryReqErr != nil {
 			return nil, fmt.Errorf("creating retry request: %w", retryReqErr)
 		}
 		retryReq.Header.Set("User-Agent", c.config.UserAgent)
 		retryReq.Header.Set("Accept", "application/json")
-		retryReq.Header.Set("Authorization", "Bearer "+c.token.AccessToken)
+		retryReq.Header.Set("Authorization", "Bearer "+accessToken)
 		retryResp, retryErr := httpClient.Do(retryReq)
 		if retryErr != nil {
 			return nil, fmt.Errorf("retry request failed: %w", retryErr)

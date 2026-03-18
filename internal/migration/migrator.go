@@ -354,13 +354,15 @@ func (m *Migrator) moveFile(src, dst string) error {
 	return nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		_ = sourceFile.Close()
+		if cerr := sourceFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close source file: %w", cerr)
+		}
 	}()
 
 	destFile, err := os.Create(dst)
@@ -368,7 +370,9 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer func() {
-		_ = destFile.Close()
+		if cerr := destFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close destination file: %w", cerr)
+		}
 	}()
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
@@ -378,7 +382,7 @@ func copyFile(src, dst string) error {
 	return destFile.Sync()
 }
 
-func (m *Migrator) SaveLog(ctx context.Context, logPath string) error {
+func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err := contextChecker(ctx); err != nil {
 		return err
 	}
@@ -388,7 +392,9 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) error {
 		return err
 	}
 	defer func() {
-		_ = file.Close()
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close log file: %w", cerr)
+		}
 	}()
 
 	encoder := json.NewEncoder(file)
@@ -469,13 +475,15 @@ func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, i
 }
 
 // calculateHash computes BLAKE3 hash of a file
-func calculateHash(filePath string) (string, error) {
+func calculateHash(filePath string) (hashStr string, err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", filePath, err)
 	}
 	defer func() {
-		_ = file.Close()
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close hash file: %w", cerr)
+		}
 	}()
 
 	hash := blake3.New()

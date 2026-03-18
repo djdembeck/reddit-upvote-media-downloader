@@ -1506,8 +1506,6 @@ func TestErrRetryImmediately(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var requestCount int32
-			blockChan := make(chan struct{})
-			unblockChan := make(chan struct{})
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				atomic.AddInt32(&requestCount, 1)
@@ -1524,7 +1522,7 @@ func TestErrRetryImmediately(t *testing.T) {
 			targetFile := filepath.Join(subredditDir, tt.filename)
 
 			if tt.blockAndCorrupt {
-				require.NoError(t, os.WriteFile(targetFile, validData, 0644))
+				require.NoError(t, os.WriteFile(targetFile, corruptData, 0644))
 			}
 
 			d := NewDownloader(Config{
@@ -1554,9 +1552,6 @@ func TestErrRetryImmediately(t *testing.T) {
 			require.NoError(t, readErr, "Should be able to read file")
 			assert.Equal(t, validData, content, "File should contain valid data")
 			assert.NotEmpty(t, hashes[tt.wantHashKey], "Hash should be returned")
-
-			close(blockChan)
-			<-unblockChan
 		})
 	}
 }
