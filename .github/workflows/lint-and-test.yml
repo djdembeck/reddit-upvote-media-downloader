@@ -12,7 +12,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write  # Required for Codecov OIDC authentication
 
 jobs:
   lint:
