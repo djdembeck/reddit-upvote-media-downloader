@@ -129,12 +129,12 @@ func main() {
 	if err := os.MkdirAll(cfg.Storage.OutputDir, 0750); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
 		cancel()
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
 		cancel()
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
 	}
 
 	// Open database
@@ -321,7 +321,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	fmt.Println()
 
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled: %w", err)
+		return fmt.Errorf("context canceled: %w", err)
 	}
 
 	info, err := os.Stat(sourceDir)
@@ -349,23 +349,26 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		}
 
 		if len(parser.PostMap) == 0 {
-			indexPaths := []string{
-				filepath.Join(filepath.Dir(sourceDir), "index.html"),
-				filepath.Join(sourceDir, "index.html"),
+			indexPaths := []struct {
+				path    string
+				baseDir string
+			}{
+				{filepath.Join(filepath.Dir(sourceDir), "index.html"), filepath.Dir(sourceDir)},
+				{filepath.Join(sourceDir, "index.html"), sourceDir},
 			}
-			for _, indexPath := range indexPaths {
+			for _, idx := range indexPaths {
 				if err := ctx.Err(); err != nil {
-					return fmt.Errorf("context cancelled: %w", err)
+					return fmt.Errorf("context canceled: %w", err)
 				}
-				if _, err := os.Stat(indexPath); err != nil {
+				if _, err := os.Stat(idx.path); err != nil {
 					if os.IsNotExist(err) {
 						continue
 					}
-					return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
+					return fmt.Errorf("checking index.html at %s: %w", idx.path, err)
 				}
-				fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", indexPath)
-				if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
-					return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
+				fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", idx.path)
+				if err := parser.ParseIndexHTML(ctx, idx.baseDir, idx.path); err != nil {
+					return fmt.Errorf("parsing index.html at %s: %w", idx.path, err)
 				}
 				break
 			}
@@ -378,7 +381,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	fmt.Printf("Total: %d posts in HTML metadata\n\n", len(parser.PostMap))
 
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled: %w", err)
+		return fmt.Errorf("context canceled: %w", err)
 	}
 
 	if err := os.MkdirAll(destDir, 0750); err != nil {

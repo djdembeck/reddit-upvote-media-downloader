@@ -532,6 +532,7 @@ func TestHelpOutput(t *testing.T) {
 	testFlagSet.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 
 	var helpOutput strings.Builder
+
 	testFlagSet.SetOutput(&helpOutput)
 
 	testFlagSet.PrintDefaults()

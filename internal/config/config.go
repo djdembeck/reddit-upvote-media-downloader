@@ -65,13 +65,13 @@ type MigrateConfig struct {
 	ReorganizeEnabled bool   // Enable file reorganization into subreddit folders
 }
 
-// BackoffConfig holds exponential backoff settings for retries
+// BackoffConfig holds exponential backoff settings for retries.
 type BackoffConfig struct {
 	Base time.Duration
 	Max  time.Duration
 }
 
-// CalculateBackoffDelay calculates exponential backoff delay for retries
+// CalculateBackoffDelay calculates exponential backoff delay for retries.
 // Formula: baseDelay * (2^retryCount), capped at maxDelay
 // Edge cases: negative retryCount returns 0, zero base returns 0
 func CalculateBackoffDelay(retryCount int, base, maxDuration time.Duration) time.Duration {
@@ -93,7 +93,7 @@ func CalculateBackoffDelay(retryCount int, base, maxDuration time.Duration) time
 	return delay
 }
 
-// SmartPollingConfig holds smart polling settings for re-checking posts
+// SmartPollingConfig holds smart polling settings for re-checking posts.
 type SmartPollingConfig struct {
 	ReCheck        bool
 	RetryThreshold int

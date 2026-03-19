@@ -142,7 +142,7 @@ func TestHTMLParser(t *testing.T) {
 	}
 
 	parser := NewHTMLParser()
-	if err := parser.ParseIndexHTML(context.Background(), indexPath); err != nil {
+	if err := parser.ParseIndexHTML(context.Background(), tmpDir, indexPath); err != nil {
 		t.Fatal(err)
 	}
 

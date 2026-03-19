@@ -349,9 +349,9 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 	maxDelay := time.Second
 
 	testCases := []struct {
-		name             string
 		setupFunc        func(string) (*storage.Post, error)
 		waitAfterSetup   time.Duration
+		name             string
 		expectExists     bool
 		expectFileExists bool
 		expectShouldSkip bool
@@ -980,12 +980,12 @@ func TestRunFileReorganization_Table(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := []struct {
-		name            string
 		setupFunc       func(tempDir string) (string, string, string, *storage.DB, func())
-		expectError     bool
+		name            string
 		expectErrMsg    string
 		expectMovedPath string
 		expectedDBPost  string
+		expectError     bool
 	}{
 		{
 			name: "successful reorganization",

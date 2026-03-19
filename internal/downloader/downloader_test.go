@@ -489,11 +489,11 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 }
 
 type dedupTestSetup struct {
-	outputDir    string
-	subredditDir string
 	db           *storage.DB
 	server       *httptest.Server
 	downloader   *Downloader
+	outputDir    string
+	subredditDir string
 }
 
 func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup {
@@ -564,14 +564,14 @@ func TestDeduplication(t *testing.T) {
 	uniqueData[100] = 0xAB
 
 	tests := []struct {
-		name                string
 		serverContent       []byte
-		existingFile        bool
 		existingFileContent []byte
+		name                string
 		existingFilename    string
 		existingPostID      string
 		newPostID           string
 		newFilename         string
+		existingFile        bool
 		wantEmptyHash       bool
 		wantFileExists      bool
 		wantExistingFile    bool
@@ -717,8 +717,8 @@ func TestHashCalculation_Integration(t *testing.T) {
 // TestItemHashKey verifies that itemHashKey generates correct keys for single items and gallery items.
 func TestItemHashKey(t *testing.T) {
 	tests := []struct {
-		name    string
 		item    Downloadable
+		name    string
 		wantKey string
 	}{
 		{
@@ -776,14 +776,14 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 	pngData[3] = 0x47
 
 	tests := []struct {
-		name                  string
 		payload               []byte
+		name                  string
 		contentType           string
+		expectedErrorContains string
 		statusCode            int
 		retries               int
-		expectedErrorContains string
-		expectFileExists      bool
 		expectedCalls         int32
+		expectFileExists      bool
 		expectHash            bool
 	}{
 		{
@@ -1398,9 +1398,9 @@ func TestHandleBlockingFile(t *testing.T) {
 	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
 
 	tests := []struct {
+		fileContent   []byte
 		name          string
 		fileExists    bool
-		fileContent   []byte
 		wantHandled   bool
 		wantErr       bool
 		wantRetryErr  bool
@@ -1476,11 +1476,11 @@ func TestErrRetryImmediately(t *testing.T) {
 		name             string
 		postID           string
 		filename         string
-		setupFile        bool
-		blockAndCorrupt  bool
+		wantHashKey      string
 		retries          int
 		wantRequestCount int32
-		wantHashKey      string
+		setupFile        bool
+		blockAndCorrupt  bool
 	}{
 		{
 			name:             "BlockingFileCorruptRemoved",
@@ -1564,9 +1564,9 @@ func TestCheckAndHandleExistingFile(t *testing.T) {
 	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
 
 	tests := []struct {
+		fileContent    []byte
 		name           string
 		fileExists     bool
-		fileContent    []byte
 		wantHash       bool
 		wantLocalReuse bool
 		wantRemoved    bool

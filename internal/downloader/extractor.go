@@ -187,7 +187,9 @@ func (e *Extractor) extractGallery(post reddit.Post) ([]Downloadable, error) {
 		mediaURL = decodeMediaURL(mediaURL)
 		ext, mediaType, err := extensionAndType(mediaURL, meta.Mime)
 		if err != nil {
-			return nil, fmt.Errorf("failed to determine extension/type for post=%v media_id=%v url=%v: %w", post.ID, item.MediaID, mediaURL, err)
+			return nil, fmt.Errorf(
+				"failed to determine extension/type for post=%v media_id=%v url=%v: %w",
+				post.ID, item.MediaID, mediaURL, err)
 		}
 
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(post.GalleryData.Items))
@@ -261,7 +263,8 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable,
 }
 
 // extractRedditVideo extracts video URLs from Reddit-hosted videos.
-func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post,
+	sourceURL string) ([]Downloadable, error) {
 	if post.Media != nil && post.Media.Video != nil {
 		fallback := strings.TrimSpace(post.Media.Video.FallbackURL)
 		if fallback != "" {
@@ -350,7 +353,8 @@ func (e *Extractor) fetchImgurImageURL(ctx context.Context, pageURL string) (str
 }
 
 // extractGfycatRedgifs extracts media URLs from Gfycat or Redgifs posts.
-func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Post, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Post,
+	sourceURL string) ([]Downloadable, error) {
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
 		if errors.Is(err, errGone) {
@@ -756,7 +760,8 @@ func sanitizeFilename(title string) string {
 		case ':', '*', '?', '"', '<', '>', '|':
 			return '_'
 		// Control characters
-		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31:
+		case 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+			16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31:
 			return -1
 		default:
 			return r

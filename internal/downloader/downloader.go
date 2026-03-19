@@ -151,7 +151,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 		item := item
 		group.Go(func() error {
 			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("context cancelled: %w", err)
+				return fmt.Errorf("context canceled: %w", err)
 			}
 			hash, isDuplicate, err := d.downloadItem(ctx, item)
 			if err != nil {
@@ -473,6 +473,7 @@ func (d *Downloader) backoffDuration(attempt int) time.Duration {
 	if attempt <= 0 {
 		return d.config.BackoffBase
 	}
+	//nolint:gosec // G115: attempt is bounded by config.Retries (small int), safe conversion
 	return d.config.BackoffBase * time.Duration(1<<uint(attempt-1))
 }
 
@@ -603,7 +604,7 @@ func combineErrors(errs ...error) error {
 // errRetryImmediately if corrupt. Returns true if the file was successfully handled.
 func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, _ string) (handled bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return false, fmt.Errorf("context cancelled: %w", err)
+		return false, fmt.Errorf("context canceled: %w", err)
 	}
 
 	// Acquire per-path lock to prevent race conditions with concurrent downloads

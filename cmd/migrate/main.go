@@ -34,6 +34,7 @@ func main() {
 		rollback  = flag.Bool("rollback", false, "Rollback mode")
 		logFile   = flag.String("log-file", "", "Migration log path")
 	)
+
 	flag.Parse()
 
 	if *rollback {
@@ -42,9 +43,11 @@ func main() {
 			os.Exit(1)
 		}
 		if *sourceDir == "" || *destDir == "" {
-			fmt.Fprintln(os.Stderr, "Error: --source and --dest are required for rollback (must be explicitly provided by operator)")
+			fmt.Fprintln(os.Stderr, "Error: --source and --dest are required for rollback "+
+				"(must be explicitly provided by operator)")
 			os.Exit(1)
 		}
+
 		logSourceRoot, logDestRoot, err := readRootsFromLog(*logFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -54,6 +57,7 @@ func main() {
 			fmt.Printf("Log source directory: %s\n", logSourceRoot)
 			fmt.Printf("Log destination directory: %s\n", logDestRoot)
 		}
+
 		runRollback(*logFile, *sourceDir, *destDir)
 		return
 	}
@@ -69,6 +73,7 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
+
 	if *indexPath != "" && *htmlDir != "" {
 		fmt.Fprintln(os.Stderr, "Error: cannot use both --index and --html-dir")
 		flag.PrintDefaults()
@@ -88,17 +93,21 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	fmt.Println("==========================")
 	fmt.Printf("Source: %s\n", sourceDir)
 	fmt.Printf("Destination: %s\n", destDir)
+
 	if htmlDir != "" {
 		fmt.Printf("HTML Directory: %s\n", htmlDir)
 	} else {
 		fmt.Printf("Index: %s\n", indexPath)
 	}
+
 	if dryRun {
 		fmt.Println("Mode: DRY RUN")
 	}
+
 	fmt.Println()
 
 	parser := migration.NewHTMLParser()
+
 	if htmlDir != "" {
 		fmt.Println("Parsing HTML files...")
 		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
@@ -106,22 +115,28 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		}
 	} else {
 		fmt.Println("Parsing index.html...")
-		if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
+		if err := parser.ParseIndexHTML(ctx, sourceDir, indexPath); err != nil {
 			return fmt.Errorf("parse index html: %w", err)
 		}
 	}
+
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
 	// Initialize DB if DB_PATH is set and not in dry-run mode
 	var db *storage.DB
+
 	dbPath := os.Getenv("DB_PATH")
+
 	if dbPath != "" && !dryRun {
 		fmt.Printf("Initializing database: %s\n", dbPath)
+
 		var err error
+
 		db, err = storage.NewDB(ctx, dbPath)
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
 		}
+
 		defer func() {
 			if err := db.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
@@ -174,21 +189,27 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	if migrator.Log.ErrorCount > 0 {
 		return fmt.Errorf("migration completed with %d errors", migrator.Log.ErrorCount)
 	}
+
 	return nil
 }
 
 //nolint:cyclop
 func runRollback(logPath, sourceRoot, destRoot string) {
 	ctx := context.Background()
+
 	fmt.Println("Rollback")
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
 
 	var db *storage.DB
+
 	dbPath := os.Getenv("DB_PATH")
+
 	if dbPath != "" {
 		fmt.Printf("Initializing database: %s\n", dbPath)
+
 		var err error
+
 		db, err = storage.NewDB(ctx, dbPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
@@ -209,19 +230,18 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		return
 	}
 
-	if logSourceRoot != "" && logSourceRoot != sourceRoot {
-		fmt.Fprintf(os.Stderr, "Error: Log source directory (%s) does not match CLI source directory (%s)\n", logSourceRoot, sourceRoot)
-		return
+	// Use roots from log if CLI args not provided
+	if sourceRoot == "" {
+		sourceRoot = logSourceRoot
 	}
-	if logDestRoot != "" && logDestRoot != destRoot {
-		fmt.Fprintf(os.Stderr, "Error: Log destination directory (%s) does not match CLI destination directory (%s)\n", logDestRoot, destRoot)
-		return
+	if destRoot == "" {
+		destRoot = logDestRoot
 	}
 
-	rb := migration.NewRollback(logPath, db, sourceRoot, destRoot)
-	rollbackLog, err := rb.Execute(context.Background())
+	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot)
+	rollbackLog, err := rollbacker.Execute(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error executing rollback: %v\n", err)
 		return
 	}
 
@@ -240,13 +260,15 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	if rollbackLog.ErrorCount > 0 {
 		// Close database explicitly before exit to ensure cleanup runs
 		// (defers don't run on os.Exit, so we must close explicitly)
+
 		if db != nil {
 			if err := db.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
 			}
+
 			db = nil // Prevent double-close in defer
 		}
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // cleanup done explicitly above
 	}
 }
 
@@ -256,12 +278,15 @@ func readRootsFromLog(logPath string) (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("readRootsFromLog: read %s: %w", logPath, err)
 	}
+
 	var log struct {
 		SourceDir string `json:"sourceDir"`
 		DestDir   string `json:"destDir"`
 	}
+
 	if err := json.Unmarshal(data, &log); err != nil {
 		return "", "", fmt.Errorf("readRootsFromLog: unmarshal %s: %w", logPath, err)
 	}
+
 	return log.SourceDir, log.DestDir, nil
 }

@@ -10,6 +10,24 @@ import (
 	"strings"
 )
 
+// isPathWithin checks if targetPath is within baseDir to prevent path traversal attacks.
+// Returns true if targetPath is the same as or a subdirectory of baseDir.
+func isPathWithin(baseDir, targetPath string) bool {
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return false
+	}
+	// Ensure base ends with separator for proper prefix check
+	if !strings.HasSuffix(absBase, string(filepath.Separator)) {
+		absBase += string(filepath.Separator)
+	}
+	return strings.HasPrefix(absTarget, absBase) || absTarget == filepath.Clean(baseDir)
+}
+
 // HTMLParser parses bdfr-html files to extract post metadata.
 type HTMLParser struct {
 	PostMap map[string]PostInfo
@@ -33,9 +51,14 @@ func NewHTMLParser() *HTMLParser {
 //
 // The function reads the entire file and uses regex to extract all post IDs,
 // subreddits, and usernames, correlating them by position in the file.
-func (p *HTMLParser) ParseIndexHTML(ctx context.Context, indexPath string) error {
+func (p *HTMLParser) ParseIndexHTML(ctx context.Context, baseDir, indexPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+
+	// Validate that indexPath is within baseDir to prevent path traversal
+	if !isPathWithin(baseDir, indexPath) {
+		return fmt.Errorf("index path %s is not within allowed directory %s", indexPath, baseDir)
 	}
 
 	content, err := os.ReadFile(indexPath)

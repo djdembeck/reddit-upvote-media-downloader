@@ -300,22 +300,19 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 	// Non-existent paths pass the lexical check above.
 	rootInfo, err := os.Stat(rootAbs)
 	if err != nil || !rootInfo.IsDir() {
-		// Root doesn't exist or isn't a directory - rely on lexical check only
-		return err
+		return fmt.Errorf("root directory %s does not exist or is not a directory: %w", root, err)
 	}
 
 	// Resolve symlinks for root directory
 	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
-		// If we can't resolve symlinks, rely on the lexical check already done
-		return err
+		return fmt.Errorf("resolve root symlinks: %w", err)
 	}
 
 	// Resolve the path (existing or parent-based)
 	resolvedPath, err := resolveExistingOrParent(absPath)
 	if err != nil {
-		// If we can't resolve the path, rely on the lexical check already done
-		return err
+		return fmt.Errorf("resolve path symlinks: %w", err)
 	}
 
 	// Check containment using resolved paths
