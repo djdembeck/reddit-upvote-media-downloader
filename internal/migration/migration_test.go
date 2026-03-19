@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1131,7 +1132,8 @@ func TestMigrationSuite(t *testing.T) {
 			wantPostRollbackDBCheck: func(t *testing.T, db *storage.DB) {
 				ctx := context.Background()
 				post, err := db.GetPost(ctx, "abc123")
-				require.NoError(t, err)
+				require.Error(t, err)
+				require.True(t, errors.Is(err, storage.ErrPostNotFound), "Expected ErrPostNotFound, got: %v", err)
 				assert.Nil(t, post)
 			},
 		},
