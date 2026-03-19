@@ -301,21 +301,21 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 	rootInfo, err := os.Stat(rootAbs)
 	if err != nil || !rootInfo.IsDir() {
 		// Root doesn't exist or isn't a directory - rely on lexical check only
-		return nil
+		return err
 	}
 
 	// Resolve symlinks for root directory
 	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
 		// If we can't resolve symlinks, rely on the lexical check already done
-		return nil
+		return err
 	}
 
 	// Resolve the path (existing or parent-based)
 	resolvedPath, err := resolveExistingOrParent(absPath)
 	if err != nil {
 		// If we can't resolve the path, rely on the lexical check already done
-		return nil
+		return err
 	}
 
 	// Check containment using resolved paths
