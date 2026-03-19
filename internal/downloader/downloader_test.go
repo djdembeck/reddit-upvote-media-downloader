@@ -735,27 +735,27 @@ func TestItemHashKey(t *testing.T) {
 			item: Downloadable{
 				PostID:    "gal456",
 				Filename:  "title_1_gal456.jpg",
-				ItemIndex: 0,
+				ItemIndex: 1, // 1-based indexing
 			},
-			wantKey: "gal456_0",
+			wantKey: "gal456_1",
 		},
 		{
 			name: "GalleryItemSecond",
 			item: Downloadable{
 				PostID:    "gal456",
 				Filename:  "title_2_gal456.jpg",
-				ItemIndex: 1,
+				ItemIndex: 2, // 1-based indexing
 			},
-			wantKey: "gal456_1",
+			wantKey: "gal456_2",
 		},
 		{
 			name: "GalleryItemTenth",
 			item: Downloadable{
 				PostID:    "gal789",
 				Filename:  "title_10_gal789.jpg",
-				ItemIndex: 9,
+				ItemIndex: 10, // 1-based indexing
 			},
-			wantKey: "gal789_9",
+			wantKey: "gal789_10",
 		},
 	}
 

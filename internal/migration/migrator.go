@@ -228,6 +228,8 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 
 	// Check if destination exists
 	if _, err := os.Stat(destPath); err == nil {
+		// Mark the hash as seen so subsequent duplicates are detected in-memory
+		m.seenHashes[fileHash] = FileHashInfo{SourcePath: sourcePath, PostID: postID}
 		m.recordSkipped(filename, postID, "destination already exists")
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
@@ -60,7 +61,7 @@ type Config struct {
 // fileLockEntry holds a mutex and reference count for per-path locking.
 type fileLockEntry struct {
 	mu   sync.Mutex
-	refs int
+	refs int32
 }
 
 // Downloader orchestrates media downloads from Reddit posts.
@@ -645,14 +646,18 @@ func (d *Downloader) acquireFileLock(filePath string) func() {
 		panic("invalid type in fileLocks map")
 	}
 
-	// Lock the mutex and increment reference count
+	// Increment reference count atomically BEFORE acquiring mutex so waiters are counted
+	// and the entry won't be evicted while they're waiting.
+	atomic.AddInt32(&entry.refs, 1)
+
+	// Lock the mutex
 	entry.mu.Lock()
-	entry.refs++
 
 	// Return unlock function that decrements ref count and cleans up if needed
 	return func() {
-		entry.refs--
-		if entry.refs == 0 {
+		// Decrement reference count atomically
+		newRefs := atomic.AddInt32(&entry.refs, -1)
+		if newRefs == 0 {
 			// Use CompareAndDelete to avoid race with concurrent LoadOrStore
 			d.fileLocks.CompareAndDelete(filePath, entry)
 		}
@@ -845,7 +850,10 @@ func extractGalleryIndex(filename string) string {
 }
 
 func itemHashKey(item Downloadable) string {
-	if item.ItemIndex >= 0 {
+	// Gallery items use 1-based indexing (1, 2, 3...) to avoid collision with single items.
+	// Single items use ItemIndex = -1. We check > 0 to distinguish galleries from singles.
+	// With 0-based indexing, gallery index 0 would collide with single items' default 0 value.
+	if item.ItemIndex > 0 {
 		return item.PostID + "_" + strconv.Itoa(item.ItemIndex)
 	}
 	return item.PostID

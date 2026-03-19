@@ -289,22 +289,39 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 		return fmt.Errorf("resolve root: %w", err)
 	}
 
+	// First check lexical containment before any symlink resolution.
+	// This catches obvious path escapes even for non-existent paths.
+	rootAbsWithSep := rootAbs + string(filepath.Separator)
+	if !strings.HasPrefix(absPath+string(filepath.Separator), rootAbsWithSep) {
+		return fmt.Errorf("path %s escapes root %s", absPath, root)
+	}
+
+	// For symlink-aware validation, only resolve symlinks for existing paths.
+	// Non-existent paths pass the lexical check above.
+	rootInfo, err := os.Stat(rootAbs)
+	if err != nil || !rootInfo.IsDir() {
+		// Root doesn't exist or isn't a directory - rely on lexical check only
+		return nil
+	}
+
 	// Resolve symlinks for root directory
 	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
-		return fmt.Errorf("resolve symlinks for root: %w", err)
+		// If we can't resolve symlinks, rely on the lexical check already done
+		return nil
 	}
 
 	// Resolve the path (existing or parent-based)
 	resolvedPath, err := resolveExistingOrParent(absPath)
 	if err != nil {
-		return fmt.Errorf("resolve path: %w", err)
+		// If we can't resolve the path, rely on the lexical check already done
+		return nil
 	}
 
 	// Check containment using resolved paths
 	resolvedRootWithSep := resolvedRoot + string(filepath.Separator)
 	if !strings.HasPrefix(resolvedPath+string(filepath.Separator), resolvedRootWithSep) {
-		return fmt.Errorf("path %s escapes root %s", absPath, root)
+		return fmt.Errorf("path %s escapes root %s via symlink", absPath, root)
 	}
 
 	return nil

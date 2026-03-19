@@ -193,7 +193,7 @@ func (e *Extractor) extractGallery(post reddit.Post) ([]Downloadable, error) {
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(post.GalleryData.Items))
 		itemIndex := -1
 		if len(post.GalleryData.Items) > 1 {
-			itemIndex = i
+			itemIndex = i + 1 // Use 1-based indexing so 0 doesn't collide with single items
 		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
@@ -245,7 +245,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable,
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(keys))
 		itemIndex := -1
 		if len(keys) > 1 {
-			itemIndex = i
+			itemIndex = i + 1 // Use 1-based indexing so 0 doesn't collide with single items
 		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
@@ -555,10 +555,10 @@ func (e *Extractor) buildDownloadables(post reddit.Post, urls []string, mediaTyp
 			resolvedType = mediaType
 		}
 		filename := buildFilename(sanitizedTitle, post.ID, ext, i+1, len(urls))
-		// Use -1 for single items, 0+ for gallery items
+		// Use -1 for single items, 1+ for gallery items (1-based to avoid collision with zero-value)
 		itemIndex := -1
 		if len(urls) > 1 {
-			itemIndex = i
+			itemIndex = i + 1 // Use 1-based indexing so 0 doesn't collide with single items
 		}
 		items = append(items, Downloadable{
 			PostID:    post.ID,
