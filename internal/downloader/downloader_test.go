@@ -27,6 +27,7 @@ func validJPEGData() []byte {
 	data[0] = 0xFF
 	data[1] = 0xD8
 	data[2] = 0xFF
+
 	for i := 3; i < len(data); i++ {
 		data[i] = byte(i % 256)
 	}
@@ -81,7 +82,11 @@ func (h *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 
 	host := strings.ToLower(req.URL.Host)
 	if _, ok := h.hosts[host]; !ok {
-		return base.RoundTrip(req)
+		resp, err := base.RoundTrip(req)
+		if err != nil {
+			return nil, fmt.Errorf("round trip failed: %w", err)
+		}
+		return resp, nil
 	}
 
 	clone := req.Clone(req.Context())
@@ -90,12 +95,18 @@ func (h *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 	cloneURL.Host = h.target.Host
 	clone.URL = &cloneURL
 	clone.Host = req.URL.Host
-	return base.RoundTrip(clone)
+	resp, err := base.RoundTrip(clone)
+	if err != nil {
+		return nil, fmt.Errorf("round trip failed: %w", err)
+	}
+	return resp, nil
 }
 
 func newRewriteClient(server *httptest.Server, hosts ...string) *http.Client {
 	target, _ := url.Parse(server.URL)
+
 	hostMap := make(map[string]struct{}, len(hosts))
+
 	for _, host := range hosts {
 		hostMap[strings.ToLower(host)] = struct{}{}
 	}
@@ -349,7 +360,7 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 func TestDownloaderRetries(t *testing.T) {
 	validData := validJPEGData()
 	var calls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		count := atomic.AddInt32(&calls, 1)
 		if count < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -404,6 +415,7 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 	defer server.Close()
 
 	outputDir := t.TempDir()
+
 	downloader := NewDownloader(Config{
 		OutputDir:   outputDir,
 		HTTPClient:  server.Client(),
@@ -432,15 +444,17 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	validData := validJPEGData()
 	var active int32
 	var maxActive int32
+
 	block := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		current := atomic.AddInt32(&active, 1)
 		for {
-			max := atomic.LoadInt32(&maxActive)
-			if current <= max {
+			m := atomic.LoadInt32(&maxActive)
+			if current <= m {
 				break
 			}
-			if atomic.CompareAndSwapInt32(&maxActive, max, current) {
+			if atomic.CompareAndSwapInt32(&maxActive, m, current) {
 				break
 			}
 		}
@@ -453,6 +467,7 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	defer server.Close()
 
 	outputDir := t.TempDir()
+
 	downloader := NewDownloader(Config{
 		OutputDir:   outputDir,
 		HTTPClient:  server.Client(),
@@ -470,6 +485,7 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
+
 	go func() {
 		_, err := downloader.Download(context.Background(), items)
 		done <- err
@@ -483,8 +499,8 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("Download() error = %v", err)
 	}
-	if max := atomic.LoadInt32(&maxActive); max > 2 {
-		t.Fatalf("max concurrency = %d, want <= 2", max)
+	if m := atomic.LoadInt32(&maxActive); m > 2 {
+		t.Fatalf("max concurrency = %d, want <= 2", m)
 	}
 }
 
@@ -508,7 +524,7 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err, "NewDB error")
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(serverContent)
 	}))
@@ -846,7 +862,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&calls, 1)
 				if tc.contentType != "" {
 					w.Header().Set("Content-Type", tc.contentType)
@@ -909,7 +925,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 		validData := validMP4Data()
 		var calls int32
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			count := atomic.AddInt32(&calls, 1)
 			if count == 1 {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -954,7 +970,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 		t.Run("HeaderBased", func(t *testing.T) {
 			var calls int32
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&calls, 1)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusOK)
@@ -1224,6 +1240,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	validTestData[5] = 't'
 	validTestData[6] = 'y'
 	validTestData[7] = 'p'
+
 	for i := 8; i < len(validTestData); i++ {
 		validTestData[i] = byte(i % 256)
 	}
@@ -1313,6 +1330,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 	existingFileContent[5] = 't'
 	existingFileContent[6] = 'y'
 	existingFileContent[7] = 'p'
+
 	for i := 8; i < len(existingFileContent); i++ {
 		existingFileContent[i] = byte(i % 256)
 	}
@@ -1453,7 +1471,7 @@ func TestHandleBlockingFile(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err, "expected error")
 				if tt.wantRetryErr {
-					assert.ErrorIs(t, err, errRetryImmediately, "error should be errRetryImmediately")
+					require.ErrorIs(t, err, errRetryImmediately, "error should be errRetryImmediately")
 				}
 			} else {
 				require.NoError(t, err, "unexpected error")
@@ -1652,6 +1670,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 	testData[0] = 0xFF
 	testData[1] = 0xD8
 	testData[2] = 0xFF
+
 	for i := 3; i < len(testData); i++ {
 		testData[i] = byte(i % 256)
 	}

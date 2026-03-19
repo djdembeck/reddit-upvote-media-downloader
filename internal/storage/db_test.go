@@ -569,7 +569,7 @@ func TestGetPostByHash_NotFound(t *testing.T) {
 
 	retrieved, err := db.GetPostByHash(ctx, "nonexistenthash")
 	require.Error(t, err, "Expected error for non-existent hash")
-	assert.True(t, errors.Is(err, ErrPostNotFound), "Expected ErrPostNotFound, got: %v", err)
+	require.ErrorIs(t, err, ErrPostNotFound, "Expected ErrPostNotFound, got: %v", err)
 	assert.Nil(t, retrieved, "Expected nil for non-existent hash")
 }
 

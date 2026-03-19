@@ -9,6 +9,8 @@ import (
 )
 
 // Post represents the JSON structure of a Reddit post from the API.
+//
+//nolint:fieldalignment
 type Post struct {
 	ID          string                   `json:"id"`
 	Title       string                   `json:"title"`
@@ -42,6 +44,8 @@ type GalleryItem struct {
 }
 
 // MediaMetadata represents metadata for a media item in a gallery.
+//
+//nolint:fieldalignment
 type MediaMetadata struct {
 	Status   string               `json:"status"`
 	Kind     string               `json:"e"`
@@ -64,6 +68,8 @@ type Media struct {
 }
 
 // Video represents Reddit-hosted video metadata.
+//
+//nolint:fieldalignment
 type Video struct {
 	BitrateKbps       int    `json:"bitrateKbps"`
 	FallbackURL       string `json:"fallbackUrl"`

@@ -44,7 +44,9 @@ var (
 
 // Config holds the Reddit OAuth configuration.
 //
-//nolint:gosec // G117: secret pattern fields - required for OAuth2 authentication
+// Config is exported and used externally; field order is part of the API.
+//
+//nolint:gosec,fieldalignment // G117: secret pattern fields - required for OAuth2 authentication.
 type Config struct {
 	ClientID     string
 	ClientSecret string
@@ -73,23 +75,25 @@ type Client interface {
 }
 
 // redditClient provides authenticated access to the Reddit API.
+//
+//nolint:fieldalignment // Internal struct, safe to reorder but not worth the churn.
 type redditClient struct {
 	config      *Config
 	tokenStore  TokenStore
 	oauthConfig *oauth2.Config
 	token       *oauth2.Token
-	mu          sync.RWMutex
-
-	// Rate limiting
 	rateLimiter *rateLimiter
+	mu          sync.RWMutex
 }
 
 // rateLimiter implements token bucket rate limiting for Reddit API requests.
+//
+//nolint:fieldalignment // Internal struct with minimal memory impact.
 type rateLimiter struct {
-	mu          sync.Mutex
-	tokens      int
 	lastRequest time.Time
 	refillRate  time.Duration
+	mu          sync.Mutex
+	tokens      int
 }
 
 // newRateLimiter creates a new rate limiter with the specified requests per minute.
@@ -122,7 +126,7 @@ func (rl *rateLimiter) Wait(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			rl.mu.Lock()
-			return ctx.Err()
+			return fmt.Errorf("context canceled: %w", ctx.Err())
 		case <-time.After(waitTime):
 			rl.mu.Lock()
 			rl.tokens = 1
@@ -242,7 +246,12 @@ func (c *redditClient) authenticate(ctx context.Context) error {
 	data.Set("username", c.config.Username)
 	data.Set("password", c.config.Password)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.oauthConfig.Endpoint.TokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.oauthConfig.Endpoint.TokenURL,
+		strings.NewReader(data.Encode()),
+	)
 	if err != nil {
 		return fmt.Errorf("creating token request: %w", err)
 	}
@@ -316,10 +325,20 @@ func (c *redditClient) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenS
 		lastErr = err
 		if attempt < maxRetries-1 {
 			delay := baseDelay * time.Duration(1<<attempt) // Exponential backoff: 1s, 2s, 4s
-			slog.Warn("Token refresh attempt failed, retrying", "attempt", attempt+1, "maxRetries", maxRetries, "delay", delay, "error", err)
+			slog.Warn(
+				"Token refresh attempt failed, retrying",
+				"attempt",
+				attempt+1,
+				"maxRetries",
+				maxRetries,
+				"delay",
+				delay,
+				"error",
+				err,
+			)
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return fmt.Errorf("context canceled: %w", ctx.Err())
 			case <-time.After(delay):
 				continue
 			}
@@ -538,7 +557,9 @@ func (c *redditClient) Close() error {
 	c.mu.RUnlock()
 
 	if c.tokenStore != nil && token != nil {
-		return c.tokenStore.SaveToken(token)
+		if err := c.tokenStore.SaveToken(token); err != nil {
+			return fmt.Errorf("save token: %w", err)
+		}
 	}
 	return nil
 }

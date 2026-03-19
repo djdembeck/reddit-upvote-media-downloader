@@ -8,5 +8,6 @@ func IsNumeric(s string) bool {
 			return false
 		}
 	}
+
 	return s != ""
 }

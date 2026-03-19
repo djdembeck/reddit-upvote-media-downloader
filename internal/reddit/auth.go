@@ -98,7 +98,7 @@ func generateRandomState(n int) (string, error) {
 	for i := range result {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("generate random state: %w", err)
 		}
 		result[i] = letters[num.Int64()]
 	}
@@ -106,22 +106,25 @@ func generateRandomState(n int) (string, error) {
 }
 
 // openURL opens a URL in the default browser.
-func openURL(url string) error {
+func openURL(urlStr string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		//nolint:gosec // G204: subprocess launched with variable - standard browser opening command
-		cmd = exec.Command("open", url)
+		//nolint:gosec,noctx // G204: subprocess launched with variable - standard browser opening command; noctx: browser command doesn't need context
+		cmd = exec.Command("open", urlStr)
 	case "linux":
-		//nolint:gosec // G204: subprocess launched with variable - standard browser opening command
-		cmd = exec.Command("xdg-open", url)
+		//nolint:gosec,noctx // G204: subprocess launched with variable - standard browser opening command; noctx: browser command doesn't need context
+		cmd = exec.Command("xdg-open", urlStr)
 	case "windows":
-		//nolint:gosec // G204: subprocess launched with variable - standard browser opening command
-		cmd = exec.Command("cmd", "/C", "start", "", url)
+		//nolint:gosec,noctx // G204: subprocess launched with variable - standard browser opening command; noctx: browser command doesn't need context
+		cmd = exec.Command("cmd", "/C", "start", "", urlStr)
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start browser command: %w", err)
+	}
+	return nil
 }
 
 // waitForCallback starts an HTTP server and waits for the OAuth callback.
@@ -137,6 +140,7 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 			escapedErrMsg := html.EscapeString(errMsg)
 			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
 			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			//nolint:gosec // G705: data is escaped with html.EscapeString
 			_, _ = fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc) //nolint:errcheck
 			errorChan <- fmt.Errorf("oauth error: %s - %s", escapedErrMsg, escapedDesc)
 			return
@@ -156,13 +160,18 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
 			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			//nolint:gosec // G705: data is escaped with html.EscapeString
 			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr) //nolint:errcheck
 			errorChan <- fmt.Errorf("exchanging code for token: %s", escapedErr)
 			return
 		}
 
 		// Success - show token
-		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>") //nolint:errcheck
+		_, _ = fmt.Fprint(
+			w,
+			"<html><body><h1>Authentication successful!</h1>"+
+				"<p>You can close this window.</p></body></html>",
+		) //nolint:errcheck
 		resultChan <- token
 	})
 

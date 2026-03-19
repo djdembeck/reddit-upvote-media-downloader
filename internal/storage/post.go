@@ -9,6 +9,8 @@ const (
 )
 
 // Post represents a downloaded Reddit post.
+//
+//nolint:fieldalignment // Post is used for JSON and database; field order must be preserved.
 type Post struct {
 	ID           string    `json:"id"`
 	Title        string    `json:"title"`
@@ -28,6 +30,8 @@ type Post struct {
 }
 
 // Stats represents download statistics.
+//
+//nolint:fieldalignment
 type Stats struct {
 	TotalPosts       int64            `json:"totalPosts"`
 	PostsBySource    map[string]int64 `json:"postsBySource"`
@@ -36,13 +40,15 @@ type Stats struct {
 }
 
 // PostStatus represents the detailed status of a post for download eligibility checking.
+//
+//nolint:fieldalignment
 type PostStatus struct {
-	Exists        bool      // Post exists in DB
-	FileExists    bool      // File exists on disk (only valid if FilePath is set)
-	RetryCount    int       // Current retry count
-	ShouldSkip    bool      // Should be skipped (permanent failure or within backoff)
-	RetryEligible bool      // Eligible for retry (file missing, backoff passed, or never attempted)
 	LastAttempt   time.Time // Last attempt time (zero if never attempted)
 	LastError     string    // Last error message (if any)
 	FilePath      string    // File path from database (if set)
+	RetryCount    int       // Current retry count
+	Exists        bool      // Post exists in DB
+	FileExists    bool      // File exists on disk (only valid if FilePath is set)
+	ShouldSkip    bool      // Should be skipped (permanent failure or within backoff)
+	RetryEligible bool      // Eligible for retry (file missing, backoff passed, or never attempted)
 }

@@ -81,9 +81,9 @@ func (db *DB) runMigrations(ctx context.Context) error {
 		var name string
 		var type_ string
 		var notnull int
-		var dflt_value any
+		var dfltValue any
 		var pk int
-		if err := rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk); err != nil {
+		if err := rows.Scan(&cid, &name, &type_, &notnull, &dfltValue, &pk); err != nil {
 			return fmt.Errorf("failed to scan table info: %w", err)
 		}
 		existingColumns[name] = true
@@ -168,7 +168,9 @@ func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 // Close closes the database connection.
 func (db *DB) Close() error {
 	if db.conn != nil {
-		return db.conn.Close()
+		if err := db.conn.Close(); err != nil {
+			return fmt.Errorf("close database connection: %w", err)
+		}
 	}
 	return nil
 }
@@ -177,7 +179,11 @@ func (db *DB) Close() error {
 // Also saves retry-related fields: retry_count, last_error, last_attempt.
 func (db *DB) SavePost(ctx context.Context, post *Post) error {
 	query := `
-		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash)
+		INSERT INTO posts (
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source,
+			retry_count, last_error, last_attempt, hash
+		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
@@ -234,7 +240,10 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 }
 func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
+		SELECT
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source,
+			retry_count, last_error, last_attempt, hash
 		FROM posts
 		WHERE id = ?
 	`
@@ -453,7 +462,9 @@ func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
 //nolint:cyclop
 func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, hash
+		SELECT
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source, hash
 		FROM posts
 		WHERE hash = ?
 	`
@@ -847,7 +858,10 @@ func (db *DB) ResetRetry(ctx context.Context, postID string) error {
 // Used for re-check mode to verify file existence on disk.
 func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
+		SELECT
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source,
+			retry_count, last_error, last_attempt, hash
 		FROM posts
 	`
 

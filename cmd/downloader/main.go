@@ -119,6 +119,7 @@ func main() {
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	go func() {
 		<-sigChan
 		fmt.Println("\nShutting down gracefully...")
@@ -139,11 +140,13 @@ func main() {
 
 	// Open database
 	var db *storage.DB
+
 	db, err = storage.NewDB(ctx, cfg.Storage.DBPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		return
 	}
+
 	defer func() {
 		if db != nil {
 			if err := db.Close(); err != nil {
@@ -194,6 +197,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
 		os.Exit(1)
 	}
+
 	defer func() {
 		if err := redditClient.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error closing Reddit client: %v\n", err)
@@ -274,12 +278,16 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 		if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 			return fmt.Errorf("setting migration_complete metadata: %w", err)
 		}
+
 		return nil
 	}
 
 	if cfg.Migrate.ReorganizeEnabled {
 		if cfg.Migrate.SourceDir == "" {
-			return fmt.Errorf("migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; set MIGRATE_SOURCE_DIR environment variable")
+			return fmt.Errorf(
+				"migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; " +
+					"set MIGRATE_SOURCE_DIR environment variable",
+			)
 		}
 		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
 			return fmt.Errorf("file reorganization failed: %w", err)
@@ -289,6 +297,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
 	if _, err := os.Stat(idListPath); err == nil {
 		fmt.Printf("Migrating existing data from %s...\n", idListPath)
+
 		count, err := db.ImportFromIDList(ctx, idListPath)
 		if err != nil {
 			return fmt.Errorf("importing idList: %w", err)
@@ -370,6 +379,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 				if err := parser.ParseIndexHTML(ctx, idx.baseDir, idx.path); err != nil {
 					return fmt.Errorf("parsing index.html at %s: %w", idx.path, err)
 				}
+
 				break
 			}
 		}
@@ -389,6 +399,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	}
 
 	logPath := filepath.Join(destDir, ".migration_log.json")
+
 	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db)
 	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
 		return fmt.Errorf("loading existing log: %w", err)
@@ -422,7 +433,9 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	if err != nil {
 		return fmt.Errorf("getting all posts: %w", err)
 	}
+
 	var verifiedCount, missingCount int
+
 	for _, post := range posts {
 		if post.FilePath == "" {
 			continue
@@ -434,12 +447,15 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 				fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
 				continue
 			}
+
 			missingCount++
 		} else {
 			fmt.Printf("File verified: %s\n", post.FilePath)
+
 			verifiedCount++
 		}
 	}
+
 	fmt.Printf("Re-check complete: %d files verified, %d missing\n", verifiedCount, missingCount)
 	return nil
 }
@@ -459,12 +475,14 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		// Continue with empty metadata - full sync can be skipped if metadata unavailable
 		fullSyncOnce = ""
 	}
+
 	isFullSync := fullSyncOnce == storage.MetadataValuePending && cfg.Migrate.FullSyncOnce
 
 	fetchLimit := cfg.Download.FetchLimit
 	if isFullSync {
 		// Use higher limit for full sync (fetch all posts)
 		fetchLimit = 1000
+
 		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
 	}
 
@@ -488,8 +506,15 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	// Filter posts: include new posts and posts eligible for retry
 	var newPosts []storage.Post
+
 	for _, post := range allPosts {
-		status, err := db.CheckPostStatus(ctx, post.ID, cfg.SmartPolling.RetryThreshold, cfg.Backoff.Base, cfg.Backoff.Max)
+		status, err := db.CheckPostStatus(
+			ctx,
+			post.ID,
+			cfg.SmartPolling.RetryThreshold,
+			cfg.Backoff.Base,
+			cfg.Backoff.Max,
+		)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
 			continue
@@ -510,11 +535,13 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 				fmt.Println("Full sync completed, switching to incremental mode")
 			}
 		}
+
 		return nil
 	}
 
 	// Convert storage.Post to reddit.Post for extraction
 	redditPosts := make([]reddit.Post, len(newPosts))
+
 	for i, post := range newPosts {
 		redditPosts[i] = reddit.Post{
 			ID:        post.ID,
@@ -574,6 +601,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 	}
 
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
+
 	return nil
 }
 
@@ -628,13 +656,16 @@ func handleAuth(cfg *config.Config) error {
 	if err := os.WriteFile("./refresh_token.txt", []byte(refreshToken), 0600); err != nil {
 		return fmt.Errorf("failed to write token file: %w", err)
 	}
+
 	fmt.Println("Token written to ./refresh_token.txt - please secure this file!")
+
 	return nil
 }
 
+//nolint:fieldalignment
 type itemHash struct {
-	index int
 	hash  string
+	index int
 }
 
 func aggregateItemHashes(hashes []itemHash) string {
@@ -643,6 +674,7 @@ func aggregateItemHashes(hashes []itemHash) string {
 	})
 
 	var combined strings.Builder
+
 	for i, item := range hashes {
 		if i > 0 {
 			combined.WriteByte(',')

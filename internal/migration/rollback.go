@@ -21,30 +21,36 @@ const (
 )
 
 // Rollback handles reverting file migrations.
+//
+//nolint:fieldalignment
 type Rollback struct {
-	LogPath    string
 	DB         *storage.DB
+	LogPath    string
 	SourceRoot string
 	DestRoot   string
 }
 
 // RollbackLog contains rollback operation results.
+//
+//nolint:fieldalignment
 type RollbackLog struct {
 	Timestamp    time.Time        `json:"timestamp"`
+	Operations   []RollbackRecord `json:"operations"`
 	OriginalLog  string           `json:"originalLog"`
 	SuccessCount int              `json:"successCount"`
 	ErrorCount   int              `json:"errorCount"`
-	Operations   []RollbackRecord `json:"operations"`
 }
 
 // RollbackRecord represents a single rollback operation.
+//
+//nolint:fieldalignment
 type RollbackRecord struct {
+	Timestamp  time.Time `json:"timestamp"`
 	PostID     string    `json:"postId"`
 	SourcePath string    `json:"sourcePath"`
 	DestPath   string    `json:"destPath"`
 	Status     string    `json:"status"`
 	Error      string    `json:"error,omitempty"`
-	Timestamp  time.Time `json:"timestamp"`
 }
 
 // NewRollback creates a new Rollback instance for reversing a previous migration.
@@ -326,9 +332,10 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 
 // SaveRollbackLog saves the rollback log to a JSON file for audit purposes.
 func SaveRollbackLog(log *RollbackLog, path string) error {
+	//nolint:gosec // G304: path is validated by caller before this function
 	file, err := os.Create(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("create rollback log file: %w", err)
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
@@ -338,5 +345,8 @@ func SaveRollbackLog(log *RollbackLog, path string) error {
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(log)
+	if err := encoder.Encode(log); err != nil {
+		return fmt.Errorf("encode rollback log: %w", err)
+	}
+	return nil
 }

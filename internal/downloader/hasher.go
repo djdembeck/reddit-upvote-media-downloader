@@ -15,6 +15,7 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 	hash := blake3.New()
 
 	buf := make([]byte, 32*1024) // 32KB chunks for efficient streaming
+
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
@@ -37,6 +38,7 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 // CalculateFileHash calculates a BLAKE3 hash for a file.
 // Returns a 64-character hex-encoded string (256-bit hash).
 func CalculateFileHash(filePath string) (_ string, err error) {
+	//nolint:gosec // G304: filePath is validated by caller before this function
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open file %s: %w", filePath, err)

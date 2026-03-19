@@ -18,7 +18,7 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 )
 
-// errGone indicates the resource has been permanently removed (HTTP 410)
+// errGone indicates the resource has been permanently removed (HTTP 410).
 var errGone = errors.New("resource gone (410)")
 
 const (
@@ -45,6 +45,8 @@ var supportedExtensions = map[string]string{
 }
 
 // Downloadable represents a single media item extracted from a Reddit post.
+//
+//nolint:fieldalignment
 type Downloadable struct {
 	PostID    string
 	URL       string
@@ -56,10 +58,12 @@ type Downloadable struct {
 }
 
 // Extractor extracts media URLs from Reddit posts.
+//
+//nolint:fieldalignment
 type Extractor struct {
 	client    *http.Client
-	userAgent string
 	logger    *slog.Logger
+	userAgent string
 }
 
 // NewExtractor creates a new Extractor with the specified HTTP client and user agent.
@@ -167,7 +171,9 @@ func (e *Extractor) extractGallery(post reddit.Post) ([]Downloadable, error) {
 	}
 
 	items := make([]Downloadable, 0, len(post.GalleryData.Items))
+
 	sanitizedTitle := sanitizeFilename(post.Title)
+
 	for i, item := range post.GalleryData.Items {
 		meta, ok := post.MediaMeta[item.MediaID]
 		if !ok {
@@ -224,7 +230,9 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable,
 	sort.Strings(keys)
 
 	items := make([]Downloadable, 0, len(post.MediaMeta))
+
 	sanitizedTitle := sanitizeFilename(post.Title)
+
 	for i, key := range keys {
 		meta := post.MediaMeta[key]
 		mediaURL := strings.TrimSpace(meta.Source.URL)
@@ -241,6 +249,7 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable,
 		if err != nil {
 			e.logger.Warn("failed to determine extension/type for media, skipping",
 				"post_id", post.ID, "media_id", key, "url", mediaURL, "error", err)
+
 			continue
 		}
 
@@ -535,7 +544,7 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 
 	resp, err := e.client.Do(req) //nolint:gosec // G704: intentional HTTP request to check URL reachability
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("HEAD request failed: %w", err)
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {

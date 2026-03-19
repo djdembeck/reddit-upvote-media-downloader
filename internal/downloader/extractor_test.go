@@ -486,8 +486,8 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 				if tt.statusCode == http.StatusOK && tt.contentType != "" {
 					w.Header().Set("Content-Type", tt.contentType)
 					if tt.contentType == "application/json" {
-						resp := map[string]interface{}{
-							"gif": map[string]interface{}{
+						resp := map[string]any{
+							"gif": map[string]any{
 								"urls": map[string]string{
 									"hd": "https://redgifs.com/get/HD.mp4",
 									"sd": "https://redgifs.com/get/SD.mp4",

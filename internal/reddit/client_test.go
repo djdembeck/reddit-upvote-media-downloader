@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -36,7 +35,7 @@ func (m *mockTokenStore) LoadToken() (*oauth2.Token, error) {
 }
 
 // setupTestServer creates a mock Reddit API server for testing.
-func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
+func setupTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +88,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 
-	serverURL, _ := url.Parse(server.URL)
-	return server, serverURL
+	return server
 }
 
 // createMockListing creates a mock Reddit listing response.
@@ -121,7 +119,7 @@ func createMockListing(kind string, count int) Listing {
 }
 
 func TestNewClient(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server := setupTestServer(t)
 	defer server.Close()
 
 	tests := []struct {
@@ -209,7 +207,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_GetUpvoted(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server := setupTestServer(t)
 	defer server.Close()
 
 	// Create config for testing
@@ -260,7 +258,7 @@ func TestClient_GetUpvoted(t *testing.T) {
 }
 
 func TestClient_GetSaved(t *testing.T) {
-	server, _ := setupTestServer(t)
+	server := setupTestServer(t)
 	defer server.Close()
 
 	config := &Config{

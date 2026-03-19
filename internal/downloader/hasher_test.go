@@ -321,14 +321,14 @@ type errorReader struct {
 	err error
 }
 
-func (r *errorReader) Read(_ []byte) (n int, err error) {
+func (r *errorReader) Read(_ []byte) (int, error) {
 	return 0, r.err
 }
 
 // eofReader is a reader that returns EOF immediately
 type eofReader struct{}
 
-func (r *eofReader) Read(_ []byte) (n int, err error) {
+func (r *eofReader) Read(_ []byte) (int, error) {
 	return 0, io.EOF
 }
 

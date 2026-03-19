@@ -42,6 +42,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Error: --log-file required for rollback")
 			os.Exit(1)
 		}
+
 		if *sourceDir == "" || *destDir == "" {
 			fmt.Fprintln(os.Stderr, "Error: --source and --dest are required for rollback "+
 				"(must be explicitly provided by operator)")
@@ -59,6 +60,7 @@ func main() {
 		}
 
 		runRollback(*logFile, *sourceDir, *destDir)
+
 		return
 	}
 
@@ -68,6 +70,7 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
+
 	if *indexPath == "" && *htmlDir == "" {
 		fmt.Fprintln(os.Stderr, "Error: either --index or --html-dir is required")
 		flag.PrintDefaults()
@@ -115,6 +118,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		}
 	} else {
 		fmt.Println("Parsing index.html...")
+
 		if err := parser.ParseIndexHTML(ctx, sourceDir, indexPath); err != nil {
 			return fmt.Errorf("parse index html: %w", err)
 		}
@@ -213,8 +217,10 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		db, err = storage.NewDB(ctx, dbPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+
 			return
 		}
+
 		defer func() {
 			if db != nil {
 				if err := db.Close(); err != nil {
@@ -239,9 +245,11 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	}
 
 	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot)
+
 	rollbackLog, err := rollbacker.Execute(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error executing rollback: %v\n", err)
+
 		return
 	}
 
@@ -260,7 +268,6 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	if rollbackLog.ErrorCount > 0 {
 		// Close database explicitly before exit to ensure cleanup runs
 		// (defers don't run on os.Exit, so we must close explicitly)
-
 		if db != nil {
 			if err := db.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
@@ -268,6 +275,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 
 			db = nil // Prevent double-close in defer
 		}
+
 		os.Exit(1) //nolint:gocritic // cleanup done explicitly above
 	}
 }

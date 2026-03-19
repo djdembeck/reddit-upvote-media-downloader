@@ -53,7 +53,7 @@ func NewHTMLParser() *HTMLParser {
 // subreddits, and usernames, correlating them by position in the file.
 func (p *HTMLParser) ParseIndexHTML(ctx context.Context, baseDir, indexPath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context canceled: %w", err)
 	}
 
 	// Validate that indexPath is within baseDir to prevent path traversal
@@ -61,6 +61,7 @@ func (p *HTMLParser) ParseIndexHTML(ctx context.Context, baseDir, indexPath stri
 		return fmt.Errorf("index path %s is not within allowed directory %s", indexPath, baseDir)
 	}
 
+	//nolint:gosec // G304: indexPath is validated with isPathWithin before this call
 	content, err := os.ReadFile(indexPath)
 	if err != nil {
 		return fmt.Errorf("open index.html: %w", err)
@@ -170,7 +171,7 @@ func (p *HTMLParser) addPost(postID, subreddit, username string) {
 // Uses empty string if subreddit or username is missing (does not fail).
 func (p *HTMLParser) ParseHTMLFile(ctx context.Context, filePath string) (PostInfo, error) {
 	if err := ctx.Err(); err != nil {
-		return PostInfo{}, err
+		return PostInfo{}, fmt.Errorf("context canceled: %w", err)
 	}
 
 	filename := filepath.Base(filePath)
@@ -186,6 +187,7 @@ func (p *HTMLParser) ParseHTMLFile(ctx context.Context, filePath string) (PostIn
 	}
 
 	// Read HTML content
+	//nolint:gosec // G304: filePath comes from filepath.Walk with user-provided root
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return PostInfo{}, fmt.Errorf("read file %s: %w", filePath, err)

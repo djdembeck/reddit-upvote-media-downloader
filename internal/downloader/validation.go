@@ -113,9 +113,11 @@ func validateMinimumSize(size int64) error {
 }
 
 // ValidationError represents a validation error with retry behavior.
+//
+//nolint:fieldalignment
 type ValidationError struct {
-	Permanent bool
 	Reason    string
+	Permanent bool
 }
 
 // Error returns the error message.

@@ -15,6 +15,8 @@ import (
 )
 
 // Config holds all application configuration.
+//
+//nolint:fieldalignment // Config is used with named field initialization throughout.
 type Config struct {
 	Reddit       RedditConfig
 	Storage      StorageConfig
@@ -57,12 +59,14 @@ type LogConfig struct {
 }
 
 // MigrateConfig holds migration settings.
+//
+//nolint:fieldalignment // MigrateConfig uses named field initialization.
 type MigrateConfig struct {
-	OnStart           bool
-	FullSyncOnce      bool
 	SourceDir         string // Source directory containing media files to reorganize
 	HTMLDir           string // Directory containing bdfr-html HTML files for metadata
-	ReorganizeEnabled bool   // Enable file reorganization into subreddit folders
+	OnStart           bool
+	FullSyncOnce      bool
+	ReorganizeEnabled bool // Enable file reorganization into subreddit folders
 }
 
 // BackoffConfig holds exponential backoff settings for retries.
@@ -73,7 +77,7 @@ type BackoffConfig struct {
 
 // CalculateBackoffDelay calculates exponential backoff delay for retries.
 // Formula: baseDelay * (2^retryCount), capped at maxDelay
-// Edge cases: negative retryCount returns 0, zero base returns 0
+// Edge cases: negative retryCount returns 0, zero base returns 0.
 func CalculateBackoffDelay(retryCount int, base, maxDuration time.Duration) time.Duration {
 	// Handle edge cases
 	if retryCount < 0 {
@@ -99,7 +103,7 @@ type SmartPollingConfig struct {
 	RetryThreshold int
 }
 
-// Flag variables for CLI parsing
+// Flag variables for CLI parsing.
 var (
 	flagReCheck        bool
 	flagRetryThreshold int
@@ -130,13 +134,14 @@ func initFlags() {
 	})
 }
 
-// flagWasSet returns true if a flag was explicitly provided on the command line
+// flagWasSet returns true if a flag was explicitly provided on the command line.
 func flagWasSet() bool {
 	// Check if any non-default flag values were set
 	// We use flag.CommandLine.Lookup to check if flags were explicitly set
 	flag.CommandLine.Visit(func(_ *flag.Flag) {
 		flagSet = true
 	})
+
 	return flagSet
 }
 
@@ -214,6 +219,7 @@ func Load() (*Config, error) {
 		if flagBackoffMax > 0 {
 			cfg.Backoff.Max = flagBackoffMax
 		}
+
 		cfg.SmartPolling.ReCheck = flagReCheck
 		if flagRetryThreshold > 0 {
 			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
@@ -235,7 +241,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks that all required configuration is present
+// Validate checks that all required configuration is present.
 func (c *Config) Validate() error {
 	var missing []string
 
@@ -245,6 +251,7 @@ func (c *Config) Validate() error {
 	if c.Reddit.ClientSecret == "" {
 		missing = append(missing, "REDDIT_CLIENT_SECRET")
 	}
+
 	if c.Reddit.Username == "" {
 		missing = append(missing, "REDDIT_USERNAME")
 	}
@@ -282,8 +289,13 @@ func (c *Config) Validate() error {
 	if c.Backoff.Max <= 0 {
 		return fmt.Errorf("BACKOFF_MAX must be greater than 0, got %v", c.Backoff.Max)
 	}
+
 	if c.Backoff.Base > c.Backoff.Max {
-		return fmt.Errorf("BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)", c.Backoff.Base, c.Backoff.Max)
+		return fmt.Errorf(
+			"BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)",
+			c.Backoff.Base,
+			c.Backoff.Max,
+		)
 	}
 
 	// Validate retry threshold
@@ -302,26 +314,27 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// GetEnv returns the value of an environment variable or a default
+// GetEnv returns the value of an environment variable or a default.
 func GetEnv(key, defaultValue string) string {
 	return getEnv(key, defaultValue)
 }
 
-// GetEnvInt returns an integer environment variable or a default
+// GetEnvInt returns an integer environment variable or a default.
 func GetEnvInt(key string, defaultValue int) int {
 	return getEnvInt(key, defaultValue)
 }
 
-// GetEnvBool returns a boolean environment variable or a default
+// GetEnvBool returns a boolean environment variable or a default.
 func GetEnvBool(key string, defaultValue bool) bool {
 	return getEnvBool(key, defaultValue)
 }
 
-// Helper functions
+// Helper functions.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return defaultValue
 }
 
@@ -339,6 +352,7 @@ func getEnvBool(key string, defaultValue bool) bool {
 		lower := strings.ToLower(value)
 		return lower == "true" || lower == "1" || lower == "yes"
 	}
+
 	return defaultValue
 }
 

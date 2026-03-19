@@ -8,33 +8,40 @@ const (
 )
 
 // PostInfo holds metadata extracted from HTML files.
+//
+//nolint:fieldalignment
 type PostInfo struct {
 	PostID     string
 	Subreddit  string
 	Username   string
-	IsUserPost bool
 	Hash       string // Optional: pre-computed hash for deduplication
+	IsUserPost bool
 }
 
 // Record represents a single file migration operation.
+//
+//nolint:fieldalignment
 type Record struct {
+	Timestamp  time.Time `json:"timestamp"`
 	PostID     string    `json:"postId"`
 	SourcePath string    `json:"sourcePath"`
 	DestPath   string    `json:"destPath"`
 	Subreddit  string    `json:"subreddit"`
 	Username   string    `json:"username"`
-	IsUserPost bool      `json:"isUserPost"`
 	Status     string    `json:"status"`
 	Error      string    `json:"error,omitempty"`
-	Timestamp  time.Time `json:"timestamp"`
-	FileSize   int64     `json:"fileSize"`
 	Hash       string    `json:"hash,omitempty"`
+	FileSize   int64     `json:"fileSize"`
+	IsUserPost bool      `json:"isUserPost"`
 }
 
 // Log contains all migration operations and statistics.
+//
+//nolint:fieldalignment
 type Log struct {
-	Version      string    `json:"version"`
 	Timestamp    time.Time `json:"timestamp"`
+	Operations   []Record  `json:"operations"`
+	Version      string    `json:"version"`
 	SourceDir    string    `json:"sourceDir"`
 	DestDir      string    `json:"destDir"`
 	TotalFiles   int       `json:"totalFiles"`
@@ -42,5 +49,4 @@ type Log struct {
 	SkippedCount int       `json:"skippedCount"`
 	ErrorCount   int       `json:"errorCount"`
 	WarningCount int       `json:"warningCount"`
-	Operations   []Record  `json:"operations"`
 }

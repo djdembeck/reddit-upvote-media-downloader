@@ -20,29 +20,32 @@ import (
 func contextChecker(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 		return nil
 	}
 }
 
 // Migrator handles file reorganization from flat to subreddit-based structure.
+//
+//nolint:fieldalignment // Internal struct.
 type Migrator struct {
-	SourceDir string
-	DestDir   string
-	PostMap   map[string]PostInfo
-	DryRun    bool
-	Log       *Log
-	DB        *storage.DB
-	// Hash tracking for duplicate detection
+	Log        *Log
+	DB         *storage.DB
+	PostMap    map[string]PostInfo
 	seenHashes map[string]FileHashInfo
+	SourceDir  string
+	DestDir    string
+	DryRun     bool
 }
 
 // FileHashInfo tracks file hash information for duplicate detection.
+//
+//nolint:fieldalignment // Internal struct.
 type FileHashInfo struct {
+	Timestamp  time.Time
 	PostID     string
 	SourcePath string
-	Timestamp  time.Time
 }
 
 // NewMigrator creates a new Migrator instance.
@@ -65,7 +68,7 @@ func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun 
 	return m
 }
 
-// LoadExistingLog populates seenHashes from an existing migration log for idempotent re-runs
+// LoadExistingLog populates seenHashes from an existing migration log for idempotent re-runs.
 func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 	if err := contextChecker(ctx); err != nil {
 		return err
@@ -121,9 +124,10 @@ func (m *Migrator) Execute(ctx context.Context) error {
 	}
 
 	// Collect file info for sorting by modification time
+	//nolint:fieldalignment // Internal local struct.
 	type fileEntry struct {
-		name    string
 		modTime time.Time
+		name    string
 	}
 	var files []fileEntry
 	var firstErr error
@@ -252,7 +256,9 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	if m.DB != nil && !m.DryRun {
 		// Detect media type from file extension
 		ext := strings.ToLower(filepath.Ext(filename))
+
 		mediaType := "unknown"
+
 		switch ext {
 		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
 			mediaType = "image"
@@ -288,7 +294,15 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		}
 
 		if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
-			m.recordSuccessWithWarning(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash, fmt.Errorf("save post to db: %w", saveErr))
+			m.recordSuccessWithWarning(
+				filename,
+				postID,
+				destPath,
+				postInfo,
+				fileInfo.Size(),
+				fileHash,
+				fmt.Errorf("save post to db: %w", saveErr),
+			)
 			m.seenHashes[fileHash] = FileHashInfo{
 				PostID:     postID,
 				SourcePath: sourcePath,
@@ -323,7 +337,7 @@ func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 
 // wrapWithCleanup wraps an error with context and attempts to clean up the destination file.
 // It returns the wrapped error after attempting to remove dst (ignoring os.IsNotExist).
-func wrapWithCleanup(err error, dst, contextFmt string, args ...interface{}) error {
+func wrapWithCleanup(err error, dst, contextFmt string, args ...any) error {
 	contextMsg := fmt.Sprintf(contextFmt, args...)
 	wrappedErr := fmt.Errorf("%s: %w", contextMsg, err)
 	if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
@@ -351,7 +365,13 @@ func (m *Migrator) moveFile(src, dst string) error {
 		return wrapWithCleanup(err, dst, "stat destination file %s", dst)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		return wrapWithCleanup(fmt.Errorf("size mismatch"), dst, "size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
+		return wrapWithCleanup(
+			fmt.Errorf("size mismatch"),
+			dst,
+			"size mismatch after copy: expected %d, got %d",
+			srcInfo.Size(),
+			dstInfo.Size(),
+		)
 	}
 
 	if err := os.Remove(src); err != nil {
@@ -421,7 +441,7 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	return nil
 }
 
-// Recording methods
+// Recording methods.
 func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInfo, size int64, hash string) {
 	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
@@ -475,7 +495,15 @@ func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo
 	})
 }
 
-func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, info PostInfo, size int64, hash string, warnErr error) {
+func (m *Migrator) recordSuccessWithWarning(
+	filename,
+	postID,
+	destPath string,
+	info PostInfo,
+	size int64,
+	hash string,
+	warnErr error,
+) {
 	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
@@ -493,8 +521,9 @@ func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, i
 	m.Log.WarningCount++
 }
 
-// calculateHash computes BLAKE3 hash of a file
+// calculateHash computes BLAKE3 hash of a file.
 func calculateHash(filePath string) (string, error) {
+	//nolint:gosec // G304: filePath is validated by caller (processFile) before calling
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", filePath, err)

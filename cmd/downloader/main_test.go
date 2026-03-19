@@ -71,6 +71,7 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 		_, err := os.Stat(p.FilePath)
 		if err != nil {
 			require.NoError(t, db.ResetRetry(ctx, p.ID), "Error resetting retry for %s", p.ID)
+
 			missingCount++
 		}
 	}
@@ -539,10 +540,12 @@ func TestReCheckMode_NoFilePath(t *testing.T) {
 	}
 
 	var processedCount int
+
 	for _, p := range posts {
 		if p.FilePath == "" {
 			continue
 		}
+
 		processedCount++
 	}
 
@@ -1093,6 +1096,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
+
 			sourceDir, destDir, htmlDir, db, cleanup := tc.setupFunc(tempDir)
 			defer cleanup()
 
@@ -1217,7 +1221,7 @@ type capturingMockClient struct {
 	savedLimit   int
 }
 
-func (m *capturingMockClient) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *capturingMockClient) GetUpvoted(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.upvotedLimit = limit
 	if limit >= len(m.upvoted) {
@@ -1226,7 +1230,7 @@ func (m *capturingMockClient) GetUpvoted(ctx context.Context, limit int) ([]stor
 	return m.upvoted[:limit], nil
 }
 
-func (m *capturingMockClient) GetSaved(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *capturingMockClient) GetSaved(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.savedLimit = limit
 	if limit >= len(m.saved) {
