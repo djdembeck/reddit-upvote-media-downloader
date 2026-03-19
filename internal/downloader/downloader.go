@@ -102,7 +102,7 @@ func NewDownloader(config Config, db *storage.DB) *Downloader {
 
 // Extract processes Reddit posts and extracts downloadable media items from each post.
 // It handles gallery posts, direct links, and external media sources.
-func (d *Downloader) Extract(ctx context.Context, posts []reddit.RedditPost) ([]Downloadable, error) {
+func (d *Downloader) Extract(ctx context.Context, posts []reddit.Post) ([]Downloadable, error) {
 	items := make([]Downloadable, 0)
 	var errs []error
 
@@ -136,7 +136,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	if len(items) == 0 {
 		return hashes, nil
 	}
-	if err := os.MkdirAll(d.config.OutputDir, 0755); err != nil {
+	if err := os.MkdirAll(d.config.OutputDir, 0750); err != nil {
 		return hashes, fmt.Errorf("create output directory: %w", err)
 	}
 
@@ -150,7 +150,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 		item := item
 		group.Go(func() error {
 			if err := ctx.Err(); err != nil {
-				return err
+				return fmt.Errorf("context cancelled: %w", err)
 			}
 			hash, isDuplicate, err := d.downloadItem(ctx, item)
 			if err != nil {
@@ -158,7 +158,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
-				return err
+				return fmt.Errorf("download item %s: %w", item.PostID, err)
 			}
 			mu.Lock()
 			if hash != "" {
@@ -186,7 +186,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 
 // DownloadPosts extracts and downloads media from Reddit posts in one operation.
 // Returns the extracted items, a map of post IDs to hashes, and any errors.
-func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.RedditPost) ([]Downloadable, map[string]string, error) {
+func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.Post) ([]Downloadable, map[string]string, error) {
 	items, extractErr := d.Extract(ctx, posts)
 	hashes, downloadErr := d.Download(ctx, items)
 	return items, hashes, combineErrors(extractErr, downloadErr)
@@ -213,7 +213,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	subreddit := sanitizeSubreddit(item.Subreddit)
 	outputDir := filepath.Join(d.config.OutputDir, subreddit)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return "", false, fmt.Errorf("create subreddit directory: %w", err)
 	}
 
@@ -349,6 +349,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	req.Header.Set("User-Agent", d.config.UserAgent)
 	req.Header.Set("Accept", "*/*")
 
+	//nolint:gosec // G704: SSRF - User-provided URLs are validated elsewhere and only used for media downloads
 	resp, err := d.config.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -381,7 +382,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	unlock := d.acquireFileLock(filePath)
 	defer unlock()
 
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			existingFile := findExistingFile(filepath.Dir(filePath), postID, filepath.Base(filePath))
@@ -420,13 +421,13 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 
 	buf := make([]byte, 512)
 	n, err := io.ReadFull(resp.Body, buf)
-	if err == io.EOF || (err == nil && n == 0) {
+	if errors.Is(err, io.EOF) || (err == nil && n == 0) {
 		return ValidationError{
 			Permanent: true,
 			Reason:    "empty response body",
 		}
 	}
-	if err != nil && err != io.ErrUnexpectedEOF {
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Errorf("read response body: %w", err)
 	}
 
@@ -537,7 +538,7 @@ func fileExists(path string) bool {
 	return !info.IsDir()
 }
 
-// sleepWithContext sleeps for the specified duration or until the context is cancelled.
+// sleepWithContext sleeps for the specified duration or until the context is canceled.
 func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	if duration <= 0 {
 		return nil
@@ -599,7 +600,11 @@ func combineErrors(errs ...error) error {
 // handleBlockingFile handles the case where a file already exists at the target path.
 // It validates the existing file and either reuses it if valid, or removes it and returns
 // errRetryImmediately if corrupt. Returns true if the file was successfully handled.
-func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID string) (handled bool, err error) {
+func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, _ string) (handled bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("context cancelled: %w", err)
+	}
+
 	// Acquire per-path lock to prevent race conditions with concurrent downloads
 	// to the same destination file (created with O_EXCL by another writer).
 	unlock := d.acquireFileLock(filePath)
@@ -632,10 +637,13 @@ func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, postID st
 // the reference count and removes the entry when it reaches zero.
 // This provides per-path locking to prevent race conditions when validating files
 // that may have been created with O_EXCL by another concurrent download.
-func (d *Downloader) acquireFileLock(filePath string) (unlock func()) {
+func (d *Downloader) acquireFileLock(filePath string) func() {
 	// Load or create the lock entry
 	actual, _ := d.fileLocks.LoadOrStore(filePath, &fileLockEntry{})
-	entry := actual.(*fileLockEntry)
+	entry, ok := actual.(*fileLockEntry)
+	if !ok {
+		panic("invalid type in fileLocks map")
+	}
 
 	// Lock the mutex and increment reference count
 	entry.mu.Lock()

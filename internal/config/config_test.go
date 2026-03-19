@@ -470,7 +470,7 @@ func TestCLIFlagsOverrideEnvVars(t *testing.T) {
 	// Parse flags using the test FlagSet
 	flagSet = false
 	_ = testFlagSet.Parse(os.Args[1:])
-	testFlagSet.Visit(func(f *flag.Flag) {
+	testFlagSet.Visit(func(_ *flag.Flag) {
 		flagSet = true
 	})
 
@@ -572,7 +572,7 @@ func TestFlagDefaults(t *testing.T) {
 	// Parse flags using the test FlagSet
 	flagSet = false
 	_ = testFlagSet.Parse(os.Args[1:])
-	testFlagSet.Visit(func(f *flag.Flag) {
+	testFlagSet.Visit(func(_ *flag.Flag) {
 		flagSet = true
 	})
 	// Set required env vars

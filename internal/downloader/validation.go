@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+// File extension constants for magic byte validation
+const (
+	extMP4  = ".mp4"
+	extWebm = ".webm"
+	extJpg  = ".jpg"
+	extJpeg = ".jpeg"
+	extPng  = ".png"
+	extGif  = ".gif"
+)
+
 // validateMagicBytes checks if the data has the correct magic bytes for the given extension.
 // Supports: .mp4, .webm, .jpg, .jpeg, .png, .gif
 //
@@ -18,7 +28,7 @@ func validateMagicBytes(data []byte, ext string) error {
 	ext = strings.ToLower(ext)
 
 	switch ext {
-	case ".mp4":
+	case extMP4:
 		// MP4: Check for "ftyp" at offset 4 (bytes 4-7 should be "ftyp")
 		if len(data) < 8 {
 			return errors.New("MP4 data too small to validate ftyp signature")
@@ -27,26 +37,26 @@ func validateMagicBytes(data []byte, ext string) error {
 			return errors.New("invalid MP4 magic bytes: expected 'ftyp' at offset 4")
 		}
 
-	case ".webm":
+	case extWebm:
 		// WebM: Check for EBML header (0x1A 0x45 0xDF 0xA3) at offset 0
 		// Caller guarantees len(data) >= 4
 		if !bytes.HasPrefix(data, []byte{0x1A, 0x45, 0xDF, 0xA3}) {
 			return errors.New("invalid WebM magic bytes: expected EBML header at offset 0")
 		}
 
-	case ".jpg", ".jpeg":
+	case extJpg, extJpeg:
 		// JPEG: Check for 0xFF 0xD8 0xFF at offset 0
 		if !bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
 			return errors.New("invalid JPEG magic bytes: expected 0xFF 0xD8 0xFF at offset 0")
 		}
 
-	case ".png":
+	case extPng:
 		// PNG: Check for 0x89 0x50 0x4E 0x47 at offset 0
 		if !bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47}) {
 			return errors.New("invalid PNG magic bytes: expected 0x89 0x50 0x4E 0x47 at offset 0")
 		}
 
-	case ".gif":
+	case extGif:
 		// GIF: Check for "GIF89a" or "GIF87a" at offset 0
 		if len(data) < 6 {
 			return errors.New("GIF data too small to validate signature")

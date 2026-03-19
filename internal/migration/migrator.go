@@ -32,7 +32,7 @@ type Migrator struct {
 	DestDir   string
 	PostMap   map[string]PostInfo
 	DryRun    bool
-	Log       *MigrationLog
+	Log       *Log
 	DB        *storage.DB
 	// Hash tracking for duplicate detection
 	seenHashes map[string]FileHashInfo
@@ -53,12 +53,12 @@ func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun 
 		PostMap:   postMap,
 		DryRun:    dryRun,
 		DB:        db,
-		Log: &MigrationLog{
+		Log: &Log{
 			Version:    "1.0",
 			Timestamp:  time.Now(),
 			SourceDir:  sourceDir,
 			DestDir:    destDir,
-			Operations: []MigrationRecord{},
+			Operations: []Record{},
 		},
 		seenHashes: make(map[string]FileHashInfo),
 	}
@@ -71,6 +71,7 @@ func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 		return err
 	}
 
+	//nolint:gosec // G304: intentional file reading from user-provided path
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -79,13 +80,13 @@ func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 		return fmt.Errorf("read existing log: %w", err)
 	}
 
-	var existingLog MigrationLog
+	var existingLog Log
 	if err := json.Unmarshal(data, &existingLog); err != nil {
 		return fmt.Errorf("parse existing log: %w", err)
 	}
 
 	for _, op := range existingLog.Operations {
-		if op.Hash != "" && (op.Status == "moved" || op.Status == "moved_with_warning") {
+		if op.Hash != "" && (op.Status == StatusMoved || op.Status == StatusMovedWithWarning) {
 			m.seenHashes[op.Hash] = FileHashInfo{
 				PostID:     op.PostID,
 				SourcePath: op.SourcePath,
@@ -182,7 +183,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	postInfo, exists := m.PostMap[postID]
 	if !exists {
 		postInfo = PostInfo{
-			Subreddit:  "unknown",
+			Subreddit:  UnknownSubreddit,
 			Username:   "",
 			IsUserPost: false,
 		}
@@ -266,7 +267,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		}
 		author := postInfo.Username
 		if author == "" {
-			author = "unknown"
+			author = UnknownSubreddit
 		}
 
 		post := &storage.Post{
@@ -307,12 +308,13 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 
 func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 	var subdir string
-	if info.IsUserPost && info.Username != "" {
+	switch {
+	case info.IsUserPost && info.Username != "":
 		subdir = filepath.Join("users", info.Username)
-	} else if info.Subreddit != "" {
+	case info.Subreddit != "":
 		subdir = SanitizePath(info.Subreddit)
-	} else {
-		subdir = "unknown"
+	default:
+		subdir = UnknownSubreddit
 	}
 	return filepath.Join(m.DestDir, subdir, filename)
 }
@@ -330,7 +332,7 @@ func wrapWithCleanup(err error, dst, contextFmt string, args ...interface{}) err
 
 func (m *Migrator) moveFile(src, dst string) error {
 	dir := filepath.Dir(dst)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
@@ -358,6 +360,7 @@ func (m *Migrator) moveFile(src, dst string) error {
 }
 
 func copyFile(src, dst string) (err error) {
+	//nolint:gosec // G304: intentional file reading from user-provided migration paths
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("open source %s: %w", src, err)
@@ -368,6 +371,7 @@ func copyFile(src, dst string) (err error) {
 		}
 	}()
 
+	//nolint:gosec // G304: intentional file creation at user-provided destination
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return fmt.Errorf("create dest %s: %w", dst, err)
@@ -389,11 +393,13 @@ func copyFile(src, dst string) (err error) {
 	return nil
 }
 
+// SaveLog saves the migration log to a JSON file for audit and rollback purposes.
 func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err := contextChecker(ctx); err != nil {
 		return err
 	}
 
+	//nolint:gosec // G304: intentional log file creation at user-provided path
 	file, err := os.Create(logPath)
 	if err != nil {
 		return fmt.Errorf("create log file %s: %w", logPath, err)
@@ -415,7 +421,7 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 
 // Recording methods
 func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInfo, size int64, hash string) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		DestPath:   destPath,
@@ -431,7 +437,7 @@ func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInf
 }
 
 func (m *Migrator) recordSkipped(filename, postID, reason string) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		Status:     "skipped",
@@ -442,7 +448,7 @@ func (m *Migrator) recordSkipped(filename, postID, reason string) {
 }
 
 func (m *Migrator) recordError(filename, postID, operation string, err error) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		Status:     "error",
@@ -453,7 +459,7 @@ func (m *Migrator) recordError(filename, postID, operation string, err error) {
 }
 
 func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64, hash string) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		DestPath:   destPath,
@@ -468,7 +474,7 @@ func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo
 }
 
 func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, info PostInfo, size int64, hash string, warnErr error) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		DestPath:   destPath,
@@ -486,7 +492,7 @@ func (m *Migrator) recordSuccessWithWarning(filename, postID, destPath string, i
 }
 
 // calculateHash computes BLAKE3 hash of a file
-func calculateHash(filePath string) (hashStr string, err error) {
+func calculateHash(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", filePath, err)

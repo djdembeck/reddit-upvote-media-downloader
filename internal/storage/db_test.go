@@ -15,11 +15,12 @@ import (
 
 func setupTestDB(t *testing.T) (*DB, string) {
 	t.Helper()
+	ctx := context.Background()
 
 	// Create a temporary directory for the test database
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := NewDB(dbPath)
+	db, err := NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -399,10 +400,8 @@ func TestFilenamePattern(t *testing.T) {
 			if matches[1] != tc.expectID {
 				t.Errorf("Expected ID %s for %s, got %s", tc.expectID, tc.filename, matches[1])
 			}
-		} else {
-			if matches != nil {
-				t.Errorf("Expected %s to NOT match pattern", tc.filename)
-			}
+		} else if matches != nil {
+			t.Errorf("Expected %s to NOT match pattern", tc.filename)
 		}
 	}
 }
@@ -410,14 +409,14 @@ func TestFilenamePattern(t *testing.T) {
 func TestClose(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
+	ctx := context.Background()
 
-	db, err := NewDB(dbPath)
+	db, err := NewDB(ctx, dbPath)
 	require.NoError(t, err, "Failed to create database")
 
 	require.NoError(t, db.Close(), "Failed to close database")
 
 	// Verify connection is closed by trying to use it
-	ctx := context.Background()
 	_, err = db.IsDownloaded(ctx, "test")
 	assert.Error(t, err, "Expected error when using closed database")
 }
@@ -572,12 +571,11 @@ func TestGetPostByHash_NotFound(t *testing.T) {
 func TestHashColumnMigration(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
+	ctx := context.Background()
 
-	db, err := NewDB(dbPath)
+	db, err := NewDB(ctx, dbPath)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
 
 	hash := "migrationtesthash"
 	post := &Post{

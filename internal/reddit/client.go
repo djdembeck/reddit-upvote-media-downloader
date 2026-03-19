@@ -43,6 +43,8 @@ var (
 )
 
 // Config holds the Reddit OAuth configuration.
+//
+//nolint:gosec // G117: secret pattern fields - required for OAuth2 authentication
 type Config struct {
 	ClientID     string
 	ClientSecret string
@@ -60,8 +62,8 @@ type TokenStore interface {
 	LoadToken() (*oauth2.Token, error)
 }
 
-// RedditClient defines the interface for Reddit API operations.
-type RedditClient interface {
+// Client defines the interface for Reddit API operations.
+type Client interface {
 	// GetUpvoted fetches upvoted posts with the specified limit.
 	GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error)
 	// GetSaved fetches saved posts with the specified limit.
@@ -70,8 +72,8 @@ type RedditClient interface {
 	Close() error
 }
 
-// Client provides authenticated access to the Reddit API.
-type Client struct {
+// redditClient provides authenticated access to the Reddit API.
+type redditClient struct {
 	config      *Config
 	tokenStore  TokenStore
 	oauthConfig *oauth2.Config
@@ -100,7 +102,7 @@ func newRateLimiter(requestsPerMinute int) *rateLimiter {
 }
 
 // Wait blocks until a token is available for the next request.
-// Returns an error if the context is cancelled.
+// Returns an error if the context is canceled.
 func (rl *rateLimiter) Wait(ctx context.Context) error {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -109,7 +111,7 @@ func (rl *rateLimiter) Wait(ctx context.Context) error {
 	elapsed := time.Since(rl.lastRequest)
 	tokensToAdd := int(elapsed / rl.refillRate)
 	if tokensToAdd > 0 {
-		rl.tokens = min(rl.tokens+tokensToAdd, RateLimitPerMinute)
+		rl.tokens = minInt(rl.tokens+tokensToAdd, RateLimitPerMinute)
 		rl.lastRequest = time.Now()
 	}
 
@@ -133,8 +135,8 @@ func (rl *rateLimiter) Wait(ctx context.Context) error {
 	return nil
 }
 
-// min returns the minimum of two integers.
-func min(a, b int) int {
+// minInt returns the minimum of two integers.
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
@@ -145,7 +147,7 @@ func min(a, b int) int {
 // If tokenStore is nil, tokens will not be persisted.
 //
 //nolint:cyclop
-func NewClient(config *Config, tokenStore TokenStore) (*Client, error) {
+func NewClient(config *Config, tokenStore TokenStore) (*redditClient, error) {
 	if config == nil {
 		return nil, errors.New("config is required")
 	}
@@ -169,7 +171,7 @@ func NewClient(config *Config, tokenStore TokenStore) (*Client, error) {
 		Scopes: []string{"identity", "history", "read"},
 	}
 
-	client := &Client{
+	client := &redditClient{
 		config:      config,
 		tokenStore:  tokenStore,
 		oauthConfig: oauthConfig,
@@ -199,7 +201,7 @@ func NewClient(config *Config, tokenStore TokenStore) (*Client, error) {
 // falls back to password grant.
 //
 //nolint:cyclop
-func (c *Client) authenticate(ctx context.Context) error {
+func (c *redditClient) authenticate(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -249,6 +251,7 @@ func (c *Client) authenticate(ctx context.Context) error {
 	req.Header.Set("User-Agent", c.config.UserAgent)
 	req.SetBasicAuth(c.config.ClientID, c.config.ClientSecret)
 
+	//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("token request failed: %w", err)
@@ -290,7 +293,7 @@ func (c *Client) authenticate(ctx context.Context) error {
 // refreshAndSaveToken refreshes the token using the provided tokenSource and saves it.
 // It logs any save errors using slog for diagnostics.
 // Includes retry with exponential backoff for transient errors (network issues, rate limits).
-func (c *Client) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource) error {
+func (c *redditClient) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource) error {
 	var lastErr error
 	maxRetries := 3
 	baseDelay := 1 * time.Second
@@ -327,7 +330,7 @@ func (c *Client) refreshAndSaveToken(ctx context.Context, ts oauth2.TokenSource)
 }
 
 // ensureValidToken refreshes the token if it's expired.
-func (c *Client) ensureValidToken(ctx context.Context) error {
+func (c *redditClient) ensureValidToken(ctx context.Context) error {
 	c.mu.RLock()
 	token := c.token
 	c.mu.RUnlock()
@@ -343,7 +346,7 @@ func (c *Client) ensureValidToken(ctx context.Context) error {
 // doRequest makes an authenticated HTTP request with rate limiting.
 //
 //nolint:cyclop
-func (c *Client) doRequest(ctx context.Context, method, endpoint string, params url.Values) (*http.Response, error) {
+func (c *redditClient) doRequest(ctx context.Context, method, endpoint string, params url.Values) (*http.Response, error) {
 	// Wait for rate limit
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, err
@@ -388,6 +391,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 		Timeout: 30 * time.Second,
 	}
 
+	//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -424,6 +428,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 		retryReq.Header.Set("User-Agent", c.config.UserAgent)
 		retryReq.Header.Set("Accept", "application/json")
 		retryReq.Header.Set("Authorization", "Bearer "+accessToken)
+		//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
 		retryResp, retryErr := httpClient.Do(retryReq)
 		if retryErr != nil {
 			return nil, fmt.Errorf("retry request failed: %w", retryErr)
@@ -442,20 +447,20 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, params 
 
 // GetUpvoted fetches upvoted posts for the authenticated user.
 // Returns up to 'limit' posts (max 1000 per Reddit API limit).
-func (c *Client) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
+func (c *redditClient) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
 	return c.getUserPosts(ctx, "upvoted", limit)
 }
 
 // GetSaved fetches saved posts for the authenticated user.
 // Returns up to 'limit' posts (max 1000 per Reddit API limit).
-func (c *Client) GetSaved(ctx context.Context, limit int) ([]storage.Post, error) {
+func (c *redditClient) GetSaved(ctx context.Context, limit int) ([]storage.Post, error) {
 	return c.getUserPosts(ctx, "saved", limit)
 }
 
 // getUserPosts fetches posts from a user endpoint (upvoted or saved).
 //
 //nolint:cyclop
-func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) ([]storage.Post, error) {
+func (c *redditClient) getUserPosts(ctx context.Context, endpoint string, limit int) ([]storage.Post, error) {
 	if limit <= 0 {
 		return []storage.Post{}, nil
 	}
@@ -469,7 +474,7 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 	for len(allPosts) < limit {
 		// Calculate how many to fetch in this request
 		remaining := limit - len(allPosts)
-		fetchCount := min(remaining, MaxPostsPerRequest)
+		fetchCount := minInt(remaining, MaxPostsPerRequest)
 
 		params := url.Values{}
 		params.Set("limit", strconv.Itoa(fetchCount))
@@ -486,7 +491,7 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 			return nil, fmt.Errorf("fetching %s posts: %w", endpoint, err)
 		}
 
-		var listing RedditListing
+		var listing Listing
 		if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				slog.Error("failed to close response body", "error", closeErr)
@@ -526,7 +531,7 @@ func (c *Client) getUserPosts(ctx context.Context, endpoint string, limit int) (
 }
 
 // Close closes the client and cleans up resources.
-func (c *Client) Close() error {
+func (c *redditClient) Close() error {
 	// Save token before closing if store is available
 	c.mu.RLock()
 	token := c.token
@@ -539,18 +544,18 @@ func (c *Client) Close() error {
 }
 
 // GetUsername returns the username of the authenticated user.
-func (c *Client) GetUsername() string {
+func (c *redditClient) GetUsername() string {
 	return c.config.Username
 }
 
 // IsAuthenticated returns true if the client has a valid token.
-func (c *Client) IsAuthenticated() bool {
+func (c *redditClient) IsAuthenticated() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.token != nil && c.token.Valid()
 }
 
 // RefreshToken manually refreshes the access token.
-func (c *Client) RefreshToken(ctx context.Context) error {
+func (c *redditClient) RefreshToken(ctx context.Context) error {
 	return c.authenticate(ctx)
 }

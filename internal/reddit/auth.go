@@ -39,7 +39,7 @@ func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
 }
 
 // tryOAuth2Flow attempts OAuth2 flow on a specific port
-func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, error) {
+func tryOAuth2Flow(clientID, clientSecret, _ string, port int) (string, error) {
 	// Generate random state for CSRF protection
 	state, err := generateRandomState(16)
 	if err != nil {
@@ -110,10 +110,13 @@ func openURL(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
+		//nolint:gosec // G204: subprocess launched with variable - standard browser opening command
 		cmd = exec.Command("open", url)
 	case "linux":
+		//nolint:gosec // G204: subprocess launched with variable - standard browser opening command
 		cmd = exec.Command("xdg-open", url)
 	case "windows":
+		//nolint:gosec // G204: subprocess launched with variable - standard browser opening command
 		cmd = exec.Command("cmd", "/C", "start", "", url)
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
@@ -133,14 +136,16 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			escapedErrMsg := html.EscapeString(errMsg)
 			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
-			_, _ = fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
+			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc) //nolint:errcheck
 			errorChan <- fmt.Errorf("oauth error: %s - %s", escapedErrMsg, escapedDesc)
 			return
 		}
 
 		// Verify state matches
 		if r.URL.Query().Get("state") != state {
-			_, _ = fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>")
+			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			_, _ = fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>") //nolint:errcheck
 			errorChan <- errors.New("state mismatch")
 			return
 		}
@@ -150,18 +155,19 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		token, err := exchangeCodeForToken(r.Context(), code, oauthConfig)
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
-			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
+			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr) //nolint:errcheck
 			errorChan <- fmt.Errorf("exchanging code for token: %s", escapedErr)
 			return
 		}
 
 		// Success - show token
-		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
+		_, _ = fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>") //nolint:errcheck
 		resultChan <- token
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	// Start server in goroutine and capture errors
 	errChan := make(chan error, 1)
@@ -172,22 +178,27 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
-		_ = server.Close()
+		// Ignoring error - server.Close() in cleanup is best effort
+		_ = server.Close() //nolint:errcheck
 		timer.Stop()
 	}()
 
 	select {
 	case token := <-resultChan:
-		_ = server.Close()
+		// Ignoring error - server.Close() is best effort cleanup
+		_ = server.Close() //nolint:errcheck
 		return token, nil
 	case err := <-errorChan:
-		_ = server.Close()
+		// Ignoring error - server.Close() is best effort cleanup
+		_ = server.Close() //nolint:errcheck
 		return "", err
 	case err := <-errChan:
-		_ = server.Close()
+		// Ignoring error - server.Close() is best effort cleanup
+		_ = server.Close() //nolint:errcheck
 		return "", fmt.Errorf("server error: %w", err)
 	case <-timer.C:
-		_ = server.Close()
+		// Ignoring error - server.Close() is best effort cleanup
+		_ = server.Close() //nolint:errcheck
 		return "", errors.New("timeout waiting for OAuth callback (30 seconds)")
 	}
 }

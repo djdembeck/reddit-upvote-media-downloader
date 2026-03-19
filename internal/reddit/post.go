@@ -8,26 +8,26 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
-// RedditPost represents the JSON structure of a Reddit post from the API.
-type RedditPost struct {
+// Post represents the JSON structure of a Reddit post from the API.
+type Post struct {
 	ID          string                   `json:"id"`
 	Title       string                   `json:"title"`
 	Subreddit   string                   `json:"subreddit"`
 	Author      string                   `json:"author"`
 	URL         string                   `json:"url"`
 	Permalink   string                   `json:"permalink"`
-	CreatedUTC  float64                  `json:"created_utc"`
-	IsVideo     bool                     `json:"is_video"`
-	IsSelf      bool                     `json:"is_self"`
+	CreatedUTC  float64                  `json:"createdUtc"`
+	IsVideo     bool                     `json:"isVideo"`
+	IsSelf      bool                     `json:"isSelf"`
 	SelfText    string                   `json:"selftext"`
 	Thumbnail   string                   `json:"thumbnail"`
-	NumComments int                      `json:"num_comments"`
+	NumComments int                      `json:"numComments"`
 	Score       int                      `json:"score"`
 	Media       *Media                   `json:"media"`
-	PostHint    string                   `json:"post_hint"`
-	GalleryData *GalleryData             `json:"gallery_data"`
-	MediaMeta   map[string]MediaMetadata `json:"media_metadata"`
-	URLOverride string                   `json:"url_overridden_by_dest"`
+	PostHint    string                   `json:"postHint"`
+	GalleryData *GalleryData             `json:"galleryData"`
+	MediaMeta   map[string]MediaMetadata `json:"mediaMetadata"`
+	URLOverride string                   `json:"urlOverriddenByDest"`
 }
 
 // GalleryData represents the gallery data structure from Reddit API.
@@ -37,7 +37,7 @@ type GalleryData struct {
 
 // GalleryItem represents a single item in a Reddit gallery.
 type GalleryItem struct {
-	MediaID string `json:"media_id"`
+	MediaID string `json:"mediaId"`
 	ID      int    `json:"id"`
 }
 
@@ -59,52 +59,52 @@ type MediaMetadataImage struct {
 
 // Media represents media metadata for a Reddit post.
 type Media struct {
-	RedditVideo *RedditVideo `json:"reddit_video"`
-	OEmbed      *OEmbed      `json:"oembed"`
+	Video  *Video  `json:"redditVideo"`
+	OEmbed *OEmbed `json:"oembed"`
 }
 
-// RedditVideo represents Reddit-hosted video metadata.
-type RedditVideo struct {
-	BitrateKbps       int    `json:"bitrate_kbps"`
-	FallbackURL       string `json:"fallback_url"`
+// Video represents Reddit-hosted video metadata.
+type Video struct {
+	BitrateKbps       int    `json:"bitrateKbps"`
+	FallbackURL       string `json:"fallbackUrl"`
 	Height            int    `json:"height"`
 	Width             int    `json:"width"`
-	ScrubberMediaURL  string `json:"scrubber_media_url"`
-	DashURL           string `json:"dash_url"`
+	ScrubberMediaURL  string `json:"scrubberMediaUrl"`
+	DashURL           string `json:"dashUrl"`
 	Duration          int    `json:"duration"`
-	HLSURL            string `json:"hls_url"`
-	IsGIF             bool   `json:"is_gif"`
-	TranscodingStatus string `json:"transcoding_status"`
+	HLSURL            string `json:"hlsUrl"`
+	IsGIF             bool   `json:"isGif"`
+	TranscodingStatus string `json:"transcodingStatus"`
 }
 
 // OEmbed represents embedded media metadata (e.g., from external sites).
 type OEmbed struct {
-	AuthorName   string `json:"author_name"`
-	AuthorURL    string `json:"author_url"`
+	AuthorName   string `json:"authorName"`
+	AuthorURL    string `json:"authorUrl"`
 	Description  string `json:"description"`
 	HTML         string `json:"html"`
-	ProviderName string `json:"provider_name"`
-	ProviderURL  string `json:"provider_url"`
-	ThumbnailURL string `json:"thumbnail_url"`
+	ProviderName string `json:"providerName"`
+	ProviderURL  string `json:"providerUrl"`
+	ThumbnailURL string `json:"thumbnailUrl"`
 	Title        string `json:"title"`
 	Type         string `json:"type"`
 	Version      string `json:"version"`
 }
 
-// RedditListing represents the Reddit API listing response.
-type RedditListing struct {
+// Listing represents the Reddit API listing response.
+type Listing struct {
 	Kind string `json:"kind"`
 	Data struct {
-		After    *string       `json:"after"`
-		Before   *string       `json:"before"`
-		Children []RedditChild `json:"children"`
+		After    *string `json:"after"`
+		Before   *string `json:"before"`
+		Children []Child `json:"children"`
 	} `json:"data"`
 }
 
-// RedditChild represents a child item in a Reddit listing.
-type RedditChild struct {
-	Kind string     `json:"kind"`
-	Data RedditPost `json:"data"`
+// Child represents a child item in a Reddit listing.
+type Child struct {
+	Kind string `json:"kind"`
+	Data Post   `json:"data"`
 }
 
 // MediaType represents the type of media in a Reddit post.
@@ -125,9 +125,9 @@ const (
 	MediaTypeUnknown MediaType = "unknown"
 )
 
-// ToStoragePost converts a RedditPost to the internal storage.Post struct.
+// ToStoragePost converts a Post to the internal storage.Post struct.
 // The source parameter indicates whether the post was upvoted or saved.
-func (rp *RedditPost) ToStoragePost(source string) storage.Post {
+func (rp *Post) ToStoragePost(source string) storage.Post {
 	return storage.Post{
 		ID:        rp.ID,
 		Title:     rp.Title,
@@ -142,7 +142,7 @@ func (rp *RedditPost) ToStoragePost(source string) storage.Post {
 }
 
 // DetectMediaType determines the media type of the Reddit post.
-func (rp *RedditPost) DetectMediaType() MediaType {
+func (rp *Post) DetectMediaType() MediaType {
 	if rp.GalleryData != nil && len(rp.GalleryData.Items) > 0 {
 		return MediaTypeGallery
 	}
@@ -161,7 +161,7 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 		}
 	}
 
-	if rp.IsVideo && rp.Media != nil && rp.Media.RedditVideo != nil {
+	if rp.IsVideo && rp.Media != nil && rp.Media.Video != nil {
 		return MediaTypeVideo
 	}
 

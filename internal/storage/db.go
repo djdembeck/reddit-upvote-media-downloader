@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -13,8 +14,11 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Required for SQLite driver registration
 )
+
+// ErrPostNotFound is returned when a post is not found in the database.
+var ErrPostNotFound = errors.New("post not found")
 
 // DB wraps the database connection.
 type DB struct {
@@ -43,7 +47,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 );
 `
 
-// migration statements to add new columns if they don't exist
+// migration statements to add new columns if they don't exist.
 const addRetryCountColumn = `
 ALTER TABLE posts ADD COLUMN retry_count INTEGER DEFAULT 0;
 `
@@ -60,14 +64,15 @@ ALTER TABLE posts ADD COLUMN last_attempt INTEGER;
 // This is idempotent - safe to run multiple times.
 //
 //nolint:cyclop
-func (db *DB) runMigrations() error {
+func (db *DB) runMigrations(ctx context.Context) error {
 	// Get existing columns
-	rows, err := db.conn.Query("PRAGMA table_info(posts)")
+	rows, err := db.conn.QueryContext(ctx, "PRAGMA table_info(posts)")
 	if err != nil {
 		return fmt.Errorf("failed to query table info: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		// Ignoring error - rows.Close() in cleanup, read-only operation
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	existingColumns := make(map[string]bool)
@@ -76,7 +81,7 @@ func (db *DB) runMigrations() error {
 		var name string
 		var type_ string
 		var notnull int
-		var dflt_value interface{}
+		var dflt_value any
 		var pk int
 		if err := rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk); err != nil {
 			return fmt.Errorf("failed to scan table info: %w", err)
@@ -89,21 +94,21 @@ func (db *DB) runMigrations() error {
 
 	// Add retry_count column if it doesn't exist
 	if !existingColumns["retry_count"] {
-		if _, err := db.conn.Exec(addRetryCountColumn); err != nil {
+		if _, err := db.conn.ExecContext(ctx, addRetryCountColumn); err != nil {
 			return fmt.Errorf("failed to add retry_count column: %w", err)
 		}
 	}
 
 	// Add last_error column if it doesn't exist
 	if !existingColumns["last_error"] {
-		if _, err := db.conn.Exec(addLastErrorColumn); err != nil {
+		if _, err := db.conn.ExecContext(ctx, addLastErrorColumn); err != nil {
 			return fmt.Errorf("failed to add last_error column: %w", err)
 		}
 	}
 
 	// Add last_attempt column if it doesn't exist
 	if !existingColumns["last_attempt"] {
-		if _, err := db.conn.Exec(addLastAttemptColumn); err != nil {
+		if _, err := db.conn.ExecContext(ctx, addLastAttemptColumn); err != nil {
 			return fmt.Errorf("failed to add last_attempt column: %w", err)
 		}
 	}
@@ -112,10 +117,10 @@ func (db *DB) runMigrations() error {
 }
 
 // NewDB creates a new database connection and initializes the schema.
-func NewDB(dbPath string) (*DB, error) {
+func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 	// Ensure the directory exists
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
@@ -125,33 +130,35 @@ func NewDB(dbPath string) (*DB, error) {
 	}
 
 	// Test the connection
-	if err := conn.Ping(); err != nil {
+	if err := conn.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	// Create the schema
-	if _, err := conn.Exec(schema); err != nil {
+	if _, err := conn.ExecContext(ctx, schema); err != nil {
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
 	db := &DB{conn: conn}
 
 	// Run migrations to add new columns
-	if err := db.runMigrations(); err != nil {
+	if err := db.runMigrations(ctx); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
 	// Migration: Add hash column if not exists (preserve existing data)
-	_, err = conn.Exec(`ALTER TABLE posts ADD COLUMN hash TEXT`)
+	_, err = conn.ExecContext(ctx, `ALTER TABLE posts ADD COLUMN hash TEXT`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		_ = conn.Close()
+		// Ignoring error - conn.Close() in error path, best effort cleanup
+		_ = conn.Close() //nolint:errcheck
 		return nil, fmt.Errorf("failed to add hash column: %w", err)
 	}
 
 	// Create index on hash column for fast lookups
-	_, err = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
+	_, err = conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
 	if err != nil {
-		_ = conn.Close()
+		// Ignoring error - conn.Close() in error path, best effort cleanup
+		_ = conn.Close() //nolint:errcheck
 		return nil, fmt.Errorf("failed to create hash index: %w", err)
 	}
 
@@ -261,7 +268,7 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post: %w", err)
@@ -427,6 +434,8 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 	return status, nil
 }
 
+// HashExists checks if a file hash already exists in the database.
+// Returns true if the hash exists, false otherwise, along with any error.
 func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE hash = ?)`
 
@@ -472,7 +481,7 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post by hash: %w", err)
@@ -537,7 +546,8 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get source counts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		// Ignoring error - rows.Close() in cleanup, read-only operation
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	for rows.Next() {
@@ -558,7 +568,8 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get subreddit counts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		// Ignoring error - rows.Close() in cleanup, read-only operation
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	for rows.Next() {
@@ -579,7 +590,7 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get media type counts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	for rows.Next() {
@@ -602,12 +613,14 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 //
 //nolint:cyclop
 func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error) {
+	//nolint:gosec // G304: intentional file reading from user-provided idList file for migration
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open idList file: %w", err)
 	}
 	defer func() {
-		_ = file.Close()
+		// Ignoring error - file.Close() in cleanup, read-only operation
+		_ = file.Close() //nolint:errcheck
 	}()
 
 	scanner := bufio.NewScanner(file)
@@ -843,7 +856,7 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 		return nil, fmt.Errorf("failed to query all posts: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	var posts []Post
@@ -992,7 +1005,7 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 		return nil, fmt.Errorf("failed to query posts to retry: %w", err)
 	}
 	defer func() {
-		_ = rows.Close()
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	var eligiblePosts []string

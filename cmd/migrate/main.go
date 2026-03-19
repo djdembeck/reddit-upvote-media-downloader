@@ -1,3 +1,13 @@
+// migrate is a tool for reorganizing Reddit media files from flat directory
+// structures into subreddit-based folder hierarchies. It parses bdfr-html
+// index.html files to extract post metadata and moves files accordingly.
+//
+// Usage:
+//
+//	./migrate --source /path/to/media --dest ./output --index /path/to/index.html
+//
+// The tool supports dry-run mode, rollback functionality, and creates JSON
+// logs for audit and recovery purposes.
 package main
 
 import (
@@ -108,7 +118,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	if dbPath != "" && !dryRun {
 		fmt.Printf("Initializing database: %s\n", dbPath)
 		var err error
-		db, err = storage.NewDB(dbPath)
+		db, err = storage.NewDB(ctx, dbPath)
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
 		}
@@ -120,7 +130,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	if !dryRun {
-		if err := os.MkdirAll(destDir, 0755); err != nil {
+		if err := os.MkdirAll(destDir, 0750); err != nil {
 			return fmt.Errorf("create destination directory: %w", err)
 		}
 	}
@@ -169,6 +179,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 
 //nolint:cyclop
 func runRollback(logPath, sourceRoot, destRoot string) {
+	ctx := context.Background()
 	fmt.Println("Rollback")
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
@@ -178,14 +189,16 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	if dbPath != "" {
 		fmt.Printf("Initializing database: %s\n", dbPath)
 		var err error
-		db, err = storage.NewDB(dbPath)
+		db, err = storage.NewDB(ctx, dbPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-			os.Exit(1)
+			return
 		}
 		defer func() {
-			if err := db.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+			if db != nil {
+				if err := db.Close(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+				}
 			}
 		}()
 	}
@@ -193,29 +206,29 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	logSourceRoot, logDestRoot, err := readRootsFromLog(logPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return
 	}
 
 	if logSourceRoot != "" && logSourceRoot != sourceRoot {
 		fmt.Fprintf(os.Stderr, "Error: Log source directory (%s) does not match CLI source directory (%s)\n", logSourceRoot, sourceRoot)
-		os.Exit(1)
+		return
 	}
 	if logDestRoot != "" && logDestRoot != destRoot {
 		fmt.Fprintf(os.Stderr, "Error: Log destination directory (%s) does not match CLI destination directory (%s)\n", logDestRoot, destRoot)
-		os.Exit(1)
+		return
 	}
 
 	rb := migration.NewRollback(logPath, db, sourceRoot, destRoot)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return
 	}
 
 	rollbackPath := logPath + ".rollback_" + time.Now().Format("20060102_150405") + ".json"
 	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving rollback log: %v\n", err)
-		os.Exit(1)
+		return
 	}
 
 	fmt.Println("Rollback Summary")
@@ -225,18 +238,27 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	fmt.Printf("Log: %s\n", rollbackPath)
 
 	if rollbackLog.ErrorCount > 0 {
+		// Close database explicitly before exit to ensure cleanup runs
+		// (defers don't run on os.Exit, so we must close explicitly)
+		if db != nil {
+			if err := db.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+			}
+			db = nil // Prevent double-close in defer
+		}
 		os.Exit(1)
 	}
 }
 
-func readRootsFromLog(logPath string) (sourceRoot, destRoot string, err error) {
+func readRootsFromLog(logPath string) (string, string, error) {
+	//nolint:gosec // G304: intentional file reading from user-provided path
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		return "", "", fmt.Errorf("readRootsFromLog: read %s: %w", logPath, err)
 	}
 	var log struct {
-		SourceDir string `json:"source_dir"`
-		DestDir   string `json:"dest_dir"`
+		SourceDir string `json:"sourceDir"`
+		DestDir   string `json:"destDir"`
 	}
 	if err := json.Unmarshal(data, &log); err != nil {
 		return "", "", fmt.Errorf("readRootsFromLog: unmarshal %s: %w", logPath, err)

@@ -50,7 +50,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token":  "test_access_token",
 				"token_type":    "bearer",
 				"expires_in":    3600,
@@ -94,13 +94,13 @@ func setupTestServer(t *testing.T) (*httptest.Server, *url.URL) {
 }
 
 // createMockListing creates a mock Reddit listing response.
-func createMockListing(kind string, count int) RedditListing {
-	listing := RedditListing{
+func createMockListing(kind string, count int) Listing {
+	listing := Listing{
 		Kind: "Listing",
 	}
 
 	for i := 0; i < count; i++ {
-		post := RedditPost{
+		post := Post{
 			ID:         "post_" + kind + "_" + string(rune('0'+i)),
 			Title:      "Test Post " + kind + " " + string(rune('0'+i)),
 			Subreddit:  "testsub",
@@ -111,7 +111,7 @@ func createMockListing(kind string, count int) RedditListing {
 			IsVideo:    false,
 			IsSelf:     false,
 		}
-		listing.Data.Children = append(listing.Data.Children, RedditChild{
+		listing.Data.Children = append(listing.Data.Children, Child{
 			Kind: "t3",
 			Data: post,
 		})
@@ -229,7 +229,7 @@ func TestClient_GetUpvoted(t *testing.T) {
 	})
 
 	t.Run("negative limit", func(t *testing.T) {
-		client := &Client{
+		client := &redditClient{
 			config:      config,
 			rateLimiter: newRateLimiter(60),
 		}
@@ -244,7 +244,7 @@ func TestClient_GetUpvoted(t *testing.T) {
 	})
 
 	t.Run("zero limit", func(t *testing.T) {
-		client := &Client{
+		client := &redditClient{
 			config:      config,
 			rateLimiter: newRateLimiter(60),
 		}
@@ -272,7 +272,7 @@ func TestClient_GetSaved(t *testing.T) {
 	}
 
 	t.Run("negative limit", func(t *testing.T) {
-		client := &Client{
+		client := &redditClient{
 			config:      config,
 			rateLimiter: newRateLimiter(60),
 		}
@@ -289,7 +289,7 @@ func TestClient_GetSaved(t *testing.T) {
 
 func TestRedditPost_ToStoragePost(t *testing.T) {
 	now := time.Now()
-	rp := RedditPost{
+	rp := Post{
 		ID:         "abc123",
 		Title:      "Test Post",
 		Subreddit:  "testsub",
@@ -329,76 +329,76 @@ func TestRedditPost_ToStoragePost(t *testing.T) {
 func TestRedditPost_DetectMediaType(t *testing.T) {
 	tests := []struct {
 		name     string
-		post     RedditPost
+		post     Post
 		expected MediaType
 	}{
 		{
 			name: "Reddit video",
-			post: RedditPost{
+			post: Post{
 				IsVideo: true,
-				Media:   &Media{RedditVideo: &RedditVideo{IsGIF: false}},
+				Media:   &Media{Video: &Video{IsGIF: false}},
 			},
 			expected: MediaTypeVideo,
 		},
 		{
 			name: "Self post",
-			post: RedditPost{
+			post: Post{
 				IsSelf: true,
 			},
 			expected: MediaTypeText,
 		},
 		{
 			name: "Image by hint",
-			post: RedditPost{
+			post: Post{
 				PostHint: "image",
 			},
 			expected: MediaTypeImage,
 		},
 		{
 			name: "Video by hint",
-			post: RedditPost{
+			post: Post{
 				PostHint: "rich:video",
 			},
 			expected: MediaTypeVideo,
 		},
 		{
 			name: "Link by hint",
-			post: RedditPost{
+			post: Post{
 				PostHint: "link",
 			},
 			expected: MediaTypeLink,
 		},
 		{
 			name: "Image by URL extension",
-			post: RedditPost{
+			post: Post{
 				URL: "https://example.com/image.jpg",
 			},
 			expected: MediaTypeImage,
 		},
 		{
 			name: "Video by URL extension",
-			post: RedditPost{
+			post: Post{
 				URL: "https://example.com/video.mp4",
 			},
 			expected: MediaTypeVideo,
 		},
 		{
 			name: "YouTube video",
-			post: RedditPost{
+			post: Post{
 				URL: "https://youtube.com/watch?v=abc123",
 			},
 			expected: MediaTypeVideo,
 		},
 		{
 			name: "Vimeo video",
-			post: RedditPost{
+			post: Post{
 				URL: "https://vimeo.com/123456",
 			},
 			expected: MediaTypeVideo,
 		},
 		{
 			name: "External link",
-			post: RedditPost{
+			post: Post{
 				URL:       "https://example.com/page",
 				Permalink: "/r/test/comments/abc/",
 			},
@@ -406,7 +406,7 @@ func TestRedditPost_DetectMediaType(t *testing.T) {
 		},
 		{
 			name: "Unknown type",
-			post: RedditPost{
+			post: Post{
 				URL:       "",
 				Permalink: "/r/test/comments/abc/",
 			},
@@ -520,7 +520,7 @@ func TestTokenStore_LoadError(t *testing.T) {
 }
 
 func TestClient_IsAuthenticated(t *testing.T) {
-	client := &Client{
+	client := &redditClient{
 		config: &Config{
 			Username: "testuser",
 		},
@@ -553,7 +553,7 @@ func TestClient_IsAuthenticated(t *testing.T) {
 }
 
 func TestClient_GetUsername(t *testing.T) {
-	client := &Client{
+	client := &redditClient{
 		config: &Config{
 			Username: "testuser123",
 		},
@@ -566,7 +566,7 @@ func TestClient_GetUsername(t *testing.T) {
 
 func TestClient_Close(t *testing.T) {
 	mockStore := &mockTokenStore{}
-	client := &Client{
+	client := &redditClient{
 		config:     &Config{Username: "test"},
 		tokenStore: mockStore,
 		token: &oauth2.Token{
@@ -650,7 +650,7 @@ func TestFullMockFlow(t *testing.T) {
 
 			tokenIssued = true
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "mock_access_token",
 				"token_type":   "bearer",
 				"expires_in":   3600,
@@ -667,13 +667,13 @@ func TestFullMockFlow(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			listing := RedditListing{
+			listing := Listing{
 				Kind: "Listing",
 			}
-			listing.Data.Children = []RedditChild{
+			listing.Data.Children = []Child{
 				{
 					Kind: "t3",
-					Data: RedditPost{
+					Data: Post{
 						ID:         "test1",
 						Title:      "Test Post 1",
 						Subreddit:  "test",

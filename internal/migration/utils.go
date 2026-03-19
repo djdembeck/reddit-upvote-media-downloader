@@ -14,7 +14,7 @@ var reservedWindowsNames = []string{
 // SanitizePath sanitizes a string for use as a filesystem path component.
 func SanitizePath(name string) string {
 	if name == "" {
-		return "unknown"
+		return UnknownSubreddit
 	}
 
 	sanitized := strings.Map(func(r rune) rune {
@@ -27,7 +27,7 @@ func SanitizePath(name string) string {
 	sanitized = strings.Trim(sanitized, "_")
 
 	if sanitized == "" {
-		return "unknown"
+		return UnknownSubreddit
 	}
 
 	upperSanitized := strings.ToUpper(sanitized)

@@ -122,7 +122,7 @@ func waitForCondition(t *testing.T, condition func() bool, timeout time.Duration
 
 func TestExtractorRedditImage(t *testing.T) {
 	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "abc123",
 		Subreddit: "pics",
 		URL:       "https://i.redd.it/abc123.jpg",
@@ -144,7 +144,7 @@ func TestExtractorRedditImage(t *testing.T) {
 }
 
 func TestExtractorGallery(t *testing.T) {
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "gal123",
 		Subreddit: "pics",
 		GalleryData: &reddit.GalleryData{
@@ -192,12 +192,12 @@ func TestExtractorRedditVideoDash(t *testing.T) {
 
 	client := newRewriteClient(server, "v.redd.it")
 	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "abc",
 		Subreddit: "videos",
 		IsVideo:   true,
 		Media: &reddit.Media{
-			RedditVideo: &reddit.RedditVideo{DashURL: "https://v.redd.it/abc/DASHPlaylist.mpd"},
+			Video: &reddit.Video{DashURL: "https://v.redd.it/abc/DASHPlaylist.mpd"},
 		},
 		URL: "https://v.redd.it/abc",
 	}
@@ -215,7 +215,7 @@ func TestExtractorRedditVideoDash(t *testing.T) {
 }
 
 func TestExtractorImgurPage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = fmt.Fprintln(w, `<meta property="og:image" content="https://i.imgur.com/test.jpg">`)
 	}))
@@ -223,7 +223,7 @@ func TestExtractorImgurPage(t *testing.T) {
 
 	client := newRewriteClient(server, "imgur.com")
 	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "img1",
 		Subreddit: "pics",
 		URL:       "https://imgur.com/abcd",
@@ -260,7 +260,7 @@ func TestExtractorRedgifsAPI(t *testing.T) {
 
 	client := newRewriteClient(server, "api.redgifs.com")
 	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "rg1",
 		Subreddit: "gifs",
 		URL:       "https://redgifs.com/watch/sample",
@@ -280,7 +280,7 @@ func TestExtractorRedgifsAPI(t *testing.T) {
 
 func TestExtractorDirectLink(t *testing.T) {
 	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "dir1",
 		Subreddit: "videos",
 		URL:       "https://example.com/clip.webm",
@@ -308,14 +308,15 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 	// Create a valid JPEG file (at least 1KB) to test validation
 	bdfrStyleFilePath := filepath.Join(subredditDir, "abc123.jpg")
 	// Valid JPEG magic bytes: 0xFF 0xD8 0xFF
-	validContent := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+	validContent := make([]byte, 0, 11)
+	validContent = append(validContent, 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00)
 	// Pad to at least 1KB
 	validContent = append(validContent, make([]byte, 1024-len(validContent))...)
 	if err := os.WriteFile(bdfrStyleFilePath, validContent, 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return nil, errors.New("unexpected request")
 	})}
 
@@ -504,7 +505,7 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err, "NewDB error")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -662,7 +663,7 @@ func TestDeduplication(t *testing.T) {
 				} else {
 					hash := hashes[tt.newPostID]
 					assert.NotEmpty(t, hash, "Hash should be returned for duplicates")
-					assert.Equal(t, 64, len(hash), "Expected raw hash length 64 for duplicates")
+					assert.Len(t, hash, 64, "Expected raw hash length 64 for duplicates")
 					assert.Equal(t, "true", hashes[tt.newPostID+"_duplicate"], "Expected duplicate marker to be set")
 				}
 			} else {
@@ -672,7 +673,7 @@ func TestDeduplication(t *testing.T) {
 
 			if tt.checkHashLength {
 				hash := hashes[tt.newPostID]
-				assert.Equal(t, 64, len(hash), "Expected hash length 64, got %d (hash: %s)", len(hash), hash)
+				assert.Len(t, hash, 64, "Expected hash length 64, got %d (hash: %s)", len(hash), hash)
 			}
 
 			newFilePath := filepath.Join(setup.subredditDir, tt.newFilename)
@@ -700,7 +701,7 @@ func TestHashCalculation_Integration(t *testing.T) {
 	hash, err := CalculateFileHash(testFilePath)
 	require.NoError(t, err, "CalculateFileHash error")
 
-	assert.Equal(t, 64, len(hash), "Expected hash length 64")
+	assert.Len(t, hash, 64, "Expected hash length 64")
 
 	hash2, err := CalculateFileHash(testFilePath)
 	require.NoError(t, err, "CalculateFileHash error")
@@ -1255,7 +1256,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	outputDir := t.TempDir()
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -1301,7 +1302,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	assert.Equal(t, errReasonKnownBadHash, post.LastError)
 
 	var valErr ValidationError
-	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
+	require.ErrorAs(t, downloadErr, &valErr, "Download error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
 }
@@ -1341,7 +1342,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -1385,7 +1386,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 	assert.Equal(t, errReasonKnownBadHash, post.LastError)
 
 	var valErr ValidationError
-	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
+	require.ErrorAs(t, downloadErr, &valErr, "Download error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
 }
@@ -1452,7 +1453,7 @@ func TestHandleBlockingFile(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err, "expected error")
 				if tt.wantRetryErr {
-					assert.True(t, errors.Is(err, errRetryImmediately), "error should be errRetryImmediately")
+					assert.ErrorIs(t, err, errRetryImmediately, "error should be errRetryImmediately")
 				}
 			} else {
 				require.NoError(t, err, "unexpected error")
@@ -1681,7 +1682,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -1714,7 +1715,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 
 	// Check that error is a ValidationError with Permanent=true
 	var valErr ValidationError
-	require.True(t, errors.As(err, &valErr), "error should be a ValidationError")
+	require.ErrorAs(t, err, &valErr, "error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
 }

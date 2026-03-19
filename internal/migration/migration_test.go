@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
+func assertHasDuplicateSkip(t *testing.T, operations []Record) {
 	t.Helper()
 	for _, op := range operations {
 		if op.Status == "skipped" &&
@@ -330,11 +330,11 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write dest file: %v", err)
 	}
 
-	log := MigrationLog{
+	log := Log{
 		Version:   "1.0",
 		SourceDir: originalDir,
 		DestDir:   destDir,
-		Operations: []MigrationRecord{
+		Operations: []Record{
 			{
 				PostID:     "abc123",
 				SourcePath: originalFile,
@@ -375,11 +375,11 @@ func TestRollbackMissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "migration_log.json")
 
-	log := MigrationLog{
+	log := Log{
 		Version:   "1.0",
 		SourceDir: filepath.Join(tmpDir, "source"),
 		DestDir:   filepath.Join(tmpDir, "dest"),
-		Operations: []MigrationRecord{
+		Operations: []Record{
 			{
 				PostID:     "abc123",
 				SourcePath: filepath.Join(tmpDir, "source", "Test_abc123.jpg"),
@@ -465,11 +465,11 @@ func TestRollbackPathValidation(t *testing.T) {
 				defer func() { _ = os.Remove(tt.setupFile) }()
 			}
 
-			log := MigrationLog{
+			log := Log{
 				Version:   "1.0",
 				SourceDir: trustedSource,
 				DestDir:   trustedDest,
-				Operations: []MigrationRecord{
+				Operations: []Record{
 					{
 						PostID:     "abc123",
 						SourcePath: validSourcePath,
@@ -517,15 +517,15 @@ func contains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
 
-func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
+func setupDuplicateScenario(t *testing.T, content []byte) (string, string, string, string, map[string]PostInfo) {
 	tmpDir := t.TempDir()
-	sourceDir = filepath.Join(tmpDir, "source")
-	destDir = filepath.Join(tmpDir, "dest")
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
 
 	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
-	file1 = filepath.Join(sourceDir, "Post1_abc123.jpg")
-	file2 = filepath.Join(sourceDir, "Post2_def456.jpg")
+	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
 
 	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
 	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
@@ -534,12 +534,12 @@ func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, f
 	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
 	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
 
-	postMap = map[string]PostInfo{
+	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
 		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
 	}
 
-	return
+	return sourceDir, destDir, file1, file2, postMap
 }
 
 func TestDuplicateHandling(t *testing.T) {
@@ -971,7 +971,7 @@ func TestMigratorUnknownFiles(t *testing.T) {
 	if op.Status != "moved" {
 		t.Errorf("Status = %s, want moved", op.Status)
 	}
-	if op.Subreddit != "unknown" {
+	if op.Subreddit != UnknownSubreddit {
 		t.Errorf("Subreddit = %s, want unknown", op.Subreddit)
 	}
 }
@@ -1161,7 +1161,7 @@ func TestMigrationSuite(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(content), 0644), "Failed to write %s", filename)
 			}
 
-			db, err := storage.NewDB(dbPath)
+			db, err := storage.NewDB(context.Background(), dbPath)
 			require.NoError(t, err, "Failed to create database")
 			defer func() { _ = db.Close() }()
 
@@ -1178,7 +1178,7 @@ func TestMigrationSuite(t *testing.T) {
 			for _, relPath := range tt.wantDestFiles {
 				destFile := filepath.Join(destDir, relPath)
 				_, err := os.Stat(destFile)
-				assert.NoError(t, err, "Dest file should exist: %s", relPath)
+				require.NoError(t, err, "Dest file should exist: %s", relPath)
 			}
 
 			for _, filename := range tt.wantSourceRemoved {
@@ -1190,7 +1190,7 @@ func TestMigrationSuite(t *testing.T) {
 			for _, filename := range tt.wantSourceRemain {
 				srcFile := filepath.Join(sourceDir, filename)
 				_, err := os.Stat(srcFile)
-				assert.NoError(t, err, "Source file should remain: %s", filename)
+				require.NoError(t, err, "Source file should remain: %s", filename)
 			}
 
 			ctx := context.Background()

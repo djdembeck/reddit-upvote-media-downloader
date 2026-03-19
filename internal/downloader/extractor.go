@@ -88,7 +88,7 @@ func NewExtractorWithLogger(client *http.Client, userAgent string, logger *slog.
 }
 
 // Extract extracts downloadable media URLs from a Reddit post.
-func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Downloadable, error) {
+func (e *Extractor) Extract(ctx context.Context, post reddit.Post) ([]Downloadable, error) {
 	sourceURL := strings.TrimSpace(post.URLOverride)
 	if sourceURL == "" {
 		sourceURL = strings.TrimSpace(post.URL)
@@ -123,7 +123,7 @@ func (e *Extractor) Extract(ctx context.Context, post reddit.RedditPost) ([]Down
 // extractFromURL extracts media from a specific URL based on the host.
 //
 //nolint:cyclop
-func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractFromURL(ctx context.Context, post reddit.Post, sourceURL string) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse URL: %w", err)
@@ -161,7 +161,7 @@ func (e *Extractor) extractFromURL(ctx context.Context, post reddit.RedditPost, 
 }
 
 // extractGallery extracts media items from a Reddit gallery post.
-func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, error) {
+func (e *Extractor) extractGallery(post reddit.Post) ([]Downloadable, error) {
 	if post.MediaMeta == nil {
 		return nil, errors.New("gallery metadata missing")
 	}
@@ -209,7 +209,7 @@ func (e *Extractor) extractGallery(post reddit.RedditPost) ([]Downloadable, erro
 }
 
 // extractImageFromMediaMeta extracts media from MediaMeta metadata.
-func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloadable, error) {
+func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable, error) {
 	if len(post.MediaMeta) == 0 {
 		return nil, nil
 	}
@@ -261,15 +261,15 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.RedditPost) ([]Downloa
 }
 
 // extractRedditVideo extracts video URLs from Reddit-hosted videos.
-func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
-	if post.Media != nil && post.Media.RedditVideo != nil {
-		fallback := strings.TrimSpace(post.Media.RedditVideo.FallbackURL)
+func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post, sourceURL string) ([]Downloadable, error) {
+	if post.Media != nil && post.Media.Video != nil {
+		fallback := strings.TrimSpace(post.Media.Video.FallbackURL)
 		if fallback != "" {
 			return e.buildDownloadables(post, []string{fallback}, "")
 		}
 
-		if post.Media.RedditVideo.DashURL != "" {
-			base := baseRedditVideoURL(post.Media.RedditVideo.DashURL)
+		if post.Media.Video.DashURL != "" {
+			base := baseRedditVideoURL(post.Media.Video.DashURL)
 			best, err := e.selectBestRedditVideo(ctx, base)
 			if err == nil {
 				return e.buildDownloadables(post, []string{best}, "")
@@ -289,7 +289,7 @@ func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.RedditPo
 }
 
 // extractImgur extracts media URLs from Imgur posts.
-func (e *Extractor) extractImgur(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractImgur(ctx context.Context, post reddit.Post, sourceURL string) ([]Downloadable, error) {
 	parsed, err := url.Parse(sourceURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse imgur URL: %w", err)
@@ -350,7 +350,7 @@ func (e *Extractor) fetchImgurImageURL(ctx context.Context, pageURL string) (str
 }
 
 // extractGfycatRedgifs extracts media URLs from Gfycat or Redgifs posts.
-func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.RedditPost, sourceURL string) ([]Downloadable, error) {
+func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Post, sourceURL string) ([]Downloadable, error) {
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
 		if errors.Is(err, errGone) {
@@ -437,11 +437,15 @@ func (e *Extractor) fetchText(ctx context.Context, url string) (string, error) {
 	req.Header.Set("User-Agent", e.userAgent)
 	req.Header.Set("Accept", "text/html,application/json")
 
-	resp, err := e.client.Do(req)
+	resp, err := e.client.Do(req) //nolint:gosec // G704: intentional HTTP request to Reddit/external media URLs
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			fmt.Printf("warning: failed to close response body: %v\n", closeErr)
+		}
+	}()
 
 	if resp.StatusCode == http.StatusGone {
 		return "", errGone
@@ -471,11 +475,15 @@ func (e *Extractor) fetchJSON(ctx context.Context, url string) ([]byte, error) {
 	req.Header.Set("User-Agent", e.userAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := e.client.Do(req)
+	resp, err := e.client.Do(req) //nolint:gosec // G704: intentional HTTP request to external APIs
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			fmt.Printf("warning: failed to close response body: %v\n", closeErr)
+		}
+	}()
 
 	if resp.StatusCode == http.StatusGone {
 		return nil, errGone
@@ -521,17 +529,21 @@ func (e *Extractor) urlExists(ctx context.Context, url string) (bool, error) {
 	}
 	req.Header.Set("User-Agent", e.userAgent)
 
-	resp, err := e.client.Do(req)
+	resp, err := e.client.Do(req) //nolint:gosec // G704: intentional HTTP request to check URL reachability
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			fmt.Printf("warning: failed to close response body: %v\n", closeErr)
+		}
+	}()
 
 	return resp.StatusCode == http.StatusOK, nil
 }
 
 // buildDownloadables creates Downloadable items from URLs for a post.
-func (e *Extractor) buildDownloadables(post reddit.RedditPost, urls []string, mediaType string) ([]Downloadable, error) {
+func (e *Extractor) buildDownloadables(post reddit.Post, urls []string, mediaType string) ([]Downloadable, error) {
 	items := make([]Downloadable, 0, len(urls))
 	sanitizedTitle := sanitizeFilename(post.Title)
 	for i, mediaURL := range urls {
@@ -601,9 +613,9 @@ func formatToExtension(format string) string {
 	case "gif":
 		return ".gif"
 	case "mp4":
-		return ".mp4"
+		return extMP4
 	case "webm":
-		return ".webm"
+		return extWebm
 	default:
 		return ""
 	}

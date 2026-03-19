@@ -8,12 +8,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
-// Config holds all application configuration
+// Config holds all application configuration.
 type Config struct {
 	Reddit       RedditConfig
 	Storage      StorageConfig
@@ -25,7 +26,9 @@ type Config struct {
 	Auth         bool
 }
 
-// RedditConfig holds Reddit API credentials and settings
+// RedditConfig holds Reddit API credentials and settings.
+//
+//nolint:gosec // G117: intentionally named fields for Reddit OAuth credentials
 type RedditConfig struct {
 	ClientID     string
 	ClientSecret string
@@ -35,25 +38,25 @@ type RedditConfig struct {
 	RefreshToken string
 }
 
-// StorageConfig holds database and file storage settings
+// StorageConfig holds database and file storage settings.
 type StorageConfig struct {
 	OutputDir string
 	DBPath    string
 }
 
-// DownloadConfig holds downloader settings
+// DownloadConfig holds downloader settings.
 type DownloadConfig struct {
 	Concurrency int
 	FetchLimit  int
 	MaxRetries  int
 }
 
-// LogConfig holds logging configuration
+// LogConfig holds logging configuration.
 type LogConfig struct {
 	Level string
 }
 
-// MigrateConfig holds migration settings
+// MigrateConfig holds migration settings.
 type MigrateConfig struct {
 	OnStart           bool
 	FullSyncOnce      bool
@@ -71,7 +74,7 @@ type BackoffConfig struct {
 // CalculateBackoffDelay calculates exponential backoff delay for retries
 // Formula: baseDelay * (2^retryCount), capped at maxDelay
 // Edge cases: negative retryCount returns 0, zero base returns 0
-func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+func CalculateBackoffDelay(retryCount int, base, maxDuration time.Duration) time.Duration {
 	// Handle edge cases
 	if retryCount < 0 {
 		return 0
@@ -84,8 +87,8 @@ func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duratio
 	delay := base * time.Duration(1<<uint(retryCount))
 
 	// Cap at max delay
-	if delay > max {
-		return max
+	if delay > maxDuration {
+		return maxDuration
 	}
 	return delay
 }
@@ -109,27 +112,29 @@ var (
 	flagBackoffMax     time.Duration
 	flagSet            bool
 	flagAuth           bool
+	flagsInitialized   sync.Once
 )
 
-func init() {
-	// Define CLI flags - use zero values as defaults
-	flag.BoolVar(&flagReCheck, "re-check", false, "Enable re-check mode for previously failed posts")
-	flag.IntVar(&flagRetryThreshold, "retry-threshold", 0, "Max retries before permanent skip")
-	flag.StringVar(&flagClientID, "client-id", "", "Reddit API client ID")
-	flag.StringVar(&flagClientSecret, "client-secret", "", "Reddit API client secret")
-	flag.StringVar(&flagUsername, "username", "", "Reddit username")
-	flag.IntVar(&flagConcurrency, "concurrency", 0, "Number of parallel downloads")
-	flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
-	flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
-	flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
-	flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
+func initFlags() {
+	flagsInitialized.Do(func() {
+		flag.BoolVar(&flagReCheck, "re-check", false, "Enable re-check mode for previously failed posts")
+		flag.IntVar(&flagRetryThreshold, "retry-threshold", 0, "Max retries before permanent skip")
+		flag.StringVar(&flagClientID, "client-id", "", "Reddit API client ID")
+		flag.StringVar(&flagClientSecret, "client-secret", "", "Reddit API client secret")
+		flag.StringVar(&flagUsername, "username", "", "Reddit username")
+		flag.IntVar(&flagConcurrency, "concurrency", 0, "Number of parallel downloads")
+		flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
+		flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
+		flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
+		flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
+	})
 }
 
 // flagWasSet returns true if a flag was explicitly provided on the command line
 func flagWasSet() bool {
 	// Check if any non-default flag values were set
 	// We use flag.CommandLine.Lookup to check if flags were explicitly set
-	flag.CommandLine.Visit(func(f *flag.Flag) {
+	flag.CommandLine.Visit(func(_ *flag.Flag) {
 		flagSet = true
 	})
 	return flagSet
@@ -140,10 +145,10 @@ func flagWasSet() bool {
 //
 //nolint:cyclop
 func Load() (*Config, error) {
-	// Load .env file if exists (ignore error if file doesn't exist)
+	//nolint:errcheck // Loading .env is optional; continue if it fails
 	_ = godotenv.Load()
 
-	// Parse CLI flags
+	initFlags()
 	flag.Parse()
 
 	cfg := &Config{
