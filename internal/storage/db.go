@@ -117,7 +117,6 @@ func (db *DB) runMigrations(ctx context.Context) error {
 	return nil
 }
 
-// NewDB creates a new database connection and initializes the schema.
 func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 	conn, err := openAndInitializeDB(ctx, dbPath)
 	if err != nil {
@@ -127,19 +126,18 @@ func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 	db := &DB{conn: conn}
 
 	if err := db.runMigrations(ctx); err != nil {
-		closeConnOnError(conn)
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w; close error: %v", err, cerr)
 	}
 
 	if err := ensureHashColumn(ctx, conn); err != nil {
-		closeConnOnError(conn)
-		return nil, err
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to ensure hash column: %w; close error: %v", err, cerr)
 	}
 
 	return db, nil
 }
 
-// openAndInitializeDB opens the database and initializes the schema.
 func openAndInitializeDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
@@ -152,13 +150,13 @@ func openAndInitializeDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 	}
 
 	if err := conn.PingContext(ctx); err != nil {
-		closeConnOnError(conn)
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to ping database: %w; close error: %v", err, cerr)
 	}
 
 	if _, err := conn.ExecContext(ctx, schema); err != nil {
-		closeConnOnError(conn)
-		return nil, fmt.Errorf("failed to create schema: %w", err)
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to create schema: %w; close error: %v", err, cerr)
 	}
 
 	return conn, nil
@@ -478,10 +476,13 @@ func (db *DB) checkFileExists(status *PostStatus) bool {
 	return false
 }
 
-// checkBackoffWindow checks if we're within the backoff window.
 func (db *DB) checkBackoffWindow(status *PostStatus, backoffBase, backoffMax time.Duration) bool {
 	if backoffBase > 0 && !status.LastAttempt.IsZero() {
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
+		exponent := status.RetryCount - 1
+		if exponent < 0 {
+			exponent = 0
+		}
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(exponent)))
 		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
@@ -589,8 +590,6 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 }
 
 // GetStats returns download statistics.
-//
-//nolint:cyclop
 func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	stats := &Stats{
 		PostsBySource:    make(map[string]int64),
@@ -598,75 +597,47 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		PostsByMediaType: make(map[string]int64),
 	}
 
-	// Get total count
 	row := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts`)
 	if err := row.Scan(&stats.TotalPosts); err != nil {
 		return nil, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	// Get counts by source
-	rows, err := db.conn.QueryContext(ctx, `SELECT source, COUNT(*) FROM posts GROUP BY source`)
-	if err != nil {
+	getCounts := func(query string, setter func(string, int64)) error {
+		rows, err := db.conn.QueryContext(ctx, query)
+		if err != nil {
+			return fmt.Errorf("query failed: %w", err)
+		}
+		defer func() {
+			_ = rows.Close()
+		}()
+
+		for rows.Next() {
+			var key string
+			var count int64
+			if err := rows.Scan(&key, &count); err != nil {
+				return fmt.Errorf("scan failed: %w", err)
+			}
+			setter(key, count)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iteration failed: %w", err)
+		}
+		return nil
+	}
+
+	if err := getCounts(`SELECT source, COUNT(*) FROM posts GROUP BY source`,
+		func(k string, c int64) { stats.PostsBySource[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get source counts: %w", err)
 	}
-	defer func() {
-		// Ignoring error - rows.Close() in cleanup, read-only operation
-		_ = rows.Close() //nolint:errcheck
-	}()
 
-	for rows.Next() {
-		var source string
-		var count int64
-		if err := rows.Scan(&source, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan source count: %w", err)
-		}
-		stats.PostsBySource[source] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating source rows: %w", err)
-	}
-
-	// Get counts by subreddit
-	rows, err = db.conn.QueryContext(ctx, `SELECT subreddit, COUNT(*) FROM posts GROUP BY subreddit`)
-	if err != nil {
+	if err := getCounts(`SELECT subreddit, COUNT(*) FROM posts GROUP BY subreddit`,
+		func(k string, c int64) { stats.PostsBySubreddit[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get subreddit counts: %w", err)
 	}
-	defer func() {
-		// Ignoring error - rows.Close() in cleanup, read-only operation
-		_ = rows.Close() //nolint:errcheck
-	}()
 
-	for rows.Next() {
-		var subreddit string
-		var count int64
-		if err := rows.Scan(&subreddit, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan subreddit count: %w", err)
-		}
-		stats.PostsBySubreddit[subreddit] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating subreddit rows: %w", err)
-	}
-
-	// Get counts by media type
-	rows, err = db.conn.QueryContext(ctx, `SELECT media_type, COUNT(*) FROM posts GROUP BY media_type`)
-	if err != nil {
+	if err := getCounts(`SELECT media_type, COUNT(*) FROM posts GROUP BY media_type`,
+		func(k string, c int64) { stats.PostsByMediaType[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get media type counts: %w", err)
-	}
-	defer func() {
-		_ = rows.Close() //nolint:errcheck
-	}()
-
-	for rows.Next() {
-		var mediaType string
-		var count int64
-		if err := rows.Scan(&mediaType, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan media type count: %w", err)
-		}
-		stats.PostsByMediaType[mediaType] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating media type rows: %w", err)
 	}
 
 	return stats, nil
@@ -772,6 +743,21 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 
 		postID := matches[1]
 
+		// Validate extension before marking as seen
+		ext := strings.ToLower(filepath.Ext(filename))
+		mediaType := ""
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+			mediaType = "image"
+		case ".mp4", ".webm", ".mov", ".avi", ".mkv":
+			mediaType = "video"
+		case ".gifv":
+			mediaType = "gif"
+		default:
+			// Skip unsupported extensions
+			continue
+		}
+
 		// Skip if we've already processed this ID in this import
 		if seenIDs[postID] {
 			continue
@@ -785,18 +771,6 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 		}
 
 		if !exists {
-			// Determine media type from extension
-			ext := strings.ToLower(filepath.Ext(filename))
-			mediaType := "unknown"
-			switch ext {
-			case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
-				mediaType = "image"
-			case ".mp4", ".webm", ".mov", ".avi", ".mkv":
-				mediaType = "video"
-			case ".gifv":
-				mediaType = "gif"
-			}
-
 			// Create a post entry with file path
 			post := &Post{
 				ID:           postID,

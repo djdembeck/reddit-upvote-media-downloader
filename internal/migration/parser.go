@@ -10,14 +10,22 @@ import (
 	"strings"
 )
 
-// isPathWithin checks if targetPath is within baseDir to prevent path traversal attacks.
-// Returns true if targetPath is the same as or a subdirectory of baseDir.
 func isPathWithin(baseDir, targetPath string) bool {
-	absBase, err := filepath.Abs(baseDir)
+	// Resolve symlinks to prevent path traversal via symlink attacks
+	evalBase, err := filepath.EvalSymlinks(baseDir)
 	if err != nil {
 		return false
 	}
-	absTarget, err := filepath.Abs(targetPath)
+	evalTarget, err := filepath.EvalSymlinks(targetPath)
+	if err != nil {
+		return false
+	}
+
+	absBase, err := filepath.Abs(evalBase)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(evalTarget)
 	if err != nil {
 		return false
 	}

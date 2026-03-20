@@ -136,16 +136,14 @@ func initFlags() {
 	})
 }
 
-// flagWasSet returns true if a flag was explicitly provided on the command line.
-func flagWasSet() bool {
-	// Check if any non-default flag values were set
-	// We use flag.CommandLine.Lookup to check if flags were explicitly set
-	localSet := false
-	flag.CommandLine.Visit(func(_ *flag.Flag) {
-		localSet = true
+func flagWasSet(name string) bool {
+	found := false
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
 	})
-
-	return localSet
+	return found
 }
 
 // Load loads configuration from environment variables, .env file, and CLI flags
@@ -200,40 +198,37 @@ func Load() (*Config, error) {
 
 	// Apply CLI flag overrides (highest priority)
 	// Only override if flags were explicitly provided on command line
-	if flagWasSet() {
-		if flagClientID != "" {
-			cfg.Reddit.ClientID = flagClientID
-		}
-		if flagClientSecret != "" {
-			cfg.Reddit.ClientSecret = flagClientSecret
-		}
-		if flagUsername != "" {
-			cfg.Reddit.Username = flagUsername
-		}
-		if flagConcurrency > 0 {
-			cfg.Download.Concurrency = flagConcurrency
-		}
-		if flagFetchLimit > 0 {
-			cfg.Download.FetchLimit = flagFetchLimit
-		}
-		if flagBackoffBase > 0 {
-			cfg.Backoff.Base = flagBackoffBase
-		}
-		if flagBackoffMax > 0 {
-			cfg.Backoff.Max = flagBackoffMax
-		}
-
-		cfg.SmartPolling.ReCheck = flagReCheck
-		if flagRetryThreshold > 0 {
-			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
-		}
+	if flagClientID != "" {
+		cfg.Reddit.ClientID = flagClientID
+	}
+	if flagClientSecret != "" {
+		cfg.Reddit.ClientSecret = flagClientSecret
+	}
+	if flagUsername != "" {
+		cfg.Reddit.Username = flagUsername
+	}
+	if flagConcurrency > 0 {
+		cfg.Download.Concurrency = flagConcurrency
+	}
+	if flagFetchLimit > 0 {
+		cfg.Download.FetchLimit = flagFetchLimit
+	}
+	if flagBackoffBase > 0 {
+		cfg.Backoff.Base = flagBackoffBase
+	}
+	if flagBackoffMax > 0 {
+		cfg.Backoff.Max = flagBackoffMax
+	}
+	if flagRetryThreshold > 0 {
+		cfg.SmartPolling.RetryThreshold = flagRetryThreshold
 	}
 
-	// Note: cfg.Auth is intentionally only set from CLI flags (--auth)
-	// to prevent accidental auth mode when running as daemon.
-	// Callers needing programmatic auth should call handleAuth() directly.
-	// The flagAuth value was already applied above when flagWasSet() returned true.
-	if flagWasSet() {
+	// Boolean flags require special handling since their zero-value (false) is valid.
+	// Only apply these if the specific flag was explicitly set.
+	if flagWasSet("re-check") {
+		cfg.SmartPolling.ReCheck = flagReCheck
+	}
+	if flagWasSet("auth") {
 		cfg.Auth = flagAuth
 	}
 
