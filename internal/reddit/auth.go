@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os/exec"
@@ -19,7 +20,7 @@ import (
 
 // OAuth2CodeFlow performs OAuth2 code flow to obtain a refresh token.
 // It opens a browser for user authentication and listens for the callback.
-func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
+func OAuth2CodeFlow(clientID, clientSecret, _ string) (string, error) {
 	// Try multiple ports in case of conflict
 	defaultPorts := []int{7765, 7766, 7767, 7768, 7769}
 	var lastErr error
@@ -188,7 +189,9 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
-		_ = server.Close()
+		if closeErr := server.Close(); closeErr != nil {
+			slog.Error("failed to close OAuth server", "error", closeErr)
+		}
 		timer.Stop()
 	}()
 

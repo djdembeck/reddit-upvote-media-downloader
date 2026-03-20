@@ -30,6 +30,9 @@ const (
 	MaxTotalPosts = 1000
 	// RateLimitPerMinute is the Reddit rate limit for OAuth apps.
 	RateLimitPerMinute = 60
+
+	// httpMethodGet is the HTTP GET method.
+	httpMethodGet = "GET"
 )
 
 var (
@@ -152,7 +155,7 @@ func minInt(a, b int) int {
 // If tokenStore is nil, tokens will not be persisted.
 //
 //nolint:cyclop
-func NewClient(config *Config, tokenStore TokenStore) (*redditClient, error) {
+func NewClient(config *Config, tokenStore TokenStore) (Client, error) {
 	if config == nil {
 		return nil, errors.New("config is required")
 	}
@@ -423,12 +426,12 @@ func (c *redditClient) doRequest(ctx context.Context, method, endpoint string, p
 // buildRequest builds an HTTP request with proper headers and authentication.
 func (c *redditClient) buildRequest(ctx context.Context, method, endpoint string, params url.Values) (*http.Request, error) {
 	reqURL := RedditAPIEndpoint + endpoint
-	if params != nil && method == "GET" {
+	if params != nil && method == httpMethodGet {
 		reqURL = reqURL + "?" + params.Encode()
 	}
 
 	var body *strings.Reader
-	if params != nil && method != "GET" {
+	if params != nil && method != httpMethodGet {
 		body = strings.NewReader(params.Encode())
 	} else {
 		body = strings.NewReader("")
@@ -457,36 +460,45 @@ func (c *redditClient) handleUnauthorizedRequest(ctx context.Context, httpClient
 		slog.Error("failed to close response body", "error", closeErr)
 	}
 
-	if authErr := c.authenticate(ctx); authErr != nil {
-		return nil, fmt.Errorf("%w: authentication failed: %v", ErrUnauthorized, authErr)
+	if err := c.authenticate(ctx); err != nil {
+		return nil, fmt.Errorf("%w: authentication failed: %v", ErrUnauthorized, err)
 	}
 
-	c.mu.RLock()
-	accessToken := ""
-	if c.token != nil {
-		accessToken = c.token.AccessToken
-	}
-	c.mu.RUnlock()
-
+	accessToken := c.getAccessToken()
 	if accessToken == "" {
 		return nil, fmt.Errorf("%w: no access token after authentication", ErrUnauthorized)
 	}
 
+	return c.executeRetryRequest(ctx, httpClient, method, endpoint, params, accessToken)
+}
+
+// getAccessToken safely retrieves the current access token.
+func (c *redditClient) getAccessToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.token == nil {
+		return ""
+	}
+	return c.token.AccessToken
+}
+
+// executeRetryRequest builds and executes the retry request after re-authentication.
+func (c *redditClient) executeRetryRequest(ctx context.Context, httpClient *http.Client, method, endpoint string, params url.Values, accessToken string) (*http.Response, error) {
 	reqURL := RedditAPIEndpoint + endpoint
-	if params != nil && method == "GET" {
+	if params != nil && method == httpMethodGet {
 		reqURL = reqURL + "?" + params.Encode()
 	}
 
 	var body *strings.Reader
-	if params != nil && method != "GET" {
+	if params != nil && method != httpMethodGet {
 		body = strings.NewReader(params.Encode())
 	} else {
 		body = strings.NewReader("")
 	}
 
-	retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, body)
-	if retryReqErr != nil {
-		return nil, fmt.Errorf("creating retry request: %w", retryReqErr)
+	retryReq, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("creating retry request: %w", err)
 	}
 
 	retryReq.Header.Set("User-Agent", c.config.UserAgent)
@@ -494,9 +506,9 @@ func (c *redditClient) handleUnauthorizedRequest(ctx context.Context, httpClient
 	retryReq.Header.Set("Authorization", "Bearer "+accessToken)
 
 	//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
-	retryResp, retryErr := httpClient.Do(retryReq)
-	if retryErr != nil {
-		return nil, fmt.Errorf("retry request failed: %w", retryErr)
+	retryResp, err := httpClient.Do(retryReq)
+	if err != nil {
+		return nil, fmt.Errorf("retry request failed: %w", err)
 	}
 
 	if retryResp.StatusCode == http.StatusUnauthorized {

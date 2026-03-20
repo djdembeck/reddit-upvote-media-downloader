@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -118,6 +119,28 @@ func (db *DB) runMigrations(ctx context.Context) error {
 
 // NewDB creates a new database connection and initializes the schema.
 func NewDB(ctx context.Context, dbPath string) (*DB, error) {
+	conn, err := openAndInitializeDB(ctx, dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	db := &DB{conn: conn}
+
+	if err := db.runMigrations(ctx); err != nil {
+		closeConnOnError(conn)
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	if err := ensureHashColumn(ctx, conn); err != nil {
+		closeConnOnError(conn)
+		return nil, err
+	}
+
+	return db, nil
+}
+
+// openAndInitializeDB opens the database and initializes the schema.
+func openAndInitializeDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
@@ -129,35 +152,40 @@ func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 	}
 
 	if err := conn.PingContext(ctx); err != nil {
-		_ = conn.Close()
+		closeConnOnError(conn)
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	if _, err := conn.ExecContext(ctx, schema); err != nil {
-		_ = conn.Close()
+		closeConnOnError(conn)
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
-	db := &DB{conn: conn}
+	return conn, nil
+}
 
-	if err := db.runMigrations(ctx); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
+// closeConnOnError closes the database connection and logs any error.
+func closeConnOnError(conn *sql.DB) {
+	if err := conn.Close(); err != nil {
+		slog.Error("failed to close database connection", "error", err)
 	}
+}
 
+// ensureHashColumn adds the hash column and index if they don't exist.
+func ensureHashColumn(ctx context.Context, conn *sql.DB) error {
 	if _, err := conn.ExecContext(ctx, `ALTER TABLE posts ADD COLUMN hash TEXT`); err != nil {
 		if !strings.Contains(err.Error(), "duplicate column name") {
-			conn.Close()
-			return nil, fmt.Errorf("failed to add hash column: %w", err)
+			closeConnOnError(conn)
+			return fmt.Errorf("failed to add hash column: %w", err)
 		}
 	}
 
 	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to create hash index: %w", err)
+		closeConnOnError(conn)
+		return fmt.Errorf("failed to create hash index: %w", err)
 	}
 
-	return db, nil
+	return nil
 }
 
 // Close closes the database connection.
