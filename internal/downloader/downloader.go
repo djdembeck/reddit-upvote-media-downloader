@@ -554,6 +554,7 @@ func (d *Downloader) backoffDuration(attempt int) time.Duration {
 	if shift > 30 {
 		shift = 30
 	}
+	// #nosec G115 - shift is bounded between 0 and 30, so conversion is safe
 	return d.config.BackoffBase * time.Duration(1<<uint(shift))
 }
 
