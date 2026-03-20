@@ -12,9 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 func assertHasDuplicateSkip(t *testing.T, operations []Record) {

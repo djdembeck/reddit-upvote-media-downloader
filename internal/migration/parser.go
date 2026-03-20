@@ -237,7 +237,7 @@ func (p *HTMLParser) ParseHTMLFiles(ctx context.Context, htmlDir string) error {
 
 	err := filepath.Walk(htmlDir, func(path string, info os.FileInfo, err error) error {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context canceled: %w", err)
 		}
 
 		if err != nil {

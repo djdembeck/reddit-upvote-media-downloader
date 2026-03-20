@@ -167,11 +167,12 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		}
 
 		// Success - show token
+		//nolint:errcheck // Writing to HTTP response, best effort is acceptable
 		_, _ = fmt.Fprint(
 			w,
 			"<html><body><h1>Authentication successful!</h1>"+
 				"<p>You can close this window.</p></body></html>",
-		) //nolint:errcheck
+		)
 		resultChan <- token
 	})
 

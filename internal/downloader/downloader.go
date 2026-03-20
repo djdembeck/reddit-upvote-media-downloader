@@ -15,10 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
-	"golang.org/x/sync/errgroup"
 )
 
 const (

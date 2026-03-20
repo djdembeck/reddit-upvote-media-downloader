@@ -14,8 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"golang.org/x/oauth2"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 const (

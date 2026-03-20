@@ -13,8 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/zeebo/blake3"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 func contextChecker(ctx context.Context) error {
@@ -236,7 +237,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		m.seenHashes[fileHash] = FileHashInfo{SourcePath: sourcePath, PostID: postID}
 		m.recordSkipped(filename, postID, "destination already exists")
 		return nil
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if !os.IsNotExist(err) {
 		m.recordError(filename, postID, "stat destination", err)
 		return fmt.Errorf("stat destination %s: %w", destPath, err)
 	}

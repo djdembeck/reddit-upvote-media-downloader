@@ -697,6 +697,7 @@ func TestFullMockFlow(t *testing.T) {
 	// Note: In real usage, we'd need to override the OAuth endpoint URL
 	// For this test, we just verify the token endpoint was called
 	config := &Config{
+		//nolint:govet // Fields set for completeness in test setup
 		ClientID:     "test_client_id",
 		ClientSecret: "test_client_secret",
 		Username:     "testuser",
