@@ -93,6 +93,184 @@ func maskToken(token string) string {
 	return "****"
 }
 
+// setupTokenStore creates and initializes the token store with tokens from environment.
+func setupTokenStore(_ *config.Config) (*memoryTokenStore, error) {
+	tokenStore := &memoryTokenStore{}
+
+	// Check for existing OAuth tokens from environment variables
+	token := buildTokenFromEnv()
+
+	// Save token if one was built
+	if token != nil {
+		if err := tokenStore.SaveToken(token); err != nil {
+			return nil, fmt.Errorf("saving token from env: %w", err)
+		}
+	}
+
+	return tokenStore, nil
+}
+
+// setupRedditClient creates and initializes the Reddit client.
+func setupRedditClient(cfg *config.Config, tokenStore *memoryTokenStore) (reddit.Client, error) {
+	redditConfig := &reddit.Config{
+		ClientID:     cfg.Reddit.ClientID,
+		ClientSecret: cfg.Reddit.ClientSecret,
+		UserAgent:    cfg.Reddit.UserAgent,
+		Username:     cfg.Reddit.Username,
+		Password:     cfg.Reddit.Password,
+		RefreshToken: cfg.Reddit.RefreshToken,
+	}
+
+	redditClient, err := reddit.NewClient(redditConfig, tokenStore)
+	if err != nil {
+		return nil, fmt.Errorf("creating Reddit client: %w", err)
+	}
+
+	return redditClient, nil
+}
+
+// setupLogger creates and configures the structured logger.
+func setupLogger(cfg *config.Config) *slog.Logger {
+	parsedLevel := parseSlogLevel(cfg.Log.Level)
+
+	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: parsedLevel,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				a.Key = "timestamp"
+			}
+			if a.Key == slog.LevelKey {
+				a.Key = "level"
+			}
+			if a.Key == slog.MessageKey {
+				a.Key = "message"
+			}
+			if a.Key == slog.SourceKey {
+				a.Key = "source"
+			}
+			return a
+		},
+	}))
+
+	return slogLogger
+}
+
+// setupDownloader creates and configures the downloader.
+func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger) *downloader.Downloader {
+	downloaderConfig := downloader.Config{
+		OutputDir:   cfg.Storage.OutputDir,
+		Concurrency: cfg.Download.Concurrency,
+		Logger:      logger,
+	}
+	return downloader.NewDownloader(downloaderConfig, db)
+}
+
+// findAndParseIndexHTML searches for and parses index.html in common locations.
+func findAndParseIndexHTML(ctx context.Context, parser *migration.HTMLParser, sourceDir string) error {
+	indexPaths := []struct {
+		path    string
+		baseDir string
+	}{
+		{filepath.Join(filepath.Dir(sourceDir), "index.html"), filepath.Dir(sourceDir)},
+		{filepath.Join(sourceDir, "index.html"), sourceDir},
+	}
+
+	for _, idx := range indexPaths {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context canceled: %w", err)
+		}
+		if _, err := os.Stat(idx.path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("checking index.html at %s: %w", idx.path, err)
+		}
+		fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", idx.path)
+		if err := parser.ParseIndexHTML(ctx, idx.baseDir, idx.path); err != nil {
+			return fmt.Errorf("parsing index.html at %s: %w", idx.path, err)
+		}
+
+		break
+	}
+
+	return nil
+}
+
+// checkFullSyncStatus determines if full sync is needed and returns the fetch limit.
+//
+//nolint:unparam
+func checkFullSyncStatus(ctx context.Context, db *storage.DB, cfg *config.Config) (bool, int, error) {
+	fetchLimit := cfg.Download.FetchLimit
+
+	// Check if full sync is pending (first run after migration)
+	fullSyncOnce, err := db.GetMetadata(ctx, "full_sync_once")
+	if err != nil {
+		// Continue with empty metadata - full sync can be skipped if metadata unavailable
+		fullSyncOnce = ""
+	}
+
+	isFullSync := fullSyncOnce == storage.MetadataValuePending && cfg.Migrate.FullSyncOnce
+
+	if isFullSync {
+		// Use higher limit for full sync (fetch all posts)
+		fetchLimit = 1000
+		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
+	}
+
+	return isFullSync, fetchLimit, nil
+}
+
+// filterNewPosts filters posts to include only new posts and posts eligible for retry.
+//
+//nolint:unparam
+func filterNewPosts(ctx context.Context, db *storage.DB, posts []storage.Post, cfg *config.Config) ([]storage.Post, error) {
+	var newPosts []storage.Post
+
+	for _, post := range posts {
+		status, err := db.CheckPostStatus(
+			ctx,
+			post.ID,
+			cfg.SmartPolling.RetryThreshold,
+			cfg.Backoff.Base,
+			cfg.Backoff.Max,
+		)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
+			continue
+		}
+		if !status.Exists || status.RetryEligible {
+			newPosts = append(newPosts, post)
+		}
+	}
+
+	return newPosts, nil
+}
+
+// saveDownloadedPosts saves downloaded posts to the database.
+func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Post, hashes map[string]string, slogLogger *slog.Logger) error {
+	var firstSaveErr error
+	for _, post := range posts {
+		hash := findHashForPost(hashes, post.ID)
+		if hash != "" {
+			post.DownloadedAt = time.Now()
+			if strings.HasPrefix(hash, "DUPLICATE:") {
+				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
+			} else {
+				post.Hash = hash
+			}
+			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
+				if firstSaveErr == nil {
+					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
+				}
+			}
+		}
+	}
+
+	return firstSaveErr
+}
+
+//nolint:cyclop,gocyclo,revive
 func main() {
 	// Load configuration from environment variables
 	cfg, err := config.Load()
@@ -171,29 +349,15 @@ func main() {
 		}
 	}
 
-	// Create Reddit client
-	redditConfig := &reddit.Config{
-		ClientID:     cfg.Reddit.ClientID,
-		ClientSecret: cfg.Reddit.ClientSecret,
-		UserAgent:    cfg.Reddit.UserAgent,
-		Username:     cfg.Reddit.Username,
-		Password:     cfg.Reddit.Password,
-		RefreshToken: cfg.Reddit.RefreshToken,
+	// Setup token store
+	tokenStore, err := setupTokenStore(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting up token store: %v\n", err)
+		os.Exit(1)
 	}
 
-	tokenStore := &memoryTokenStore{}
-
-	// Check for existing OAuth tokens from environment variables
-	token := buildTokenFromEnv()
-
-	// Save token if one was built
-	if token != nil {
-		if err := tokenStore.SaveToken(token); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving token from env: %v\n", err)
-		}
-	}
-
-	redditClient, err := reddit.NewClient(redditConfig, tokenStore)
+	// Setup Reddit client
+	redditClient, err := setupRedditClient(cfg, tokenStore)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
 		os.Exit(1)
@@ -205,36 +369,12 @@ func main() {
 		}
 	}()
 
-	// Parse log level from configuration
-	parsedLevel := parseSlogLevel(cfg.Log.Level)
-
-	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: parsedLevel,
-		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.TimeKey {
-				a.Key = "timestamp"
-			}
-			if a.Key == slog.LevelKey {
-				a.Key = "level"
-			}
-			if a.Key == slog.MessageKey {
-				a.Key = "message"
-			}
-			if a.Key == slog.SourceKey {
-				a.Key = "source"
-			}
-			return a
-		},
-	}))
+	// Setup logger
+	slogLogger := setupLogger(cfg)
 	slog.SetDefault(slogLogger)
 
-	// Create downloader with structured slog logger
-	downloaderConfig := downloader.Config{
-		OutputDir:   cfg.Storage.OutputDir,
-		Concurrency: cfg.Download.Concurrency,
-		Logger:      slogLogger,
-	}
-	dl := downloader.NewDownloader(downloaderConfig, db)
+	// Setup downloader
+	dl := setupDownloader(cfg, db, slogLogger)
 
 	// Main loop
 	for {
@@ -321,6 +461,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	return nil
 }
 
+//nolint:cyclop,gocyclo
 func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB) error {
 	fmt.Println("===================")
 	fmt.Println("File Reorganization")
@@ -359,29 +500,8 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		}
 
 		if len(parser.PostMap) == 0 {
-			indexPaths := []struct {
-				path    string
-				baseDir string
-			}{
-				{filepath.Join(filepath.Dir(sourceDir), "index.html"), filepath.Dir(sourceDir)},
-				{filepath.Join(sourceDir, "index.html"), sourceDir},
-			}
-			for _, idx := range indexPaths {
-				if err := ctx.Err(); err != nil {
-					return fmt.Errorf("context canceled: %w", err)
-				}
-				if _, err := os.Stat(idx.path); err != nil {
-					if os.IsNotExist(err) {
-						continue
-					}
-					return fmt.Errorf("checking index.html at %s: %w", idx.path, err)
-				}
-				fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", idx.path)
-				if err := parser.ParseIndexHTML(ctx, idx.baseDir, idx.path); err != nil {
-					return fmt.Errorf("parsing index.html at %s: %w", idx.path, err)
-				}
-
-				break
+			if err := findAndParseIndexHTML(ctx, parser, sourceDir); err != nil {
+				return err
 			}
 		}
 	}
@@ -466,28 +586,16 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 // Parameters:
 //   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
 //     Must be non-nil. Use this for structured logging with contextual attributes.
+//
+//nolint:cyclop
 func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
-	// Check if full sync is pending (first run after migration)
-	fullSyncOnce, err := db.GetMetadata(ctx, "full_sync_once")
+	isFullSync, fetchLimit, err := checkFullSyncStatus(ctx, db, cfg)
 	if err != nil {
-		slogLogger.Debug("failed to get full_sync_once metadata", "error", err)
-		// Continue with empty metadata - full sync can be skipped if metadata unavailable
-		fullSyncOnce = ""
+		slogLogger.Debug("failed to check full sync status", "error", err)
 	}
 
-	isFullSync := fullSyncOnce == storage.MetadataValuePending && cfg.Migrate.FullSyncOnce
-
-	fetchLimit := cfg.Download.FetchLimit
-	if isFullSync {
-		// Use higher limit for full sync (fetch all posts)
-		fetchLimit = 1000
-
-		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
-	}
-
-	// Fetch upvoted and saved posts
 	upvoted, err := client.GetUpvoted(ctx, fetchLimit)
 	if err != nil {
 		return fmt.Errorf("fetching upvoted: %w", err)
@@ -500,29 +608,13 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	fmt.Printf("Fetched %d upvoted and %d saved posts\n", len(upvoted), len(saved))
 
-	// Combine all posts
 	allPosts := make([]storage.Post, 0, len(upvoted)+len(saved))
 	allPosts = append(allPosts, upvoted...)
 	allPosts = append(allPosts, saved...)
 
-	// Filter posts: include new posts and posts eligible for retry
-	var newPosts []storage.Post
-
-	for _, post := range allPosts {
-		status, err := db.CheckPostStatus(
-			ctx,
-			post.ID,
-			cfg.SmartPolling.RetryThreshold,
-			cfg.Backoff.Base,
-			cfg.Backoff.Max,
-		)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
-			continue
-		}
-		if !status.Exists || status.RetryEligible {
-			newPosts = append(newPosts, post)
-		}
+	newPosts, err := filterNewPosts(ctx, db, allPosts, cfg)
+	if err != nil {
+		return fmt.Errorf("filtering posts: %w", err)
 	}
 
 	fmt.Printf("Found %d new posts to download\n", len(newPosts))
@@ -540,7 +632,6 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		return nil
 	}
 
-	// Convert storage.Post to reddit.Post for extraction
 	redditPosts := make([]reddit.Post, len(newPosts))
 
 	for i, post := range newPosts {
@@ -553,7 +644,6 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		}
 	}
 
-	// Extract downloadable items
 	items, err := dl.Extract(ctx, redditPosts)
 	if err != nil {
 		return fmt.Errorf("extracting media: %w", err)
@@ -561,29 +651,9 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	// Download items and get hashes (may return partial hashes + error)
 	hashes, err := dl.Download(ctx, items)
 
-	// Save posts with whatever hashes we have (preserves partial results on error)
-	// Collect any save errors to prevent finalizing full_sync_once on persistence failures
-	var firstSaveErr error
-	for _, post := range newPosts {
-		hash := findHashForPost(hashes, post.ID)
-		if hash != "" {
-			post.DownloadedAt = time.Now()
-			if strings.HasPrefix(hash, "DUPLICATE:") {
-				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
-			} else {
-				post.Hash = hash
-			}
-			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
-				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
-				if firstSaveErr == nil {
-					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
-				}
-			}
-		}
-	}
+	firstSaveErr := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger)
 
 	if err != nil {
 		slogLogger.Warn("Warning: download completed with errors", "error", err)

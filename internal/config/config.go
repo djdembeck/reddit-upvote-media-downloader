@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -243,6 +244,50 @@ func Load() (*Config, error) {
 
 // Validate checks that all required configuration is present.
 func (c *Config) Validate() error {
+	var errs []error
+
+	// Validate Reddit credentials
+	if err := validateRedditCredentials(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate numeric values
+	if err := validateNumericValues(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate log level
+	if err := validateLogLevel(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate backoff settings
+	if err := validateBackoffSettings(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate retry threshold
+	if c.SmartPolling.RetryThreshold < 0 {
+		errs = append(errs, fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold))
+	}
+
+	// Validate migration configuration
+	if c.Migrate.ReorganizeEnabled {
+		src := strings.TrimSpace(c.Migrate.SourceDir)
+		if src == "" {
+			errs = append(errs, fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled"))
+		}
+	}
+
+	if len(errs) > 0 {
+		return joinErrors(errs)
+	}
+
+	return nil
+}
+
+// validateRedditCredentials validates Reddit API credentials.
+func validateRedditCredentials(c *Config) error {
 	var missing []string
 
 	if c.Reddit.ClientID == "" {
@@ -251,14 +296,12 @@ func (c *Config) Validate() error {
 	if c.Reddit.ClientSecret == "" {
 		missing = append(missing, "REDDIT_CLIENT_SECRET")
 	}
-
 	if c.Reddit.Username == "" {
 		missing = append(missing, "REDDIT_USERNAME")
 	}
 
 	// Skip password/refresh token check when in auth mode
 	if !c.Auth {
-		// Require either password or refresh token
 		if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
 			missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
 		}
@@ -268,28 +311,37 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
 
-	// Validate numeric values
+	return nil
+}
+
+// validateNumericValues validates Concurrency and FetchLimit.
+func validateNumericValues(c *Config) error {
 	if c.Download.Concurrency <= 0 {
 		return fmt.Errorf("CONCURRENCY must be greater than 0, got %d", c.Download.Concurrency)
 	}
 	if c.Download.FetchLimit <= 0 {
 		return fmt.Errorf("FETCH_LIMIT must be greater than 0, got %d", c.Download.FetchLimit)
 	}
+	return nil
+}
 
-	// Validate log level
+// validateLogLevel validates the log level setting.
+func validateLogLevel(c *Config) error {
 	validLogLevels := []string{"debug", "info", "warn", "error"}
 	if !contains(validLogLevels, strings.ToLower(c.Log.Level)) {
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error, got %s", c.Log.Level)
 	}
+	return nil
+}
 
-	// Validate backoff settings
+// validateBackoffSettings validates exponential backoff settings.
+func validateBackoffSettings(c *Config) error {
 	if c.Backoff.Base <= 0 {
 		return fmt.Errorf("BACKOFF_BASE must be greater than 0, got %v", c.Backoff.Base)
 	}
 	if c.Backoff.Max <= 0 {
 		return fmt.Errorf("BACKOFF_MAX must be greater than 0, got %v", c.Backoff.Max)
 	}
-
 	if c.Backoff.Base > c.Backoff.Max {
 		return fmt.Errorf(
 			"BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)",
@@ -297,21 +349,15 @@ func (c *Config) Validate() error {
 			c.Backoff.Max,
 		)
 	}
-
-	// Validate retry threshold
-	if c.SmartPolling.RetryThreshold < 0 {
-		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
-	}
-
-	// Validate migration configuration
-	if c.Migrate.ReorganizeEnabled {
-		src := strings.TrimSpace(c.Migrate.SourceDir)
-		if src == "" {
-			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
-		}
-	}
-
 	return nil
+}
+
+// joinErrors combines multiple errors into a single error.
+func joinErrors(errs []error) error {
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return errors.Join(errs...)
 }
 
 // GetEnv returns the value of an environment variable or a default.

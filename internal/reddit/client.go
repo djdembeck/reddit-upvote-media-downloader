@@ -210,36 +210,56 @@ func (c *redditClient) authenticate(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if we have a refresh token available
-	if c.token != nil && c.token.RefreshToken != "" {
-		// Use oauth2.TokenSource to refresh the token
-		tokenSource := c.oauthConfig.TokenSource(ctx, c.token)
-		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
-			// Log the refresh failure with context before falling back
-			slog.Warn("Token refresh failed", "error", err, "source", "existing token source")
-		} else {
-			return nil
-		}
+	// Try refreshing with existing token
+	if err := c.tryRefreshWithExistingToken(ctx); err == nil {
+		return nil
 	}
 
-	// Check if we have a refresh token in config (set via --auth or REDDIT_REFRESH_TOKEN)
-	if c.config.RefreshToken != "" {
-		// Use refresh token to get new access token
-		tokenSource := c.oauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: c.config.RefreshToken})
-		if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
-			// Log the refresh failure with context before falling back
-			slog.Warn("Token refresh failed", "error", err, "source", "refresh token from config")
-		} else {
-			return nil
-		}
+	// Try refreshing with config token
+	if err := c.tryRefreshWithConfigToken(ctx); err == nil {
+		return nil
 	}
 
-	// Fallback: password grant (for backward compatibility)
+	// Fallback: password grant
+	return c.authenticateWithPassword(ctx)
+}
+
+// tryRefreshWithExistingToken attempts to refresh token using existing token.
+func (c *redditClient) tryRefreshWithExistingToken(ctx context.Context) error {
+	if c.token == nil || c.token.RefreshToken == "" {
+		return errors.New("no existing refresh token")
+	}
+
+	tokenSource := c.oauthConfig.TokenSource(ctx, c.token)
+	if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
+		slog.Warn("Token refresh failed", "error", err, "source", "existing token source")
+		return err
+	}
+	return nil
+}
+
+// tryRefreshWithConfigToken attempts to refresh token using config refresh token.
+func (c *redditClient) tryRefreshWithConfigToken(ctx context.Context) error {
+	if c.config.RefreshToken == "" {
+		return errors.New("no refresh token in config")
+	}
+
+	tokenSource := c.oauthConfig.TokenSource(ctx, &oauth2.Token{RefreshToken: c.config.RefreshToken})
+	if err := c.refreshAndSaveToken(ctx, tokenSource); err != nil {
+		slog.Warn("Token refresh failed", "error", err, "source", "refresh token from config")
+		return err
+	}
+	return nil
+}
+
+// authenticateWithPassword performs password grant authentication.
+//
+//nolint:cyclop
+func (c *redditClient) authenticateWithPassword(ctx context.Context) error {
 	if c.config.Password == "" {
 		return errors.New("password is required for password grant (use --auth to get a refresh token)")
 	}
 
-	// Build token request manually to include User-Agent header
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	data := url.Values{}
@@ -283,7 +303,6 @@ func (c *redditClient) authenticate(ctx context.Context) error {
 
 	// Set token expiry based on expires_in if not provided
 	if token.Expiry.IsZero() && token.AccessToken != "" {
-		// Reddit tokens typically expire in 1 hour (3600 seconds)
 		token.Expiry = time.Now().Add(1 * time.Hour)
 	}
 
@@ -292,7 +311,6 @@ func (c *redditClient) authenticate(ctx context.Context) error {
 	// Save token if store is available
 	if c.tokenStore != nil {
 		if err := c.tokenStore.SaveToken(c.token); err != nil {
-			// Log but don't fail if save fails
 			slog.Warn("Failed to save token", "error", err)
 		}
 	}
@@ -367,17 +385,43 @@ func (c *redditClient) ensureValidToken(ctx context.Context) error {
 //
 //nolint:cyclop
 func (c *redditClient) doRequest(ctx context.Context, method, endpoint string, params url.Values) (*http.Response, error) {
-	// Wait for rate limit
 	if err := c.rateLimiter.Wait(ctx); err != nil {
 		return nil, err
 	}
 
-	// Ensure token is valid
 	if err := c.ensureValidToken(ctx); err != nil {
 		return nil, err
 	}
 
-	// Build request URL
+	req, err := c.buildRequest(ctx, method, endpoint, params)
+	if err != nil {
+		return nil, err
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+
+	//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Error("failed to close response body", "error", closeErr)
+		}
+		return nil, ErrRateLimited
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return c.handleUnauthorizedRequest(ctx, httpClient, method, endpoint, params, resp)
+	}
+
+	return resp, nil
+}
+
+// buildRequest builds an HTTP request with proper headers and authentication.
+func (c *redditClient) buildRequest(ctx context.Context, method, endpoint string, params url.Values) (*http.Request, error) {
 	reqURL := RedditAPIEndpoint + endpoint
 	if params != nil && method == "GET" {
 		reqURL = reqURL + "?" + params.Encode()
@@ -395,74 +439,63 @@ func (c *redditClient) doRequest(ctx context.Context, method, endpoint string, p
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	// Set headers
 	req.Header.Set("User-Agent", c.config.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	// Add authorization header
 	c.mu.RLock()
 	if c.token != nil {
 		req.Header.Set("Authorization", "Bearer "+c.token.AccessToken)
 	}
 	c.mu.RUnlock()
 
-	// Make request
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+	return req, nil
+}
+
+// handleUnauthorizedRequest handles 401 responses by re-authenticating and retrying.
+func (c *redditClient) handleUnauthorizedRequest(ctx context.Context, httpClient *http.Client, method, endpoint string, params url.Values, resp *http.Response) (*http.Response, error) {
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		slog.Error("failed to close response body", "error", closeErr)
 	}
+
+	if authErr := c.authenticate(ctx); authErr != nil {
+		return nil, fmt.Errorf("%w: authentication failed: %v", ErrUnauthorized, authErr)
+	}
+
+	c.mu.RLock()
+	accessToken := ""
+	if c.token != nil {
+		accessToken = c.token.AccessToken
+	}
+	c.mu.RUnlock()
+
+	if accessToken == "" {
+		return nil, fmt.Errorf("%w: no access token after authentication", ErrUnauthorized)
+	}
+
+	reqURL := RedditAPIEndpoint + endpoint
+	retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(params.Encode()))
+	if retryReqErr != nil {
+		return nil, fmt.Errorf("creating retry request: %w", retryReqErr)
+	}
+
+	retryReq.Header.Set("User-Agent", c.config.UserAgent)
+	retryReq.Header.Set("Accept", "application/json")
+	retryReq.Header.Set("Authorization", "Bearer "+accessToken)
 
 	//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+	retryResp, retryErr := httpClient.Do(retryReq)
+	if retryErr != nil {
+		return nil, fmt.Errorf("retry request failed: %w", retryErr)
 	}
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			slog.Error("failed to close response body", "error", closeErr)
+	if retryResp.StatusCode == http.StatusUnauthorized {
+		if closeErr := retryResp.Body.Close(); closeErr != nil {
+			slog.Error("failed to close retry response body", "error", closeErr)
 		}
-		return nil, ErrRateLimited
+		return nil, ErrUnauthorized
 	}
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			slog.Error("failed to close response body", "error", closeErr)
-		}
-		if authErr := c.authenticate(ctx); authErr != nil {
-			return nil, fmt.Errorf("%w: authentication failed: %v", ErrUnauthorized, authErr)
-		}
-		// Acquire lock to safely access token for the retry request
-		c.mu.RLock()
-		accessToken := ""
-		if c.token != nil {
-			accessToken = c.token.AccessToken
-		}
-		c.mu.RUnlock()
-		if accessToken == "" {
-			return nil, fmt.Errorf("%w: no access token after authentication", ErrUnauthorized)
-		}
-		retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(params.Encode()))
-		if retryReqErr != nil {
-			return nil, fmt.Errorf("creating retry request: %w", retryReqErr)
-		}
-		retryReq.Header.Set("User-Agent", c.config.UserAgent)
-		retryReq.Header.Set("Accept", "application/json")
-		retryReq.Header.Set("Authorization", "Bearer "+accessToken)
-		//nolint:gosec // G704: SSRF via taint analysis - this is a Reddit API call to known endpoint
-		retryResp, retryErr := httpClient.Do(retryReq)
-		if retryErr != nil {
-			return nil, fmt.Errorf("retry request failed: %w", retryErr)
-		}
-		if retryResp.StatusCode == http.StatusUnauthorized {
-			if closeErr := retryResp.Body.Close(); closeErr != nil {
-				slog.Error("failed to close retry response body", "error", closeErr)
-			}
-			return nil, ErrUnauthorized
-		}
-		return retryResp, nil
-	}
-
-	return resp, nil
+	return retryResp, nil
 }
 
 // GetUpvoted fetches upvoted posts for the authenticated user.

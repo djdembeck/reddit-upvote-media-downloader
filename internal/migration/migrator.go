@@ -130,7 +130,7 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		modTime time.Time
 		name    string
 	}
-	var files []fileEntry
+	files := make([]fileEntry, 0, len(entries))
 	var firstErr error
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -174,6 +174,79 @@ func (m *Migrator) Execute(ctx context.Context) error {
 	return firstErr
 }
 
+// checkHashDuplicate checks if the file hash is a duplicate (either in memory or database).
+// Returns true if duplicate, false otherwise. Returns error if DB check fails.
+func (m *Migrator) checkHashDuplicate(ctx context.Context, fileHash, sourcePath, _ string) (bool, error) {
+	// Check if hash already seen (duplicate detection) - includes idempotent re-run check
+	if _, hashSeen := m.seenHashes[fileHash]; hashSeen {
+		return true, nil
+	}
+
+	// Check if hash exists in database (if DB is available and not dry-run)
+	if m.DB != nil && !m.DryRun {
+		exists, dbErr := m.DB.HashExists(ctx, fileHash)
+		if dbErr != nil {
+			return false, fmt.Errorf("check hash exists for %s: %w", sourcePath, dbErr)
+		}
+		if exists {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// saveMigratedPost saves the migrated post to the database.
+func (m *Migrator) saveMigratedPost(ctx context.Context, postID, filename string, postInfo PostInfo, fileInfo os.FileInfo, fileHash string) error {
+	// Detect media type from file extension
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	mediaType := "unknown"
+
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+		mediaType = "image"
+	case ".mp4", ".webm", ".mov", ".avi", ".mkv":
+		mediaType = "video"
+	case ".gifv":
+		mediaType = "gif"
+	}
+
+	// Use parsed metadata with fallbacks for empty values
+	subreddit := postInfo.Subreddit
+	if subreddit == "" {
+		subreddit = "migrated"
+	}
+	author := postInfo.Username
+	if author == "" {
+		author = UnknownSubreddit
+	}
+
+	destPath := m.buildDestPath(filename, postInfo)
+
+	post := &storage.Post{
+		ID:           postID,
+		Title:        "Migrated from bdfr-html",
+		Subreddit:    subreddit,
+		Author:       author,
+		URL:          "",
+		Permalink:    "",
+		CreatedAt:    fileInfo.ModTime(),
+		DownloadedAt: time.Now(),
+		MediaType:    mediaType,
+		FilePath:     destPath,
+		Source:       "migrated",
+		Hash:         fileHash,
+	}
+
+	if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
+		return fmt.Errorf("save post to db: %w", saveErr)
+	}
+
+	return nil
+}
+
+//nolint:cyclop
 func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	m.Log.TotalFiles++
 
@@ -212,23 +285,20 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 		return fmt.Errorf("calculate hash for %s: %w", sourcePath, err)
 	}
 
-	// Check if hash already seen (duplicate detection) - includes idempotent re-run check
-	if existingInfo, hashSeen := m.seenHashes[fileHash]; hashSeen {
-		m.recordSkipped(filename, postID, fmt.Sprintf("duplicate hash (first seen: %s)", existingInfo.SourcePath))
-		return nil
+	// Check if hash is a duplicate
+	isDuplicate, checkErr := m.checkHashDuplicate(ctx, fileHash, sourcePath, postID)
+	if checkErr != nil {
+		m.recordError(filename, postID, "check_hash_exists", checkErr)
+		return checkErr
 	}
-
-	// Check if hash exists in database (if DB is available and not dry-run)
-	if m.DB != nil && !m.DryRun {
-		exists, dbErr := m.DB.HashExists(ctx, fileHash)
-		if dbErr != nil {
-			m.recordError(filename, postID, "check_hash_exists", dbErr)
-			return fmt.Errorf("check hash exists for %s: %w", sourcePath, dbErr)
-		}
-		if exists {
+	if isDuplicate {
+		if _, hashSeen := m.seenHashes[fileHash]; hashSeen {
+			existingInfo := m.seenHashes[fileHash]
+			m.recordSkipped(filename, postID, fmt.Sprintf("duplicate hash (first seen: %s)", existingInfo.SourcePath))
+		} else {
 			m.recordSkipped(filename, postID, "duplicate hash (exists in database)")
-			return nil
 		}
+		return nil
 	}
 
 	// Check if destination exists
@@ -255,46 +325,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 
 	// Save post to database (if DB is available and not dry-run)
 	if m.DB != nil && !m.DryRun {
-		// Detect media type from file extension
-		ext := strings.ToLower(filepath.Ext(filename))
-
-		mediaType := "unknown"
-
-		switch ext {
-		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
-			mediaType = "image"
-		case ".mp4", ".webm", ".mov", ".avi", ".mkv":
-			mediaType = "video"
-		case ".gifv":
-			mediaType = "gif"
-		}
-
-		// Use parsed metadata with fallbacks for empty values
-		subreddit := postInfo.Subreddit
-		if subreddit == "" {
-			subreddit = "migrated"
-		}
-		author := postInfo.Username
-		if author == "" {
-			author = UnknownSubreddit
-		}
-
-		post := &storage.Post{
-			ID:           postID,
-			Title:        "Migrated from bdfr-html",
-			Subreddit:    subreddit,
-			Author:       author,
-			URL:          "",
-			Permalink:    "",
-			CreatedAt:    fileInfo.ModTime(),
-			DownloadedAt: time.Now(),
-			MediaType:    mediaType,
-			FilePath:     destPath,
-			Source:       "migrated",
-			Hash:         fileHash,
-		}
-
-		if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
+		if saveErr := m.saveMigratedPost(ctx, postID, filename, postInfo, fileInfo, fileHash); saveErr != nil {
 			m.recordSuccessWithWarning(
 				filename,
 				postID,
@@ -309,7 +340,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 				SourcePath: sourcePath,
 				Timestamp:  time.Now(),
 			}
-			return fmt.Errorf("save post to db: %w", saveErr)
+			return saveErr
 		}
 	}
 

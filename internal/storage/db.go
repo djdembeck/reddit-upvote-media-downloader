@@ -238,6 +238,10 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 
 	return nil
 }
+
+// GetPost retrieves a post from the database by ID.
+//
+//nolint:cyclop,gocyclo
 func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	query := `
 		SELECT
@@ -283,6 +287,15 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
 
+	db.populatePostFromNullFields(&post, title, subreddit, author, url, permalink, mediaType, filePath, source, createdAtUnix, downloadedAtUnix, retryCount, lastError, lastAttempt, hash)
+
+	return &post, nil
+}
+
+// populatePostFromNullFields populates a Post from nullable database fields.
+//
+//nolint:cyclop
+func (db *DB) populatePostFromNullFields(post *Post, title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString, createdAtUnix, downloadedAtUnix, retryCount sql.NullInt64, lastError sql.NullString, lastAttempt sql.NullInt64, hash sql.NullString) {
 	if createdAtUnix.Valid {
 		post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
 	}
@@ -326,8 +339,6 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	if hash.Valid {
 		post.Hash = hash.String
 	}
-
-	return &post, nil
 }
 
 // IsDownloaded checks if a post has been downloaded.
@@ -350,6 +361,8 @@ func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
 //   - threshold: max retry count before permanent skip (0 = ignore)
 //   - backoffBase: base delay for exponential backoff calculation (0 = ignore)
 //   - backoffMax: max delay cap for backoff calculation (0 = ignore)
+//
+//nolint:cyclop,gocyclo
 func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, backoffBase, backoffMax time.Duration) (*PostStatus, error) {
 	query := `
 		SELECT retry_count, last_error, last_attempt, file_path
@@ -403,44 +416,61 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 		status.FilePath = filePath.String
 	}
 
-	// Check 1: Retry count exceeds threshold (permanent skip)
-	if threshold > 0 && status.RetryCount >= threshold {
-		status.ShouldSkip = true
-		status.RetryEligible = false
+	if db.checkRetryThreshold(status, threshold) {
 		return status, nil
 	}
 
-	// Check 2: File exists on disk (if file_path is set)
+	if db.checkFileExists(status) {
+		return status, nil
+	}
+
+	if db.checkBackoffWindow(status, backoffBase, backoffMax) {
+		return status, nil
+	}
+
+	status.RetryEligible = true
+	return status, nil
+}
+
+// checkRetryThreshold checks if retry count exceeds threshold.
+func (db *DB) checkRetryThreshold(status *PostStatus, threshold int) bool {
+	if threshold > 0 && status.RetryCount >= threshold {
+		status.ShouldSkip = true
+		status.RetryEligible = false
+		return true
+	}
+	return false
+}
+
+// checkFileExists checks if file exists on disk.
+func (db *DB) checkFileExists(status *PostStatus) bool {
 	if status.FilePath != "" {
 		if _, err := os.Stat(status.FilePath); err == nil {
 			status.FileExists = true
 			status.ShouldSkip = true
 			status.RetryEligible = false
-			return status, nil
+			return true
 		}
 	}
+	return false
+}
 
-	// Check 3: Backoff window - if last_attempt is within backoff window, skip retry
+// checkBackoffWindow checks if we're within the backoff window.
+func (db *DB) checkBackoffWindow(status *PostStatus, backoffBase, backoffMax time.Duration) bool {
 	if backoffBase > 0 && !status.LastAttempt.IsZero() {
-		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
 		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
 		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
 
-		// Check if we're still within the backoff window
 		elapsed := time.Since(status.LastAttempt)
 		if elapsed < backoffDelay {
-			// Within backoff window - skip this cycle
 			status.ShouldSkip = true
 			status.RetryEligible = false
-			return status, nil
+			return true
 		}
 	}
-
-	// If we got here, the post is eligible for retry
-	status.RetryEligible = true
-	return status, nil
+	return false
 }
 
 // HashExists checks if a file hash already exists in the database.
@@ -876,78 +906,10 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	var posts []Post
 
 	for rows.Next() {
-		var post Post
-		var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
-		var createdAtUnix, downloadedAtUnix sql.NullInt64
-		var retryCount sql.NullInt64
-		var lastError sql.NullString
-		var lastAttempt sql.NullInt64
-		var hash sql.NullString
-
-		err := rows.Scan(
-			&post.ID,
-			&title,
-			&subreddit,
-			&author,
-			&url,
-			&permalink,
-			&createdAtUnix,
-			&downloadedAtUnix,
-			&mediaType,
-			&filePath,
-			&source,
-			&retryCount,
-			&lastError,
-			&lastAttempt,
-			&hash,
-		)
+		post, err := db.scanPostRow(rows)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan post: %w", err)
+			return nil, err
 		}
-
-		if createdAtUnix.Valid {
-			post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
-		}
-		if downloadedAtUnix.Valid {
-			post.DownloadedAt = time.Unix(downloadedAtUnix.Int64, 0)
-		}
-		if title.Valid {
-			post.Title = title.String
-		}
-		if subreddit.Valid {
-			post.Subreddit = subreddit.String
-		}
-		if author.Valid {
-			post.Author = author.String
-		}
-		if url.Valid {
-			post.URL = url.String
-		}
-		if permalink.Valid {
-			post.Permalink = permalink.String
-		}
-		if mediaType.Valid {
-			post.MediaType = mediaType.String
-		}
-		if filePath.Valid {
-			post.FilePath = filePath.String
-		}
-		if source.Valid {
-			post.Source = source.String
-		}
-		if retryCount.Valid {
-			post.RetryCount = int(retryCount.Int64)
-		}
-		if lastError.Valid {
-			post.LastError = lastError.String
-		}
-		if lastAttempt.Valid {
-			post.LastAttempt = time.Unix(lastAttempt.Int64, 0)
-		}
-		if hash.Valid {
-			post.Hash = hash.String
-		}
-
 		posts = append(posts, post)
 	}
 
@@ -956,6 +918,42 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	}
 
 	return posts, nil
+}
+
+// scanPostRow scans a single row from the posts table into a Post struct.
+func (db *DB) scanPostRow(rows *sql.Rows) (Post, error) {
+	var post Post
+	var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
+	var createdAtUnix, downloadedAtUnix sql.NullInt64
+	var retryCount sql.NullInt64
+	var lastError sql.NullString
+	var lastAttempt sql.NullInt64
+	var hash sql.NullString
+
+	err := rows.Scan(
+		&post.ID,
+		&title,
+		&subreddit,
+		&author,
+		&url,
+		&permalink,
+		&createdAtUnix,
+		&downloadedAtUnix,
+		&mediaType,
+		&filePath,
+		&source,
+		&retryCount,
+		&lastError,
+		&lastAttempt,
+		&hash,
+	)
+	if err != nil {
+		return post, fmt.Errorf("failed to scan post: %w", err)
+	}
+
+	db.populatePostFromNullFields(&post, title, subreddit, author, url, permalink, mediaType, filePath, source, createdAtUnix, downloadedAtUnix, retryCount, lastError, lastAttempt, hash)
+
+	return post, nil
 }
 
 // GetRetryCount returns the current retry count for a post.

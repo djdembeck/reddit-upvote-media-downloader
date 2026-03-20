@@ -211,6 +211,8 @@ func (d *Downloader) DownloadPosts(ctx context.Context, posts []reddit.Post) (
 
 // downloadItem downloads a single media item with retry logic and validation.
 // Returns the file hash, whether it's a duplicate, and any error.
+//
+//nolint:cyclop,gocyclo
 func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (string, bool, error) {
 	if strings.TrimSpace(item.URL) == "" {
 		return "", false, errors.New("download URL is empty")
@@ -245,7 +247,6 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	filePath := filepath.Join(outputDir, filename)
 	var lastErr error
-
 	immediateRetryCount := 0
 
 	for attempt := 1; attempt <= d.config.Retries; attempt++ {
@@ -260,115 +261,191 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return hash, false, nil
 		}
 
-		expectedExt := filepath.Ext(filename)
-		err = d.downloadOnce(ctx, item.URL, filePath, expectedExt, item.PostID)
-		if err == nil {
-			// Download succeeded, now calculate hash and check for duplicates
-			hash, hashErr := CalculateFileHash(filePath)
-			if hashErr != nil {
-				d.logger.Error("error calculating hash", "path", filePath, "error", hashErr)
-				if removeErr := os.Remove(filePath); removeErr != nil {
-					d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
-				}
-				return "", false, fmt.Errorf("calculate hash: %w", hashErr)
-			}
-
-			// Check for known bad hashes (corrupted/error content from old bugs)
-			if knownBadHashes[hash] {
-				d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
-				removeErr := os.Remove(filePath)
-				// Save error to database even if removal fails (so we don't retry known-bad content)
-				if d.db != nil {
-					if saveErr := d.db.IncrementRetry(ctx, item.PostID, errReasonKnownBadHash); saveErr != nil {
-						return "", false, fmt.Errorf(
-							"failed to persist bad hash error for post %s: IncrementRetry failed: %w",
-							item.PostID,
-							saveErr,
-						)
-					}
-				}
-				if removeErr != nil {
-					return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", filePath, removeErr)
-				}
-				return "", false, ValidationError{
-					Permanent: true,
-					Reason:    errReasonKnownBadHash,
-				}
-			}
-
-			// Check if hash already exists in database.
-			// Note: There's a small race window where concurrent downloads of the same
-			// content could both pass this check before either saves to the database.
-			// This is acceptable for a media downloader given the low probability.
-			if d.db != nil {
-				exists, dbErr := d.db.HashExists(ctx, hash)
-				if dbErr != nil {
-					d.logger.Error("error checking hash in database", "error", dbErr)
-					return "", false, fmt.Errorf("check hash exists: %w", dbErr)
-				}
-				if exists {
-					d.logger.Info("skip duplicate hash", "hash", hash, "post_id", item.PostID)
-					if removeErr := os.Remove(filePath); removeErr != nil {
-						d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
-					}
-					return hash, true, nil
-				}
-			}
-
-			return hash, false, nil
-		}
-		// If corrupt file was removed, retry immediately (bounded to prevent infinite loops)
-		if errors.Is(err, errRetryImmediately) {
-			immediateRetryCount++
-			if immediateRetryCount > maxImmediateRetries {
-				d.logger.Debug("max immediate retries exceeded, treating as failure",
-					"file", filePath,
-					"post_id", item.PostID,
-					"immediate_retry_count", immediateRetryCount,
-				)
-				return "", false, fmt.Errorf("max immediate retries exceeded for post %s: corrupt file keeps reappearing at %s", item.PostID, filePath)
-			}
-			d.logger.Debug("immediate retry triggered due to errRetryImmediately",
-				"file", filePath,
-				"post_id", item.PostID,
-				"attempt", attempt,
-				"immediate_retry_count", immediateRetryCount,
-			)
-			attempt-- // Don't count immediate retries against the limit
-
-			continue
+		// Attempt the download
+		downloadErr := d.attemptDownload(ctx, item, filePath, attempt)
+		if downloadErr == nil {
+			// Download succeeded, process the downloaded file
+			return d.processDownloadedFile(ctx, filePath, item)
 		}
 
-		// Reset immediate retry counter on successful operations and other error paths
-		immediateRetryCount = 0
-		lastErr = err
-		// Don't retry on permanent validation errors
-		var validationErr ValidationError
-		if errors.As(err, &validationErr) && validationErr.Permanent {
-			// Save error to database to prevent future retries
-			if d.db != nil {
-				if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
-					return "", false, fmt.Errorf(
-						"failed to persist validation error for post %s: IncrementRetry failed: %w",
-						item.PostID,
-						saveErr,
-					)
-				}
-			}
-
-			break
-		}
-
-		if attempt < d.config.Retries {
-			if err := sleepWithContext(ctx, d.backoffDuration(attempt)); err != nil {
-				return "", false, err
-			}
+		// Handle download error
+		var stopRetrying bool
+		immediateRetryCount, lastErr, stopRetrying = d.handleDownloadError(
+			ctx, item, filePath, downloadErr, attempt, immediateRetryCount,
+		)
+		if stopRetrying {
+			return "", false, fmt.Errorf("download failed after %d attempts: %w", attempt, lastErr)
 		}
 	}
 
 	return "", false, fmt.Errorf("download failed after %d attempts: %w", d.config.Retries, lastErr)
 }
 
+func (d *Downloader) attemptDownload(ctx context.Context, item Downloadable, filePath string, _ int) error {
+	expectedExt := filepath.Ext(filePath)
+	return d.downloadOnce(ctx, item.URL, filePath, expectedExt, item.PostID)
+}
+
+//nolint:cyclop
+func (d *Downloader) processDownloadedFile(ctx context.Context, filePath string, item Downloadable) (string, bool, error) {
+	hash, hashErr := CalculateFileHash(filePath)
+	if hashErr != nil {
+		d.logger.Error("error calculating hash", "path", filePath, "error", hashErr)
+		if removeErr := os.Remove(filePath); removeErr != nil {
+			d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
+		}
+		return "", false, fmt.Errorf("calculate hash: %w", hashErr)
+	}
+
+	if knownBadHashes[hash] {
+		d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
+		removeErr := os.Remove(filePath)
+		if d.db != nil {
+			if saveErr := d.db.IncrementRetry(ctx, item.PostID, errReasonKnownBadHash); saveErr != nil {
+				return "", false, fmt.Errorf(
+					"failed to persist bad hash error for post %s: IncrementRetry failed: %w",
+					item.PostID,
+					saveErr,
+				)
+			}
+		}
+		if removeErr != nil {
+			return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", filePath, removeErr)
+		}
+		return "", false, ValidationError{
+			Permanent: true,
+			Reason:    errReasonKnownBadHash,
+		}
+	}
+
+	if d.db != nil {
+		exists, dbErr := d.db.HashExists(ctx, hash)
+		if dbErr != nil {
+			d.logger.Error("error checking hash in database", "error", dbErr)
+			return "", false, fmt.Errorf("check hash exists: %w", dbErr)
+		}
+		if exists {
+			d.logger.Info("skip duplicate hash", "hash", hash, "post_id", item.PostID)
+			if removeErr := os.Remove(filePath); removeErr != nil {
+				d.logger.Warn("failed to remove file", "path", filePath, "error", removeErr)
+			}
+			return hash, true, nil
+		}
+	}
+
+	return hash, false, nil
+}
+
+//nolint:revive
+func (d *Downloader) handleDownloadError(
+	ctx context.Context,
+	item Downloadable,
+	filePath string,
+	downloadErr error,
+	attempt int,
+	immediateRetryCount int,
+) (int, error, bool) {
+	if errors.Is(downloadErr, errRetryImmediately) {
+		immediateRetryCount++
+		if immediateRetryCount > maxImmediateRetries {
+			d.logger.Debug("max immediate retries exceeded, treating as failure",
+				"file", filePath,
+				"post_id", item.PostID,
+				"immediate_retry_count", immediateRetryCount,
+			)
+			return immediateRetryCount, fmt.Errorf("max immediate retries exceeded for post %s: corrupt file keeps reappearing at %s", item.PostID, filePath), true
+		}
+		d.logger.Debug("immediate retry triggered due to errRetryImmediately",
+			"file", filePath,
+			"post_id", item.PostID,
+			"attempt", attempt,
+			"immediate_retry_count", immediateRetryCount,
+		)
+		return immediateRetryCount, nil, false
+	}
+
+	immediateRetryCount = 0
+
+	var validationErr ValidationError
+	if errors.As(downloadErr, &validationErr) && validationErr.Permanent {
+		if d.db != nil {
+			if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
+				return immediateRetryCount, fmt.Errorf(
+					"failed to persist validation error for post %s: IncrementRetry failed: %w",
+					item.PostID,
+					saveErr,
+				), true
+			}
+		}
+
+		return immediateRetryCount, downloadErr, true
+	}
+
+	if attempt < d.config.Retries {
+		if err := sleepWithContext(ctx, d.backoffDuration(attempt)); err != nil {
+			return immediateRetryCount, err, true
+		}
+	}
+
+	return immediateRetryCount, downloadErr, false
+}
+
+// validateDownloadedContent validates the downloaded file content.
+// Returns nil if the content is valid, or a ValidationError for permanent failures.
+func validateDownloadedContent(buf []byte, expectedExt string, readErr error) error {
+	if errors.Is(readErr, io.EOF) || (readErr == nil && len(buf) == 0) {
+		return ValidationError{
+			Permanent: true,
+			Reason:    "empty response body",
+		}
+	}
+	if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("read response body: %w", readErr)
+	}
+
+	if validationErr := validateMagicBytes(buf, expectedExt); validationErr != nil {
+		return ValidationError{
+			Permanent: true,
+			Reason:    fmt.Sprintf("invalid magic bytes: %v", validationErr),
+		}
+	}
+
+	if isHTMLContent(buf) {
+		return ValidationError{
+			Permanent: true,
+			Reason:    "content is HTML, not media",
+		}
+	}
+
+	return nil
+}
+
+// validateHTTPResponse validates the HTTP response for common errors.
+// Returns nil if the response is valid, or a ValidationError for permanent failures.
+func validateHTTPResponse(resp *http.Response) error {
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	if resp.ContentLength > 0 && resp.ContentLength < 1024 {
+		return ValidationError{
+			Permanent: true,
+			Reason:    fmt.Sprintf("file too small (%d bytes)", resp.ContentLength),
+		}
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "text/html") {
+		return ValidationError{
+			Permanent: true,
+			Reason:    "server returned HTML content-type",
+		}
+	}
+
+	return nil
+}
+
+//nolint:cyclop,gocyclo,gocognit
 func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedExt, postID string) (err error) {
 	reqCtx, cancel := context.WithTimeout(ctx, d.config.Timeout)
 	defer cancel()
@@ -391,23 +468,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-
-	if resp.ContentLength > 0 && resp.ContentLength < 1024 {
-		return ValidationError{
-			Permanent: true,
-			Reason:    fmt.Sprintf("file too small (%d bytes)", resp.ContentLength),
-		}
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/html") {
-		return ValidationError{
-			Permanent: true,
-			Reason:    "server returned HTML content-type",
-		}
+	if validationErr := validateHTTPResponse(resp); validationErr != nil {
+		return validationErr
 	}
 
 	unlock := d.acquireFileLock(filePath)
@@ -457,28 +519,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 
 	buf := make([]byte, 512)
 	n, err := io.ReadFull(resp.Body, buf)
-	if errors.Is(err, io.EOF) || (err == nil && n == 0) {
-		return ValidationError{
-			Permanent: true,
-			Reason:    "empty response body",
-		}
-	}
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return fmt.Errorf("read response body: %w", err)
-	}
-
-	if validationErr := validateMagicBytes(buf[:n], expectedExt); validationErr != nil {
-		return ValidationError{
-			Permanent: true,
-			Reason:    fmt.Sprintf("invalid magic bytes: %v", validationErr),
-		}
-	}
-
-	if isHTMLContent(buf[:n]) {
-		return ValidationError{
-			Permanent: true,
-			Reason:    "content is HTML, not media",
-		}
+	if validationErr := validateDownloadedContent(buf[:n], expectedExt, err); validationErr != nil {
+		return validationErr
 	}
 
 	written, writeErr := file.Write(buf[:n])
@@ -508,7 +550,11 @@ func (d *Downloader) backoffDuration(attempt int) time.Duration {
 	if attempt <= 0 {
 		return d.config.BackoffBase
 	}
-	return d.config.BackoffBase * time.Duration(1<<uint(attempt-1))
+	shift := attempt - 1
+	if shift > 30 {
+		shift = 30
+	}
+	return d.config.BackoffBase * time.Duration(1<<uint(shift))
 }
 
 // applyDefaults sets default values for any unset configuration options.

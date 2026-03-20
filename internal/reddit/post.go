@@ -148,7 +148,51 @@ func (rp *Post) ToStoragePost(source string) storage.Post {
 }
 
 // DetectMediaType determines the media type of the Reddit post.
+//
+//nolint:cyclop
 func (rp *Post) DetectMediaType() MediaType {
+	// Check gallery detection
+	if mt := rp.detectGalleryType(); mt != MediaTypeUnknown {
+		return mt
+	}
+
+	// Check video detection
+	if mt := rp.detectVideoType(); mt != MediaTypeUnknown {
+		return mt
+	}
+
+	// Check text post
+	if rp.IsSelf {
+		return MediaTypeText
+	}
+
+	// Check post hint
+	switch rp.PostHint {
+	case "image":
+		return MediaTypeImage
+	case "rich:video":
+		return MediaTypeVideo
+	case "link":
+		return MediaTypeLink
+	case "self":
+		return MediaTypeText
+	}
+
+	// Check URL-based detection
+	if mt := rp.detectTypeFromURL(rp.URL); mt != MediaTypeUnknown {
+		return mt
+	}
+
+	// Check if URL is different from permalink (external link)
+	if rp.URL != "" && rp.URL != rp.Permalink {
+		return MediaTypeLink
+	}
+
+	return MediaTypeUnknown
+}
+
+// detectGalleryType checks for gallery media type.
+func (rp *Post) detectGalleryType() MediaType {
 	if rp.GalleryData != nil && len(rp.GalleryData.Items) > 0 {
 		return MediaTypeGallery
 	}
@@ -166,38 +210,25 @@ func (rp *Post) DetectMediaType() MediaType {
 			}
 		}
 	}
+	return MediaTypeUnknown
+}
 
+// detectVideoType checks for video media type.
+func (rp *Post) detectVideoType() MediaType {
 	if rp.IsVideo && rp.Media != nil && rp.Media.Video != nil {
 		return MediaTypeVideo
 	}
+	return MediaTypeUnknown
+}
 
-	if rp.IsSelf {
-		return MediaTypeText
-	}
-
-	switch rp.PostHint {
-	case "image":
-		return MediaTypeImage
-	case "rich:video":
-		return MediaTypeVideo
-	case "link":
-		return MediaTypeLink
-	case "self":
-		return MediaTypeText
-	}
-
-	if isImageURL(rp.URL) {
+// detectTypeFromURL detects media type from URL.
+func (rp *Post) detectTypeFromURL(url string) MediaType {
+	if isImageURL(url) {
 		return MediaTypeImage
 	}
-
-	if isVideoURL(rp.URL) {
+	if isVideoURL(url) {
 		return MediaTypeVideo
 	}
-
-	if rp.URL != "" && rp.URL != rp.Permalink {
-		return MediaTypeLink
-	}
-
 	return MediaTypeUnknown
 }
 

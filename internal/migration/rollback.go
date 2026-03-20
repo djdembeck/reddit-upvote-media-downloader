@@ -128,105 +128,75 @@ func (r *Rollback) Execute(ctx context.Context) (*RollbackLog, error) {
 	return rollbackLog, nil
 }
 
-func (r *Rollback) rollbackOperation(ctx context.Context, op Record) RollbackRecord {
-	record := RollbackRecord{
-		PostID:     op.PostID,
-		SourcePath: op.DestPath,
-		DestPath:   op.SourcePath,
-		Timestamp:  time.Now(),
-	}
-
+// validateRollbackPaths validates that the source and destination paths are within allowed roots.
+func (r *Rollback) validateRollbackPaths(op Record) error {
 	// Validate paths are within trusted roots - source path must be under SourceRoot, dest path under DestRoot
 	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("invalid source path: %v", err)
-		return record
+		return fmt.Errorf("invalid source path: %v", err)
 	}
 	if err := r.validatePathAgainstRoot(op.DestPath, r.DestRoot); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("invalid dest path: %v", err)
-		return record
+		return fmt.Errorf("invalid dest path: %v", err)
 	}
+	return nil
+}
 
+// performFileRollback performs the actual file rollback operations.
+//
+//nolint:cyclop,gocyclo
+func (r *Rollback) performFileRollback(op Record) error {
 	// Check file exists and is not a symlink
 	if info, err := os.Lstat(op.DestPath); err != nil {
 		if os.IsNotExist(err) {
-			record.Status = StatusError
-			record.Error = "file not found at destination"
-			return record
+			return fmt.Errorf("file not found at destination")
 		}
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("stat dest: %v", err)
-		return record
+		return fmt.Errorf("stat dest: %v", err)
 	} else if info.Mode()&os.ModeSymlink != 0 {
-		record.Status = StatusError
-		record.Error = "destination path is a symlink, aborting rollback"
-		return record
+		return fmt.Errorf("destination path is a symlink, aborting rollback")
 	}
 
 	// Ensure source dir exists
 	sourceDir := filepath.Dir(op.SourcePath)
 	if err := os.MkdirAll(sourceDir, 0750); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("create dir: %v", err)
-		return record
+		return fmt.Errorf("create dir: %v", err)
 	}
 
 	// Re-validate paths after MkdirAll to prevent TOCTOU symlink attacks
 	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("source path validation failed after mkdir: %v", err)
-		return record
+		return fmt.Errorf("source path validation failed after mkdir: %v", err)
 	}
 	if err := r.validatePathAgainstRoot(op.DestPath, r.DestRoot); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("dest path validation failed after mkdir: %v", err)
-		return record
+		return fmt.Errorf("dest path validation failed after mkdir: %v", err)
 	}
 
 	// Check if source file already exists (would overwrite)
 	if _, err := os.Stat(op.SourcePath); err == nil {
-		record.Status = StatusError
-		record.Error = "source file exists, aborting rollback"
-		return record
+		return fmt.Errorf("source file exists, aborting rollback")
 	} else if !os.IsNotExist(err) {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("stat source: %v", err)
-		return record
+		return fmt.Errorf("stat source: %v", err)
 	}
 
 	if err := copyFile(op.DestPath, op.SourcePath); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("copy file: %v", err)
-		return record
+		return fmt.Errorf("copy file: %v", err)
 	}
 
 	srcInfo, err := os.Stat(op.DestPath)
 	if err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("stat source file %s: %v", op.DestPath, err)
-		return record
+		return fmt.Errorf("stat source file %s: %v", op.DestPath, err)
 	}
 	dstInfo, err := os.Stat(op.SourcePath)
 	if err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("stat destination file %s: %v", op.SourcePath, err)
-		return record
+		return fmt.Errorf("stat destination file %s: %v", op.SourcePath, err)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
 		cleanupErr := os.Remove(op.SourcePath)
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 		if cleanupErr != nil {
-			record.Error += fmt.Sprintf("; cleanup failed: %v", cleanupErr)
+			return fmt.Errorf("size mismatch after copy: expected %d, got %d; cleanup failed: %w", srcInfo.Size(), dstInfo.Size(), cleanupErr)
 		}
-		return record
+		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
 	}
 
 	if err := os.Remove(op.DestPath); err != nil {
-		record.Status = StatusError
-		record.Error = fmt.Sprintf("remove dest: %v", err)
-		return record
+		return fmt.Errorf("remove dest: %v", err)
 	}
 
 	// Attempt to remove empty destination directory
@@ -238,18 +208,53 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op Record) RollbackRec
 		}
 	}
 
+	return nil
+}
+
+// cleanupRollbackDB cleans up the database after a successful file rollback.
+func (r *Rollback) cleanupRollbackDB(ctx context.Context, postID string) error {
+	if r.DB == nil {
+		return nil
+	}
+	// Use a timeout context for DB operations
+	ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := r.DB.DeletePost(ctxTimeout, postID); err != nil {
+		return fmt.Errorf("db delete failed: %v", err)
+	}
+	return nil
+}
+
+//nolint:cyclop
+func (r *Rollback) rollbackOperation(ctx context.Context, op Record) RollbackRecord {
+	record := RollbackRecord{
+		PostID:     op.PostID,
+		SourcePath: op.DestPath,
+		DestPath:   op.SourcePath,
+		Timestamp:  time.Now(),
+	}
+
+	// Validate paths
+	if err := r.validateRollbackPaths(op); err != nil {
+		record.Status = StatusError
+		record.Error = err.Error()
+		return record
+	}
+
+	// Perform file rollback
+	if err := r.performFileRollback(op); err != nil {
+		record.Status = StatusError
+		record.Error = err.Error()
+		return record
+	}
+
 	record.Status = "success"
 
 	// DB cleanup happens after file rollback. If DB delete fails, the file
 	// is still rolled back but the database record remains.
-	if r.DB != nil {
-		// Use a timeout context for DB operations
-		ctxTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := r.DB.DeletePost(ctxTimeout, op.PostID); err != nil {
-			record.Status = "failed"
-			record.Error = fmt.Sprintf("db delete failed: %v", err)
-		}
+	if err := r.cleanupRollbackDB(ctx, op.PostID); err != nil {
+		record.Status = "failed"
+		record.Error = err.Error()
 	}
 
 	return record

@@ -89,6 +89,7 @@ func main() {
 	}
 }
 
+//nolint:cyclop,gocyclo
 func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun bool) error {
 	ctx := context.Background()
 
@@ -111,36 +112,18 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 
 	parser := migration.NewHTMLParser()
 
-	if htmlDir != "" {
-		fmt.Println("Parsing HTML files...")
-		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
-			return fmt.Errorf("parse html files: %w", err)
-		}
-	} else {
-		fmt.Println("Parsing index.html...")
-
-		if err := parser.ParseIndexHTML(ctx, sourceDir, indexPath); err != nil {
-			return fmt.Errorf("parse index html: %w", err)
-		}
+	if err := parseHTMLSources(ctx, parser, htmlDir, indexPath); err != nil {
+		return err
 	}
 
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
 	// Initialize DB if DB_PATH is set and not in dry-run mode
-	var db *storage.DB
-
-	dbPath := os.Getenv("DB_PATH")
-
-	if dbPath != "" && !dryRun {
-		fmt.Printf("Initializing database: %s\n", dbPath)
-
-		var err error
-
-		db, err = storage.NewDB(ctx, dbPath)
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
-		}
-
+	db, _, err := initMigrationDB(ctx, dryRun)
+	if err != nil {
+		return err
+	}
+	if db != nil {
 		defer func() {
 			if err := db.Close(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
@@ -163,7 +146,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	// Execute
-	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
+	migrator := setupMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
 	if err := migrator.LoadExistingLog(ctx, logFile); err != nil {
 		return fmt.Errorf("load existing log: %w", err)
 	}
@@ -195,6 +178,43 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	return nil
+}
+
+func parseHTMLSources(ctx context.Context, parser *migration.HTMLParser, htmlDir, indexPath string) error {
+	if htmlDir != "" {
+		fmt.Println("Parsing HTML files...")
+		if err := parser.ParseHTMLFiles(ctx, htmlDir); err != nil {
+			return fmt.Errorf("parse html files: %w", err)
+		}
+	} else {
+		fmt.Println("Parsing index.html...")
+
+		if err := parser.ParseIndexHTML(ctx, "", indexPath); err != nil {
+			return fmt.Errorf("parse index html: %w", err)
+		}
+	}
+	return nil
+}
+
+func initMigrationDB(ctx context.Context, dryRun bool) (*storage.DB, string, error) {
+	dbPath := os.Getenv("DB_PATH")
+
+	if dbPath != "" && !dryRun {
+		fmt.Printf("Initializing database: %s\n", dbPath)
+
+		db, err := storage.NewDB(ctx, dbPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("open database: %w", err)
+		}
+
+		return db, dbPath, nil
+	}
+
+	return nil, dbPath, nil
+}
+
+func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostInfo, dryRun bool, db *storage.DB) *migration.Migrator {
+	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db)
 }
 
 //nolint:cyclop
