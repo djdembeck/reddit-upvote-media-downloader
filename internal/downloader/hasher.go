@@ -38,7 +38,7 @@ func CalculateHashFromReader(reader io.Reader) (string, error) {
 // CalculateFileHash calculates a BLAKE3 hash for a file.
 // Returns a 64-character hex-encoded string (256-bit hash).
 func CalculateFileHash(filePath string) (_ string, err error) {
-	//nolint:gosec // G304: filePath is validated by caller before this function
+	//nolint:gosec // G304: filePath is constructed from sanitized filenames via sanitizeFilename
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open file %s: %w", filePath, err)

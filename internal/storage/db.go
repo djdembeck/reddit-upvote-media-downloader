@@ -118,7 +118,6 @@ func (db *DB) runMigrations(ctx context.Context) error {
 
 // NewDB creates a new database connection and initializes the schema.
 func NewDB(ctx context.Context, dbPath string) (*DB, error) {
-	// Ensure the directory exists
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
@@ -129,36 +128,32 @@ func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Test the connection
 	if err := conn.PingContext(ctx); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Create the schema
 	if _, err := conn.ExecContext(ctx, schema); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
 	db := &DB{conn: conn}
 
-	// Run migrations to add new columns
 	if err := db.runMigrations(ctx); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	// Migration: Add hash column if not exists (preserve existing data)
-	_, err = conn.ExecContext(ctx, `ALTER TABLE posts ADD COLUMN hash TEXT`)
-	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		// Ignoring error - conn.Close() in error path, best effort cleanup
-		_ = conn.Close() //nolint:errcheck
-		return nil, fmt.Errorf("failed to add hash column: %w", err)
+	if _, err := conn.ExecContext(ctx, `ALTER TABLE posts ADD COLUMN hash TEXT`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			conn.Close()
+			return nil, fmt.Errorf("failed to add hash column: %w", err)
+		}
 	}
 
-	// Create index on hash column for fast lookups
-	_, err = conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
-	if err != nil {
-		// Ignoring error - conn.Close() in error path, best effort cleanup
-		_ = conn.Close() //nolint:errcheck
+	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`); err != nil {
+		conn.Close()
 		return nil, fmt.Errorf("failed to create hash index: %w", err)
 	}
 

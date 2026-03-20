@@ -268,7 +268,6 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			return d.processDownloadedFile(ctx, filePath, item)
 		}
 
-		// Handle download error
 		var stopRetrying bool
 		immediateRetryCount, lastErr, stopRetrying = d.handleDownloadError(
 			ctx, item, filePath, downloadErr, attempt, immediateRetryCount,
@@ -738,13 +737,11 @@ func (d *Downloader) acquireFileLock(filePath string) func() {
 
 	// Return unlock function that decrements ref count and cleans up if needed
 	return func() {
-		// Decrement reference count atomically
 		newRefs := atomic.AddInt32(&entry.refs, -1)
+		entry.mu.Unlock()
 		if newRefs == 0 {
-			// Use CompareAndDelete to avoid race with concurrent LoadOrStore
 			d.fileLocks.CompareAndDelete(filePath, entry)
 		}
-		entry.mu.Unlock()
 	}
 }
 

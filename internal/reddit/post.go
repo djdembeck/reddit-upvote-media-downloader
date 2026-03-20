@@ -18,18 +18,18 @@ type Post struct {
 	Author      string                   `json:"author"`
 	URL         string                   `json:"url"`
 	Permalink   string                   `json:"permalink"`
-	CreatedUTC  float64                  `json:"createdUtc"`
-	IsVideo     bool                     `json:"isVideo"`
-	IsSelf      bool                     `json:"isSelf"`
+	CreatedUTC  float64                  `json:"created_utc"`
+	IsVideo     bool                     `json:"is_video"`
+	IsSelf      bool                     `json:"is_self"`
 	SelfText    string                   `json:"selftext"`
 	Thumbnail   string                   `json:"thumbnail"`
-	NumComments int                      `json:"numComments"`
+	NumComments int                      `json:"num_comments"`
 	Score       int                      `json:"score"`
 	Media       *Media                   `json:"media"`
-	PostHint    string                   `json:"postHint"`
-	GalleryData *GalleryData             `json:"galleryData"`
-	MediaMeta   map[string]MediaMetadata `json:"mediaMetadata"`
-	URLOverride string                   `json:"urlOverriddenByDest"`
+	PostHint    string                   `json:"post_hint"`
+	GalleryData *GalleryData             `json:"gallery_data"`
+	MediaMeta   map[string]MediaMetadata `json:"media_metadata"`
+	URLOverride string                   `json:"url_overridden_by_dest"`
 }
 
 // GalleryData represents the gallery data structure from Reddit API.
@@ -39,7 +39,7 @@ type GalleryData struct {
 
 // GalleryItem represents a single item in a Reddit gallery.
 type GalleryItem struct {
-	MediaID string `json:"mediaId"`
+	MediaID string `json:"media_id"`
 	ID      int    `json:"id"`
 }
 
@@ -63,7 +63,7 @@ type MediaMetadataImage struct {
 
 // Media represents media metadata for a Reddit post.
 type Media struct {
-	Video  *Video  `json:"redditVideo"`
+	Video  *Video  `json:"reddit_video"`
 	OEmbed *OEmbed `json:"oembed"`
 }
 
@@ -71,27 +71,27 @@ type Media struct {
 //
 //nolint:fieldalignment
 type Video struct {
-	BitrateKbps       int    `json:"bitrateKbps"`
-	FallbackURL       string `json:"fallbackUrl"`
+	BitrateKbps       int    `json:"bitrate_kbps"`
+	FallbackURL       string `json:"fallback_url"`
 	Height            int    `json:"height"`
 	Width             int    `json:"width"`
-	ScrubberMediaURL  string `json:"scrubberMediaUrl"`
-	DashURL           string `json:"dashUrl"`
+	ScrubberMediaURL  string `json:"scrubber_media_url"`
+	DashURL           string `json:"dash_url"`
 	Duration          int    `json:"duration"`
-	HLSURL            string `json:"hlsUrl"`
-	IsGIF             bool   `json:"isGif"`
-	TranscodingStatus string `json:"transcodingStatus"`
+	HLSURL            string `json:"hls_url"`
+	IsGIF             bool   `json:"is_gif"`
+	TranscodingStatus string `json:"transcoding_status"`
 }
 
 // OEmbed represents embedded media metadata (e.g., from external sites).
 type OEmbed struct {
-	AuthorName   string `json:"authorName"`
-	AuthorURL    string `json:"authorUrl"`
+	AuthorName   string `json:"author_name"`
+	AuthorURL    string `json:"author_url"`
 	Description  string `json:"description"`
 	HTML         string `json:"html"`
-	ProviderName string `json:"providerName"`
-	ProviderURL  string `json:"providerUrl"`
-	ThumbnailURL string `json:"thumbnailUrl"`
+	ProviderName string `json:"provider_name"`
+	ProviderURL  string `json:"provider_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
 	Title        string `json:"title"`
 	Type         string `json:"type"`
 	Version      string `json:"version"`

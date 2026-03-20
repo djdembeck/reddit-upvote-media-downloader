@@ -21,11 +21,17 @@ func isPathWithin(baseDir, targetPath string) bool {
 	if err != nil {
 		return false
 	}
-	// Ensure base ends with separator for proper prefix check
-	if !strings.HasSuffix(absBase, string(filepath.Separator)) {
-		absBase += string(filepath.Separator)
+	absBaseClean := filepath.Clean(absBase)
+	absTargetClean := filepath.Clean(absTarget)
+
+	if absTargetClean == absBaseClean {
+		return true
 	}
-	return strings.HasPrefix(absTarget, absBase) || absTarget == filepath.Clean(baseDir)
+
+	if !strings.HasSuffix(absBaseClean, string(filepath.Separator)) {
+		absBaseClean += string(filepath.Separator)
+	}
+	return strings.HasPrefix(absTargetClean, absBaseClean)
 }
 
 // HTMLParser parses bdfr-html files to extract post metadata.
@@ -69,33 +75,6 @@ func convertMatchesToStructured(contentStr string, subredditMatches, userMatches
 	}
 
 	return subreddits, users
-}
-
-// processPostMatch processes a single post match and finds associated subreddit/user.
-//
-//nolint:unused
-func processPostMatch(_, _ string, postPos int, subreddits, users []match) (string, string) {
-	subIdx, userIdx := 0, 0
-
-	// Advance subIdx to first subreddit after postPos
-	for subIdx < len(subreddits) && subreddits[subIdx].pos <= postPos {
-		subIdx++
-	}
-	var subreddit string
-	if subIdx < len(subreddits) {
-		subreddit = subreddits[subIdx].value
-	}
-
-	// Advance userIdx to first user after postPos
-	for userIdx < len(users) && users[userIdx].pos <= postPos {
-		userIdx++
-	}
-	var username string
-	if userIdx < len(users) {
-		username = users[userIdx].value
-	}
-
-	return subreddit, username
 }
 
 // ParseIndexHTML parses the bdfr-html index.html file to extract post metadata.

@@ -24,7 +24,7 @@ func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
 	defaultPorts := []int{7765, 7766, 7767, 7768, 7769}
 	var lastErr error
 	for _, port := range defaultPorts {
-		token, err := tryOAuth2Flow(clientID, clientSecret, userAgent, port)
+		token, err := tryOAuth2Flow(clientID, clientSecret, port)
 		if err == nil {
 			return token, nil
 		}
@@ -39,7 +39,7 @@ func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
 }
 
 // tryOAuth2Flow attempts OAuth2 flow on a specific port
-func tryOAuth2Flow(clientID, clientSecret, _ string, port int) (string, error) {
+func tryOAuth2Flow(clientID, clientSecret string, port int) (string, error) {
 	// Generate random state for CSRF protection
 	state, err := generateRandomState(16)
 	if err != nil {
@@ -188,27 +188,18 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
-		// Ignoring error - server.Close() in cleanup is best effort
-		_ = server.Close() //nolint:errcheck
+		_ = server.Close()
 		timer.Stop()
 	}()
 
 	select {
 	case token := <-resultChan:
-		// Ignoring error - server.Close() is best effort cleanup
-		_ = server.Close() //nolint:errcheck
 		return token, nil
 	case err := <-errorChan:
-		// Ignoring error - server.Close() is best effort cleanup
-		_ = server.Close() //nolint:errcheck
 		return "", err
 	case err := <-errChan:
-		// Ignoring error - server.Close() is best effort cleanup
-		_ = server.Close() //nolint:errcheck
 		return "", fmt.Errorf("server error: %w", err)
 	case <-timer.C:
-		// Ignoring error - server.Close() is best effort cleanup
-		_ = server.Close() //nolint:errcheck
 		return "", errors.New("timeout waiting for OAuth callback (30 seconds)")
 	}
 }

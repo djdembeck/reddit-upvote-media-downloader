@@ -188,8 +188,8 @@ func parseHTMLSources(ctx context.Context, parser *migration.HTMLParser, htmlDir
 		}
 	} else {
 		fmt.Println("Parsing index.html...")
-
-		if err := parser.ParseIndexHTML(ctx, "", indexPath); err != nil {
+		baseDir := filepath.Dir(indexPath)
+		if err := parser.ParseIndexHTML(ctx, baseDir, indexPath); err != nil {
 			return fmt.Errorf("parse index html: %w", err)
 		}
 	}

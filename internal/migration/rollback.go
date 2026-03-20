@@ -18,6 +18,8 @@ const (
 	StatusMoved            = "moved"
 	StatusMovedWithWarning = "moved_with_warning"
 	StatusError            = "error"
+	StatusSuccess          = "success"
+	StatusFailed           = "failed"
 )
 
 // Rollback handles reverting file migrations.
@@ -118,7 +120,7 @@ func (r *Rollback) Execute(ctx context.Context) (*RollbackLog, error) {
 		record := r.rollbackOperation(ctx, op)
 		rollbackLog.Operations = append(rollbackLog.Operations, record)
 
-		if record.Status == "success" {
+		if record.Status == StatusSuccess {
 			rollbackLog.SuccessCount++
 		} else {
 			rollbackLog.ErrorCount++
@@ -248,12 +250,12 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op Record) RollbackRec
 		return record
 	}
 
-	record.Status = "success"
+	record.Status = StatusSuccess
 
 	// DB cleanup happens after file rollback. If DB delete fails, the file
 	// is still rolled back but the database record remains.
 	if err := r.cleanupRollbackDB(ctx, op.PostID); err != nil {
-		record.Status = "failed"
+		record.Status = StatusFailed
 		record.Error = err.Error()
 	}
 
@@ -310,8 +312,11 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 	// For symlink-aware validation, only resolve symlinks for existing paths.
 	// Non-existent paths pass the lexical check above.
 	rootInfo, err := os.Stat(rootAbs)
-	if err != nil || !rootInfo.IsDir() {
-		return fmt.Errorf("root directory %s does not exist or is not a directory: %w", root, err)
+	if err != nil {
+		return fmt.Errorf("root directory %s does not exist: %w", rootAbs, err)
+	}
+	if !rootInfo.IsDir() {
+		return fmt.Errorf("root path %s is not a directory", rootAbs)
 	}
 
 	// Resolve symlinks for root directory

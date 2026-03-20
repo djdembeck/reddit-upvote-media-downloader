@@ -35,24 +35,19 @@ linters:
     - goconst
     - gocritic
     - gocyclo
-    - godot
     - godox
     - goheader
     - gomoddirectives
     - gomodguard
     - goprintffuncname
     - gosec
-    - lll
     - loggercheck
     - makezero
     - misspell
     - nakedret
-    - nestif
     - nilerr
     - nilnil
     - noctx
-    - nolintlint
-    - nonamedreturns
     - nosprintfhostport
     - prealloc
     - predeclared
@@ -69,7 +64,6 @@ linters:
     - wastedassign
     - whitespace
     - wrapcheck
-    - wsl
 
   settings:
     revive:
@@ -146,7 +140,6 @@ linters:
           - lll
           - cyclop
           - nestif
-          - fieldalignment
 
       - text: "weak cryptographic primitive"
         linters:
@@ -154,6 +147,11 @@ linters:
 
       - path: _test\.go
         text: "shadow"
+        linters:
+          - govet
+
+      - path: _test\.go
+        text: "fieldalignment"
         linters:
           - govet
 
@@ -172,36 +170,6 @@ linters:
         linters:
           - govet
         text: "fieldalignment"
-
-      # Exclude wsl whitespace style issues - purely cosmetic
-      - path: .*
-        linters:
-          - wsl
-
-      # Exclude line length issues - modern editors handle long lines fine
-      - path: .*
-        linters:
-          - lll
-
-      # Exclude nestif complexity warnings - refactoring needed, not errors
-      - path: .*
-        linters:
-          - nestif
-
-      # Exclude nonamedreturns - named returns are acceptable
-      - path: .*
-        linters:
-          - nonamedreturns
-
-      # Exclude godot comment formatting
-      - path: .*
-        linters:
-          - godot
-
-      # Exclude nolintlint - suppressing warnings shouldn't cause errors
-      - path: .*
-        linters:
-          - nolintlint
 
       # Exclude errcheck for fmt.Fprint to HTTP responses - best effort is acceptable
       - path: .*
@@ -227,11 +195,10 @@ linters:
           - govet
         text: "nilness"
 
-      # Exclude revive unexported-return - internal API design choice
-      - path: .*
-        text: "unexported-return"
+      # Exclude tagliatelle for Reddit API structs - Reddit uses snake_case
+      - path: internal/reddit/post.go
         linters:
-          - revive
+          - tagliatelle
 
 formatters:
   enable:

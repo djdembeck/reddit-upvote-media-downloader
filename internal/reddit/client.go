@@ -473,7 +473,18 @@ func (c *redditClient) handleUnauthorizedRequest(ctx context.Context, httpClient
 	}
 
 	reqURL := RedditAPIEndpoint + endpoint
-	retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(params.Encode()))
+	if params != nil && method == "GET" {
+		reqURL = reqURL + "?" + params.Encode()
+	}
+
+	var body *strings.Reader
+	if params != nil && method != "GET" {
+		body = strings.NewReader(params.Encode())
+	} else {
+		body = strings.NewReader("")
+	}
+
+	retryReq, retryReqErr := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if retryReqErr != nil {
 		return nil, fmt.Errorf("creating retry request: %w", retryReqErr)
 	}

@@ -235,8 +235,8 @@ func filterNewPosts(ctx context.Context, db *storage.DB, posts []storage.Post, c
 			cfg.Backoff.Max,
 		)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
-			continue
+			// Propagate error so full sync cannot complete when lookups fail
+			return nil, fmt.Errorf("checking post status for %s: %w", post.ID, err)
 		}
 		if !status.Exists || status.RetryEligible {
 			newPosts = append(newPosts, post)
@@ -270,22 +270,27 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
-//nolint:cyclop,gocyclo,revive
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+//nolint:cyclop,gocyclo
+func run() error {
 	// Load configuration from environment variables
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	// Handle --auth flag: run OAuth2 code flow to get refresh token
 	if cfg.Auth {
 		if err := handleAuth(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("authentication failed: %w", err)
 		}
-		os.Exit(0)
+		return nil
 	}
 
 	// Setup logging
@@ -307,38 +312,27 @@ func main() {
 
 	// Create output directories
 	if err := os.MkdirAll(cfg.Storage.OutputDir, 0750); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
-		cancel()
-		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
+		return fmt.Errorf("creating output directory: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
-		cancel()
-		os.Exit(1) //nolint:gocritic // cancel() called explicitly above
+		return fmt.Errorf("creating data directory: %w", err)
 	}
 
 	// Open database
-	var db *storage.DB
-
-	db, err = storage.NewDB(ctx, cfg.Storage.DBPath)
+	db, err := storage.NewDB(ctx, cfg.Storage.DBPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		return
+		return fmt.Errorf("opening database: %w", err)
 	}
-
 	defer func() {
-		if db != nil {
-			if err := db.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
-			}
+		if err := db.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
 		}
 	}()
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
 		if err := runAutoMigration(ctx, db, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Migration failed: %v\n", err)
-			return
+			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
 
@@ -352,17 +346,14 @@ func main() {
 	// Setup token store
 	tokenStore, err := setupTokenStore(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting up token store: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("setting up token store: %w", err)
 	}
 
 	// Setup Reddit client
 	redditClient, err := setupRedditClient(cfg, tokenStore)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("creating Reddit client: %w", err)
 	}
-
 	defer func() {
 		if err := redditClient.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error closing Reddit client: %v\n", err)
@@ -381,7 +372,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			slogLogger.Info("Shutdown complete")
-			return
+			return nil
 		default:
 			if err := runCycle(ctx, db, redditClient, dl, cfg, slogLogger); err != nil {
 				slogLogger.Error("Cycle error", "error", err)
@@ -390,7 +381,7 @@ func main() {
 			// Sleep for 1 hour
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(1 * time.Hour):
 			}
 		}

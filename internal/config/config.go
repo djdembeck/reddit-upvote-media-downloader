@@ -115,9 +115,10 @@ var (
 	flagFetchLimit     int
 	flagBackoffBase    time.Duration
 	flagBackoffMax     time.Duration
-	flagSet            bool
 	flagAuth           bool
 	flagsInitialized   sync.Once
+	//nolint:unused // flagSet is kept for backward compatibility with existing tests
+	flagSet bool
 )
 
 func initFlags() {
@@ -139,11 +140,12 @@ func initFlags() {
 func flagWasSet() bool {
 	// Check if any non-default flag values were set
 	// We use flag.CommandLine.Lookup to check if flags were explicitly set
+	localSet := false
 	flag.CommandLine.Visit(func(_ *flag.Flag) {
-		flagSet = true
+		localSet = true
 	})
 
-	return flagSet
+	return localSet
 }
 
 // Load loads configuration from environment variables, .env file, and CLI flags
