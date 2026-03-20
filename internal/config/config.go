@@ -117,8 +117,6 @@ var (
 	flagBackoffMax     time.Duration
 	flagAuth           bool
 	flagsInitialized   sync.Once
-	//nolint:unused // flagSet is kept for backward compatibility with existing tests
-	flagSet bool
 )
 
 func initFlags() {

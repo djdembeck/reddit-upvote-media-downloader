@@ -269,7 +269,8 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		}
 
 		var stopRetrying, dontCountAttempt bool
-		immediateRetryCount, lastErr, stopRetrying, dontCountAttempt = d.handleDownloadError(
+		var lastErr error
+		immediateRetryCount, stopRetrying, dontCountAttempt, lastErr = d.handleDownloadError(
 			ctx, item, filePath, downloadErr, attempt, immediateRetryCount,
 		)
 		if stopRetrying {
@@ -346,7 +347,7 @@ func (d *Downloader) handleDownloadError(
 	downloadErr error,
 	attempt int,
 	immediateRetryCount int,
-) (int, error, bool, bool) {
+) (int, bool, bool, error) {
 	if errors.Is(downloadErr, errRetryImmediately) {
 		immediateRetryCount++
 		if immediateRetryCount > maxImmediateRetries {
@@ -355,7 +356,7 @@ func (d *Downloader) handleDownloadError(
 				"post_id", item.PostID,
 				"immediate_retry_count", immediateRetryCount,
 			)
-			return immediateRetryCount, fmt.Errorf("max immediate retries exceeded for post %s: corrupt file keeps reappearing at %s", item.PostID, filePath), true, false
+			return immediateRetryCount, true, false, fmt.Errorf("max immediate retries exceeded for post %s: corrupt file keeps reappearing at %s", item.PostID, filePath)
 		}
 		d.logger.Debug("immediate retry triggered due to errRetryImmediately",
 			"file", filePath,
@@ -363,7 +364,7 @@ func (d *Downloader) handleDownloadError(
 			"attempt", attempt,
 			"immediate_retry_count", immediateRetryCount,
 		)
-		return immediateRetryCount, nil, false, true
+		return immediateRetryCount, false, true, nil
 	}
 
 	immediateRetryCount = 0
@@ -372,24 +373,24 @@ func (d *Downloader) handleDownloadError(
 	if errors.As(downloadErr, &validationErr) && validationErr.Permanent {
 		if d.db != nil {
 			if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
-				return immediateRetryCount, fmt.Errorf(
+				return immediateRetryCount, true, false, fmt.Errorf(
 					"failed to persist validation error for post %s: IncrementRetry failed: %w",
 					item.PostID,
 					saveErr,
-				), true, false
+				)
 			}
 		}
 
-		return immediateRetryCount, downloadErr, true, false
+		return immediateRetryCount, true, false, downloadErr
 	}
 
 	if attempt < d.config.Retries {
 		if err := sleepWithContext(ctx, d.backoffDuration(attempt)); err != nil {
-			return immediateRetryCount, err, true, false
+			return immediateRetryCount, true, false, err
 		}
 	}
 
-	return immediateRetryCount, downloadErr, false, false
+	return immediateRetryCount, false, false, downloadErr
 }
 
 // validateDownloadedContent validates the downloaded file content.

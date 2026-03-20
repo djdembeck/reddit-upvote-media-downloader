@@ -250,17 +250,6 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		}()
 	}
 
-	logSourceRoot, logDestRoot, err := readRootsFromLog(logPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
-	}
-
-	if logSourceRoot != "" || logDestRoot != "" {
-		fmt.Printf("Log source directory: %s\n", logSourceRoot)
-		fmt.Printf("Log destination directory: %s\n", logDestRoot)
-	}
-
 	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot)
 
 	rollbackLog, err := rollbacker.Execute(ctx)

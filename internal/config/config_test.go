@@ -468,11 +468,7 @@ func TestCLIFlagsOverrideEnvVars(t *testing.T) {
 	testFlagSet.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 
 	// Parse flags using the test FlagSet
-	flagSet = false
 	_ = testFlagSet.Parse(os.Args[1:])
-	testFlagSet.Visit(func(_ *flag.Flag) {
-		flagSet = true
-	})
 
 	// Update global flag variables from parsed values
 	flagClientID = "cli-client-id"
@@ -571,11 +567,7 @@ func TestFlagDefaults(t *testing.T) {
 	testFlagSet.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 
 	// Parse flags using the test FlagSet
-	flagSet = false
 	_ = testFlagSet.Parse(os.Args[1:])
-	testFlagSet.Visit(func(_ *flag.Flag) {
-		flagSet = true
-	})
 	// Set required env vars
 	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
 	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
@@ -626,9 +618,6 @@ func TestAuthFlagSetsConfig(t *testing.T) {
 	// Set CLI flag via os.Args
 	os.Args = []string{"program", "--auth"}
 
-	// Reset flag variables
-	flagSet = false
-
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
@@ -660,9 +649,6 @@ func TestAuthModeSkipsCredentialValidation(t *testing.T) {
 	// Set CLI flag via os.Args
 	os.Args = []string{"program", "--auth"}
 
-	// Reset flag variables
-	flagSet = false
-
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() should not return error in auth mode without credentials: %v", err)
@@ -693,8 +679,7 @@ func TestValidationRequiresPasswordOrRefreshToken(t *testing.T) {
 	// No --auth flag
 	os.Args = []string{"program"}
 
-	// Reset flag variables - must reset all flag values, not just flagSet
-	flagSet = false
+	// Reset flag variables
 	flagAuth = false
 
 	_, err := Load()
@@ -722,7 +707,6 @@ func TestValidationSucceedsWithPasswordOnly(t *testing.T) {
 	}()
 
 	os.Args = []string{"program"}
-	flagSet = false
 
 	cfg, err := Load()
 	if err != nil {
@@ -753,7 +737,6 @@ func TestValidationSucceedsWithRefreshTokenOnly(t *testing.T) {
 	}()
 
 	os.Args = []string{"program"}
-	flagSet = false
 
 	cfg, err := Load()
 	if err != nil {

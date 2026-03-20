@@ -117,6 +117,14 @@ func (db *DB) runMigrations(ctx context.Context) error {
 	return nil
 }
 
+// NewDB opens and initializes the database at the specified path.
+// It creates the database directory if needed, runs migrations to ensure
+// the schema is up to date, and ensures the hash column exists.
+// Parameters:
+//   - ctx: context for cancellation and timeouts
+//   - dbPath: path to the SQLite database file
+//
+// Returns a pointer to the initialized DB and any error encountered.
 func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 	conn, err := openAndInitializeDB(ctx, dbPath)
 	if err != nil {
@@ -173,13 +181,11 @@ func closeConnOnError(conn *sql.DB) {
 func ensureHashColumn(ctx context.Context, conn *sql.DB) error {
 	if _, err := conn.ExecContext(ctx, `ALTER TABLE posts ADD COLUMN hash TEXT`); err != nil {
 		if !strings.Contains(err.Error(), "duplicate column name") {
-			closeConnOnError(conn)
 			return fmt.Errorf("failed to add hash column: %w", err)
 		}
 	}
 
 	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`); err != nil {
-		closeConnOnError(conn)
 		return fmt.Errorf("failed to create hash index: %w", err)
 	}
 
@@ -602,27 +608,35 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	getCounts := func(query string, setter func(string, int64)) error {
+	getCounts := func(query string, setter func(string, int64)) (err error) {
 		rows, err := db.conn.QueryContext(ctx, query)
 		if err != nil {
 			return fmt.Errorf("query failed: %w", err)
 		}
 		defer func() {
-			_ = rows.Close()
+			if cerr := rows.Close(); cerr != nil {
+				if err == nil {
+					err = fmt.Errorf("rows close failed: %w", cerr)
+				} else {
+					err = fmt.Errorf("%v; rows close failed: %w", err, cerr)
+				}
+			}
 		}()
 
 		for rows.Next() {
 			var key string
 			var count int64
-			if err := rows.Scan(&key, &count); err != nil {
-				return fmt.Errorf("scan failed: %w", err)
+			if scanErr := rows.Scan(&key, &count); scanErr != nil {
+				err = fmt.Errorf("scan failed: %w", scanErr)
+				return
 			}
 			setter(key, count)
 		}
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("iteration failed: %w", err)
+		if rowsErr := rows.Err(); rowsErr != nil {
+			err = fmt.Errorf("iteration failed: %w", rowsErr)
+			return
 		}
-		return nil
+		return
 	}
 
 	if err := getCounts(`SELECT source, COUNT(*) FROM posts GROUP BY source`,
