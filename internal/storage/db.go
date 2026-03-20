@@ -587,9 +587,47 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	return &post, nil
 }
 
+// scanCountsRows iterates through query rows and scans key-count pairs.
+// It handles iteration errors and returns an error if any scan or iteration fails.
+func scanCountsRows(rows *sql.Rows, setter func(string, int64)) error {
+	for rows.Next() {
+		var key string
+		var count int64
+		if err := rows.Scan(&key, &count); err != nil {
+			return fmt.Errorf("scan failed: %w", err)
+		}
+		setter(key, count)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iteration failed: %w", err)
+	}
+	return nil
+}
+
+// getCounts executes a query and populates counts using the provided setter function.
+// It handles query execution, resource cleanup, and delegates scanning to scanCountsRows.
+func getCounts(ctx context.Context, conn *sql.DB, query string, setter func(string, int64)) (err error) {
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("query failed: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			if err == nil {
+				err = fmt.Errorf("rows close failed: %w", cerr)
+			} else {
+				err = fmt.Errorf("%v; rows close failed: %w", err, cerr)
+			}
+		}
+	}()
+
+	if err = scanCountsRows(rows, setter); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetStats returns download statistics.
-//
-//nolint:cyclop
 func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	stats := &Stats{
 		PostsBySource:    make(map[string]int64),
@@ -602,48 +640,17 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		return nil, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	getCounts := func(query string, setter func(string, int64)) (err error) {
-		rows, err := db.conn.QueryContext(ctx, query)
-		if err != nil {
-			return fmt.Errorf("query failed: %w", err)
-		}
-		defer func() {
-			if cerr := rows.Close(); cerr != nil {
-				if err == nil {
-					err = fmt.Errorf("rows close failed: %w", cerr)
-				} else {
-					err = fmt.Errorf("%v; rows close failed: %w", err, cerr)
-				}
-			}
-		}()
-
-		for rows.Next() {
-			var key string
-			var count int64
-			if scanErr := rows.Scan(&key, &count); scanErr != nil {
-				err = fmt.Errorf("scan failed: %w", scanErr)
-				return
-			}
-			setter(key, count)
-		}
-		if rowsErr := rows.Err(); rowsErr != nil {
-			err = fmt.Errorf("iteration failed: %w", rowsErr)
-			return
-		}
-		return
-	}
-
-	if err := getCounts(`SELECT source, COUNT(*) FROM posts GROUP BY source`,
+	if err := getCounts(ctx, db.conn, `SELECT source, COUNT(*) FROM posts GROUP BY source`,
 		func(k string, c int64) { stats.PostsBySource[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get source counts: %w", err)
 	}
 
-	if err := getCounts(`SELECT subreddit, COUNT(*) FROM posts GROUP BY subreddit`,
+	if err := getCounts(ctx, db.conn, `SELECT subreddit, COUNT(*) FROM posts GROUP BY subreddit`,
 		func(k string, c int64) { stats.PostsBySubreddit[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get subreddit counts: %w", err)
 	}
 
-	if err := getCounts(`SELECT media_type, COUNT(*) FROM posts GROUP BY media_type`,
+	if err := getCounts(ctx, db.conn, `SELECT media_type, COUNT(*) FROM posts GROUP BY media_type`,
 		func(k string, c int64) { stats.PostsByMediaType[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get media type counts: %w", err)
 	}

@@ -265,7 +265,19 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		downloadErr := d.attemptDownload(ctx, item, filePath, attempt)
 		if downloadErr == nil {
 			// Download succeeded, process the downloaded file
-			return d.processDownloadedFile(ctx, filePath, item)
+			hash, isDuplicate, processErr := d.processDownloadedFile(ctx, filePath, item)
+			if processErr != nil {
+				// Route processing errors through handleDownloadError to record retry
+				_, stopRetrying, _, lastErr := d.handleDownloadError(
+					ctx, item, filePath, processErr, attempt, immediateRetryCount,
+				)
+				if stopRetrying {
+					return "", false, fmt.Errorf("download failed after %d attempts: %w", attempt, lastErr)
+				}
+				// Continue to next retry attempt for non-permanent errors
+				continue
+			}
+			return hash, isDuplicate, nil
 		}
 
 		var stopRetrying, dontCountAttempt bool
@@ -303,15 +315,6 @@ func (d *Downloader) processDownloadedFile(ctx context.Context, filePath string,
 	if knownBadHashes[hash] {
 		d.logger.Error("detected known bad hash (corrupted content)", "hash", hash, "post_id", item.PostID)
 		removeErr := os.Remove(filePath)
-		if d.db != nil {
-			if saveErr := d.db.IncrementRetry(ctx, item.PostID, errReasonKnownBadHash); saveErr != nil {
-				return "", false, fmt.Errorf(
-					"failed to persist bad hash error for post %s: IncrementRetry failed: %w",
-					item.PostID,
-					saveErr,
-				)
-			}
-		}
 		if removeErr != nil {
 			return "", false, fmt.Errorf("failed to remove file with bad hash %s: %w", filePath, removeErr)
 		}
@@ -372,7 +375,7 @@ func (d *Downloader) handleDownloadError(
 	var validationErr ValidationError
 	if errors.As(downloadErr, &validationErr) && validationErr.Permanent {
 		if d.db != nil {
-			if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Error()); saveErr != nil {
+			if saveErr := d.db.IncrementRetry(ctx, item.PostID, validationErr.Reason); saveErr != nil {
 				return immediateRetryCount, true, false, fmt.Errorf(
 					"failed to persist validation error for post %s: IncrementRetry failed: %w",
 					item.PostID,
