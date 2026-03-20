@@ -268,11 +268,15 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 			hash, isDuplicate, processErr := d.processDownloadedFile(ctx, filePath, item)
 			if processErr != nil {
 				// Route processing errors through handleDownloadError to record retry
-				_, stopRetrying, _, lastErr := d.handleDownloadError(
+				var stopRetrying, dontCountAttempt bool
+				immediateRetryCount, stopRetrying, dontCountAttempt, lastErr = d.handleDownloadError(
 					ctx, item, filePath, processErr, attempt, immediateRetryCount,
 				)
 				if stopRetrying {
 					return "", false, fmt.Errorf("download failed after %d attempts: %w", attempt, lastErr)
+				}
+				if dontCountAttempt {
+					attempt--
 				}
 				// Continue to next retry attempt for non-permanent errors
 				continue
@@ -281,7 +285,6 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 		}
 
 		var stopRetrying, dontCountAttempt bool
-		var lastErr error
 		immediateRetryCount, stopRetrying, dontCountAttempt, lastErr = d.handleDownloadError(
 			ctx, item, filePath, downloadErr, attempt, immediateRetryCount,
 		)
@@ -687,41 +690,6 @@ func combineErrors(errs ...error) error {
 	return errors.Join(combined...)
 }
 
-// handleBlockingFile handles the case where a file already exists at the target path.
-// It validates the existing file and either reuses it if valid, or removes it and returns
-// errRetryImmediately if corrupt. Returns true if the file was successfully handled.
-func (d *Downloader) handleBlockingFile(ctx context.Context, filePath, _ string) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, fmt.Errorf("context canceled: %w", err)
-	}
-
-	// Acquire per-path lock to prevent race conditions with concurrent downloads
-	// to the same destination file (created with O_EXCL by another writer).
-	unlock := d.acquireFileLock(filePath)
-	defer unlock()
-
-	if !fileExists(filePath) {
-		return false, nil
-	}
-
-	ext := filepath.Ext(filePath)
-	if validateErr := validateExistingFile(filePath, ext); validateErr != nil {
-		var validationErr ValidationError
-		if errors.As(validateErr, &validationErr) && validationErr.Permanent {
-			d.logger.Warn("blocking file is corrupt, removing and retrying",
-				"path", filePath, "error", validateErr)
-			if removeErr := os.Remove(filePath); removeErr != nil {
-				return false, fmt.Errorf("failed to remove corrupt blocking file %s: %w", filePath, removeErr)
-			}
-			return false, errRetryImmediately
-		}
-		return false, fmt.Errorf("blocking file validation failed: %w", validateErr)
-	}
-
-	d.logger.Info("reusing blocking file", "path", filePath)
-	return true, nil
-}
-
 // acquireFileLock acquires a lock for the given file path, creating the lock entry if necessary.
 // It increments the reference count and returns an unlock function that decrements
 // the reference count and removes the entry when it reaches zero.
@@ -844,7 +812,7 @@ func (d *Downloader) computeHashAndHandleKnownBad(ctx context.Context, existingF
 		if removeErr != nil {
 			return "", false, false, fmt.Errorf("failed to remove file with bad hash %s: %w", existingFile, removeErr)
 		}
-		return "", false, false, ValidationError{
+		return "", false, true, ValidationError{
 			Permanent: true,
 			Reason:    errReasonKnownBadHash,
 		}
