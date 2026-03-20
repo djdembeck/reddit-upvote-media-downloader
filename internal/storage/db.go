@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -168,13 +167,6 @@ func openAndInitializeDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 	}
 
 	return conn, nil
-}
-
-// closeConnOnError closes the database connection and logs any error.
-func closeConnOnError(conn *sql.DB) {
-	if err := conn.Close(); err != nil {
-		slog.Error("failed to close database connection", "error", err)
-	}
 }
 
 // ensureHashColumn adds the hash column and index if they don't exist.
@@ -596,6 +588,8 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 }
 
 // GetStats returns download statistics.
+//
+//nolint:cyclop
 func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	stats := &Stats{
 		PostsBySource:    make(map[string]int64),
@@ -759,7 +753,7 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 
 		// Validate extension before marking as seen
 		ext := strings.ToLower(filepath.Ext(filename))
-		mediaType := ""
+		var mediaType string
 		switch ext {
 		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
 			mediaType = "image"
