@@ -844,7 +844,7 @@ func (d *Downloader) computeHashAndHandleKnownBad(ctx context.Context, existingF
 		if removeErr != nil {
 			return "", false, false, fmt.Errorf("failed to remove file with bad hash %s: %w", existingFile, removeErr)
 		}
-		return "", false, true, ValidationError{
+		return "", false, false, ValidationError{
 			Permanent: true,
 			Reason:    errReasonKnownBadHash,
 		}
