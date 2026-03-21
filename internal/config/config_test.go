@@ -10,29 +10,29 @@ import (
 
 func TestLoadWithEnvVars(t *testing.T) {
 	// Set environment variables
-	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	os.Setenv("REDDIT_USERNAME", "test-user")
-	os.Setenv("REDDIT_PASSWORD", "test-pass")
-	os.Setenv("OUTPUT_DIR", "/tmp/test-output")
-	os.Setenv("DB_PATH", "/tmp/test.db")
-	os.Setenv("CONCURRENCY", "5")
-	os.Setenv("FETCH_LIMIT", "50")
-	os.Setenv("MAX_RETRIES", "5")
-	os.Setenv("LOG_LEVEL", "debug")
-	os.Setenv("MIGRATE_ON_START", "false")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "test-user")
+	_ = os.Setenv("REDDIT_PASSWORD", "test-pass")
+	_ = os.Setenv("OUTPUT_DIR", "/tmp/test-output")
+	_ = os.Setenv("DB_PATH", "/tmp/test.db")
+	_ = os.Setenv("CONCURRENCY", "5")
+	_ = os.Setenv("FETCH_LIMIT", "50")
+	_ = os.Setenv("MAX_RETRIES", "5")
+	_ = os.Setenv("LOG_LEVEL", "debug")
+	_ = os.Setenv("MIGRATE_ON_START", "false")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_PASSWORD")
-		os.Unsetenv("OUTPUT_DIR")
-		os.Unsetenv("DB_PATH")
-		os.Unsetenv("CONCURRENCY")
-		os.Unsetenv("FETCH_LIMIT")
-		os.Unsetenv("MAX_RETRIES")
-		os.Unsetenv("LOG_LEVEL")
-		os.Unsetenv("MIGRATE_ON_START")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_PASSWORD")
+		_ = os.Unsetenv("OUTPUT_DIR")
+		_ = os.Unsetenv("DB_PATH")
+		_ = os.Unsetenv("CONCURRENCY")
+		_ = os.Unsetenv("FETCH_LIMIT")
+		_ = os.Unsetenv("MAX_RETRIES")
+		_ = os.Unsetenv("LOG_LEVEL")
+		_ = os.Unsetenv("MIGRATE_ON_START")
 	}()
 
 	cfg, err := Load()
@@ -74,7 +74,7 @@ func TestLoadWithDefaults(t *testing.T) {
 		"FETCH_LIMIT", "MAX_RETRIES", "LOG_LEVEL", "MIGRATE_ON_START",
 	}
 	for _, v := range envVars {
-		os.Unsetenv(v)
+		_ = os.Unsetenv(v)
 	}
 
 	cfg, err := Load()
@@ -87,11 +87,11 @@ func TestLoadWithDefaults(t *testing.T) {
 }
 
 func TestValidationMissingClientID(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
 	}()
 
 	_, err := Load()
@@ -101,11 +101,11 @@ func TestValidationMissingClientID(t *testing.T) {
 }
 
 func TestValidationMissingClientSecret(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_USERNAME")
 	}()
 
 	_, err := Load()
@@ -115,11 +115,11 @@ func TestValidationMissingClientSecret(t *testing.T) {
 }
 
 func TestValidationMissingUsername(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
 	}()
 
 	_, err := Load()
@@ -129,17 +129,17 @@ func TestValidationMissingUsername(t *testing.T) {
 }
 
 func TestValidationInvalidConcurrency(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("CONCURRENCY", "0")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("CONCURRENCY", "0")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("CONCURRENCY")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("CONCURRENCY")
 	}()
 
 	_, err := Load()
@@ -152,17 +152,17 @@ func TestValidationInvalidConcurrency(t *testing.T) {
 }
 
 func TestValidationInvalidFetchLimit(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("FETCH_LIMIT", "-1")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("FETCH_LIMIT", "-1")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("FETCH_LIMIT")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("FETCH_LIMIT")
 	}()
 
 	_, err := Load()
@@ -175,17 +175,17 @@ func TestValidationInvalidFetchLimit(t *testing.T) {
 }
 
 func TestValidationInvalidLogLevel(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("LOG_LEVEL", "invalid")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("LOG_LEVEL", "invalid")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("LOG_LEVEL")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("LOG_LEVEL")
 	}()
 
 	_, err := Load()
@@ -198,17 +198,17 @@ func TestValidationInvalidLogLevel(t *testing.T) {
 }
 
 func TestValidationInvalidBackoffBase(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("BACKOFF_BASE", "0s")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("BACKOFF_BASE", "0s")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("BACKOFF_BASE")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("BACKOFF_BASE")
 	}()
 
 	_, err := Load()
@@ -221,17 +221,17 @@ func TestValidationInvalidBackoffBase(t *testing.T) {
 }
 
 func TestValidationInvalidBackoffMax(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("BACKOFF_MAX", "0s")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("BACKOFF_MAX", "0s")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("BACKOFF_MAX")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("BACKOFF_MAX")
 	}()
 
 	_, err := Load()
@@ -244,19 +244,19 @@ func TestValidationInvalidBackoffMax(t *testing.T) {
 }
 
 func TestValidationBackoffBaseGreaterThanMax(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("BACKOFF_BASE", "60s")
-	os.Setenv("BACKOFF_MAX", "5s")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("BACKOFF_BASE", "60s")
+	_ = os.Setenv("BACKOFF_MAX", "5s")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("BACKOFF_BASE")
-		os.Unsetenv("BACKOFF_MAX")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("BACKOFF_BASE")
+		_ = os.Unsetenv("BACKOFF_MAX")
 	}()
 
 	_, err := Load()
@@ -269,17 +269,17 @@ func TestValidationBackoffBaseGreaterThanMax(t *testing.T) {
 }
 
 func TestValidationInvalidRetryThreshold(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
-	os.Setenv("RETRY_THRESHOLD", "-1")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "dummy")
+	_ = os.Setenv("RETRY_THRESHOLD", "-1")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("RETRY_THRESHOLD")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("RETRY_THRESHOLD")
 	}()
 
 	_, err := Load()
@@ -291,15 +291,15 @@ func TestValidationInvalidRetryThreshold(t *testing.T) {
 	}
 }
 func TestDefaultValues(t *testing.T) {
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	cfg, err := Load()
@@ -338,8 +338,8 @@ func TestDefaultValues(t *testing.T) {
 }
 
 func TestGetEnv(t *testing.T) {
-	os.Setenv("TEST_VAR", "test-value")
-	defer os.Unsetenv("TEST_VAR")
+	_ = os.Setenv("TEST_VAR", "test-value")
+	defer func() { _ = os.Unsetenv("TEST_VAR") }()
 
 	result := GetEnv("TEST_VAR", "default")
 	if result != "test-value" {
@@ -353,8 +353,8 @@ func TestGetEnv(t *testing.T) {
 }
 
 func TestGetEnvInt(t *testing.T) {
-	os.Setenv("TEST_INT_VAR", "42")
-	defer os.Unsetenv("TEST_INT_VAR")
+	_ = os.Setenv("TEST_INT_VAR", "42")
+	defer func() { _ = os.Unsetenv("TEST_INT_VAR") }()
 
 	result := GetEnvInt("TEST_INT_VAR", 10)
 	if result != 42 {
@@ -386,12 +386,12 @@ func TestGetEnvBool(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		os.Setenv("TEST_BOOL_VAR", tt.envValue)
+		_ = os.Setenv("TEST_BOOL_VAR", tt.envValue)
 		result := GetEnvBool("TEST_BOOL_VAR", false)
 		if result != tt.expected {
 			t.Errorf("GetEnvBool('%s') = %v, expected %v", tt.envValue, result, tt.expected)
 		}
-		os.Unsetenv("TEST_BOOL_VAR")
+		_ = os.Unsetenv("TEST_BOOL_VAR")
 	}
 }
 
@@ -439,17 +439,17 @@ func TestCLIFlagsOverrideEnvVars(t *testing.T) {
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
 	// Set environment variables
-	os.Setenv("REDDIT_CLIENT_ID", "env-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "env-client-secret")
-	os.Setenv("REDDIT_USERNAME", "env-user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
-	os.Setenv("CONCURRENCY", "5")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "env-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "env-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "env-user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
+	_ = os.Setenv("CONCURRENCY", "5")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
-		os.Unsetenv("CONCURRENCY")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("CONCURRENCY")
 	}()
 
 	// Set CLI flags via os.Args
@@ -468,11 +468,7 @@ func TestCLIFlagsOverrideEnvVars(t *testing.T) {
 	testFlagSet.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 
 	// Parse flags using the test FlagSet
-	flagSet = false
-	testFlagSet.Parse(os.Args[1:])
-	testFlagSet.Visit(func(f *flag.Flag) {
-		flagSet = true
-	})
+	_ = testFlagSet.Parse(os.Args[1:])
 
 	// Update global flag variables from parsed values
 	flagClientID = "cli-client-id"
@@ -496,7 +492,7 @@ func TestInvalidFlagValuesRejected(t *testing.T) {
 	testFlagSet := flag.NewFlagSet("program", flag.ContinueOnError)
 	testFlagSet.IntVar(&flagConcurrency, "concurrency", 0, "Number of parallel downloads")
 
-	testFlagSet.Parse([]string{"--concurrency", "-5"})
+	_ = testFlagSet.Parse([]string{"--concurrency", "-5"})
 
 	if flagConcurrency != -5 {
 		t.Errorf("Expected flagConcurrency to be -5, got %d", flagConcurrency)
@@ -532,6 +528,7 @@ func TestHelpOutput(t *testing.T) {
 	testFlagSet.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 
 	var helpOutput strings.Builder
+
 	testFlagSet.SetOutput(&helpOutput)
 
 	testFlagSet.PrintDefaults()
@@ -570,21 +567,17 @@ func TestFlagDefaults(t *testing.T) {
 	testFlagSet.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 
 	// Parse flags using the test FlagSet
-	flagSet = false
-	testFlagSet.Parse(os.Args[1:])
-	testFlagSet.Visit(func(f *flag.Flag) {
-		flagSet = true
-	})
+	_ = testFlagSet.Parse(os.Args[1:])
 	// Set required env vars
-	os.Setenv("REDDIT_CLIENT_ID", "id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "secret")
-	os.Setenv("REDDIT_USERNAME", "user")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "secret")
+	_ = os.Setenv("REDDIT_USERNAME", "user")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	cfg, err := Load()
@@ -613,20 +606,17 @@ func TestAuthFlagSetsConfig(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Set required environment variables
-	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	os.Setenv("REDDIT_USERNAME", "test-user")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "test-user")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
 	}()
 
 	// Set CLI flag via os.Args
 	os.Args = []string{"program", "--auth"}
-
-	// Reset flag variables
-	flagSet = false
 
 	cfg, err := Load()
 	if err != nil {
@@ -644,23 +634,20 @@ func TestAuthModeSkipsCredentialValidation(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Set only client ID and secret (no password or refresh token)
-	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	os.Setenv("REDDIT_USERNAME", "test-user")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "test-user")
 	// Explicitly unset password and refresh token
-	os.Unsetenv("REDDIT_PASSWORD")
-	os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	_ = os.Unsetenv("REDDIT_PASSWORD")
+	_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
 	}()
 
 	// Set CLI flag via os.Args
 	os.Args = []string{"program", "--auth"}
-
-	// Reset flag variables
-	flagSet = false
 
 	cfg, err := Load()
 	if err != nil {
@@ -678,22 +665,21 @@ func TestValidationRequiresPasswordOrRefreshToken(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Set required env vars but NOT password or refresh token
-	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	os.Setenv("REDDIT_USERNAME", "test-user")
-	os.Unsetenv("REDDIT_PASSWORD")
-	os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "test-user")
+	_ = os.Unsetenv("REDDIT_PASSWORD")
+	_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
 	}()
 
 	// No --auth flag
 	os.Args = []string{"program"}
 
-	// Reset flag variables - must reset all flag values, not just flagSet
-	flagSet = false
+	// Reset flag variables
 	flagAuth = false
 
 	_, err := Load()
@@ -708,20 +694,19 @@ func TestValidationSucceedsWithPasswordOnly(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Set required env vars with password only
-	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	os.Setenv("REDDIT_USERNAME", "test-user")
-	os.Setenv("REDDIT_PASSWORD", "test-password")
-	os.Unsetenv("REDDIT_REFRESH_TOKEN")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "test-user")
+	_ = os.Setenv("REDDIT_PASSWORD", "test-password")
+	_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_PASSWORD")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_PASSWORD")
 	}()
 
 	os.Args = []string{"program"}
-	flagSet = false
 
 	cfg, err := Load()
 	if err != nil {
@@ -739,20 +724,19 @@ func TestValidationSucceedsWithRefreshTokenOnly(t *testing.T) {
 	defer func() { os.Args = originalArgs }()
 
 	// Set required env vars with refresh token only
-	os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
-	os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
-	os.Setenv("REDDIT_USERNAME", "test-user")
-	os.Unsetenv("REDDIT_PASSWORD")
-	os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
+	_ = os.Setenv("REDDIT_CLIENT_ID", "test-client-id")
+	_ = os.Setenv("REDDIT_CLIENT_SECRET", "test-client-secret")
+	_ = os.Setenv("REDDIT_USERNAME", "test-user")
+	_ = os.Unsetenv("REDDIT_PASSWORD")
+	_ = os.Setenv("REDDIT_REFRESH_TOKEN", "test-refresh-token")
 	defer func() {
-		os.Unsetenv("REDDIT_CLIENT_ID")
-		os.Unsetenv("REDDIT_CLIENT_SECRET")
-		os.Unsetenv("REDDIT_USERNAME")
-		os.Unsetenv("REDDIT_REFRESH_TOKEN")
+		_ = os.Unsetenv("REDDIT_CLIENT_ID")
+		_ = os.Unsetenv("REDDIT_CLIENT_SECRET")
+		_ = os.Unsetenv("REDDIT_USERNAME")
+		_ = os.Unsetenv("REDDIT_REFRESH_TOKEN")
 	}()
 
 	os.Args = []string{"program"}
-	flagSet = false
 
 	cfg, err := Load()
 	if err != nil {

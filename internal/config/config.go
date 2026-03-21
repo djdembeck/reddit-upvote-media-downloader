@@ -3,17 +3,21 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
-// Config holds all application configuration
+// Config holds all application configuration.
+//
+//nolint:fieldalignment // Config is used with named field initialization throughout.
 type Config struct {
 	Reddit       RedditConfig
 	Storage      StorageConfig
@@ -25,7 +29,9 @@ type Config struct {
 	Auth         bool
 }
 
-// RedditConfig holds Reddit API credentials and settings
+// RedditConfig holds Reddit API credentials and settings.
+//
+//nolint:gosec // G117: intentionally named fields for Reddit OAuth credentials
 type RedditConfig struct {
 	ClientID     string
 	ClientSecret string
@@ -35,43 +41,45 @@ type RedditConfig struct {
 	RefreshToken string
 }
 
-// StorageConfig holds database and file storage settings
+// StorageConfig holds database and file storage settings.
 type StorageConfig struct {
 	OutputDir string
 	DBPath    string
 }
 
-// DownloadConfig holds downloader settings
+// DownloadConfig holds downloader settings.
 type DownloadConfig struct {
 	Concurrency int
 	FetchLimit  int
 	MaxRetries  int
 }
 
-// LogConfig holds logging configuration
+// LogConfig holds logging configuration.
 type LogConfig struct {
 	Level string
 }
 
-// MigrateConfig holds migration settings
+// MigrateConfig holds migration settings.
+//
+//nolint:fieldalignment // MigrateConfig uses named field initialization.
 type MigrateConfig struct {
-	OnStart           bool
-	FullSyncOnce      bool
 	SourceDir         string // Source directory containing media files to reorganize
 	HTMLDir           string // Directory containing bdfr-html HTML files for metadata
-	ReorganizeEnabled bool   // Enable file reorganization into subreddit folders
+	OnStart           bool
+	FullSyncOnce      bool
+	ReorganizeEnabled bool // Enable file reorganization into subreddit folders
 }
 
-// BackoffConfig holds exponential backoff settings for retries
+// BackoffConfig holds exponential backoff settings for retries.
 type BackoffConfig struct {
 	Base time.Duration
 	Max  time.Duration
 }
 
-// CalculateBackoffDelay calculates exponential backoff delay for retries
+// CalculateBackoffDelay calculates exponential backoff delay for retries.
 // Formula: baseDelay * (2^retryCount), capped at maxDelay
-// Edge cases: negative retryCount returns 0, zero base returns 0
-func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+// Edge cases: negative retryCount returns 0, zero base returns 0.
+func CalculateBackoffDelay(retryCount int, base, maxDuration time.Duration) time.Duration {
 	// Handle edge cases
 	if retryCount < 0 {
 		return 0
@@ -84,19 +92,19 @@ func CalculateBackoffDelay(retryCount int, base, max time.Duration) time.Duratio
 	delay := base * time.Duration(1<<uint(retryCount))
 
 	// Cap at max delay
-	if delay > max {
-		return max
+	if delay > maxDuration {
+		return maxDuration
 	}
 	return delay
 }
 
-// SmartPollingConfig holds smart polling settings for re-checking posts
+// SmartPollingConfig holds smart polling settings for re-checking posts.
 type SmartPollingConfig struct {
 	ReCheck        bool
 	RetryThreshold int
 }
 
-// Flag variables for CLI parsing
+// Flag variables for CLI parsing.
 var (
 	flagReCheck        bool
 	flagRetryThreshold int
@@ -107,41 +115,44 @@ var (
 	flagFetchLimit     int
 	flagBackoffBase    time.Duration
 	flagBackoffMax     time.Duration
-	flagSet            bool
 	flagAuth           bool
+	flagsInitialized   sync.Once
 )
 
-func init() {
-	// Define CLI flags - use zero values as defaults
-	flag.BoolVar(&flagReCheck, "re-check", false, "Enable re-check mode for previously failed posts")
-	flag.IntVar(&flagRetryThreshold, "retry-threshold", 0, "Max retries before permanent skip")
-	flag.StringVar(&flagClientID, "client-id", "", "Reddit API client ID")
-	flag.StringVar(&flagClientSecret, "client-secret", "", "Reddit API client secret")
-	flag.StringVar(&flagUsername, "username", "", "Reddit username")
-	flag.IntVar(&flagConcurrency, "concurrency", 0, "Number of parallel downloads")
-	flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
-	flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
-	flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
-	flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
+func initFlags() {
+	flagsInitialized.Do(func() {
+		flag.BoolVar(&flagReCheck, "re-check", false, "Enable re-check mode for previously failed posts")
+		flag.IntVar(&flagRetryThreshold, "retry-threshold", 0, "Max retries before permanent skip")
+		flag.StringVar(&flagClientID, "client-id", "", "Reddit API client ID")
+		flag.StringVar(&flagClientSecret, "client-secret", "", "Reddit API client secret")
+		flag.StringVar(&flagUsername, "username", "", "Reddit username")
+		flag.IntVar(&flagConcurrency, "concurrency", 0, "Number of parallel downloads")
+		flag.IntVar(&flagFetchLimit, "fetch-limit", 0, "Posts per fetch")
+		flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
+		flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
+		flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
+	})
 }
 
-// flagWasSet returns true if a flag was explicitly provided on the command line
-func flagWasSet() bool {
-	// Check if any non-default flag values were set
-	// We use flag.CommandLine.Lookup to check if flags were explicitly set
+func flagWasSet(name string) bool {
+	found := false
 	flag.CommandLine.Visit(func(f *flag.Flag) {
-		flagSet = true
+		if f.Name == name {
+			found = true
+		}
 	})
-	return flagSet
+	return found
 }
 
 // Load loads configuration from environment variables, .env file, and CLI flags
 // Priority: CLI flags > Environment vars > .env file > defaults
+//
+//nolint:cyclop
 func Load() (*Config, error) {
-	// Load .env file if exists (ignore error if file doesn't exist)
+	//nolint:errcheck // Loading .env is optional; continue if it fails
 	_ = godotenv.Load()
 
-	// Parse CLI flags
+	initFlags()
 	flag.Parse()
 
 	cfg := &Config{
@@ -185,39 +196,37 @@ func Load() (*Config, error) {
 
 	// Apply CLI flag overrides (highest priority)
 	// Only override if flags were explicitly provided on command line
-	if flagWasSet() {
-		if flagClientID != "" {
-			cfg.Reddit.ClientID = flagClientID
-		}
-		if flagClientSecret != "" {
-			cfg.Reddit.ClientSecret = flagClientSecret
-		}
-		if flagUsername != "" {
-			cfg.Reddit.Username = flagUsername
-		}
-		if flagConcurrency > 0 {
-			cfg.Download.Concurrency = flagConcurrency
-		}
-		if flagFetchLimit > 0 {
-			cfg.Download.FetchLimit = flagFetchLimit
-		}
-		if flagBackoffBase > 0 {
-			cfg.Backoff.Base = flagBackoffBase
-		}
-		if flagBackoffMax > 0 {
-			cfg.Backoff.Max = flagBackoffMax
-		}
-		cfg.SmartPolling.ReCheck = flagReCheck
-		if flagRetryThreshold > 0 {
-			cfg.SmartPolling.RetryThreshold = flagRetryThreshold
-		}
+	if flagClientID != "" {
+		cfg.Reddit.ClientID = flagClientID
+	}
+	if flagClientSecret != "" {
+		cfg.Reddit.ClientSecret = flagClientSecret
+	}
+	if flagUsername != "" {
+		cfg.Reddit.Username = flagUsername
+	}
+	if flagConcurrency > 0 {
+		cfg.Download.Concurrency = flagConcurrency
+	}
+	if flagFetchLimit > 0 {
+		cfg.Download.FetchLimit = flagFetchLimit
+	}
+	if flagBackoffBase > 0 {
+		cfg.Backoff.Base = flagBackoffBase
+	}
+	if flagBackoffMax > 0 {
+		cfg.Backoff.Max = flagBackoffMax
+	}
+	if flagRetryThreshold > 0 {
+		cfg.SmartPolling.RetryThreshold = flagRetryThreshold
 	}
 
-	// Note: cfg.Auth is intentionally only set from CLI flags (--auth)
-	// to prevent accidental auth mode when running as daemon.
-	// Callers needing programmatic auth should call handleAuth() directly.
-	// The flagAuth value was already applied above when flagWasSet() returned true.
-	if flagWasSet() {
+	// Boolean flags require special handling since their zero-value (false) is valid.
+	// Only apply these if the specific flag was explicitly set.
+	if flagWasSet("re-check") {
+		cfg.SmartPolling.ReCheck = flagReCheck
+	}
+	if flagWasSet("auth") {
 		cfg.Auth = flagAuth
 	}
 
@@ -228,8 +237,52 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks that all required configuration is present
+// Validate checks that all required configuration is present.
 func (c *Config) Validate() error {
+	var errs []error
+
+	// Validate Reddit credentials
+	if err := validateRedditCredentials(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate numeric values
+	if err := validateNumericValues(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate log level
+	if err := validateLogLevel(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate backoff settings
+	if err := validateBackoffSettings(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate retry threshold
+	if c.SmartPolling.RetryThreshold < 0 {
+		errs = append(errs, fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold))
+	}
+
+	// Validate migration configuration
+	if c.Migrate.ReorganizeEnabled {
+		src := strings.TrimSpace(c.Migrate.SourceDir)
+		if src == "" {
+			errs = append(errs, fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled"))
+		}
+	}
+
+	if len(errs) > 0 {
+		return joinErrors(errs)
+	}
+
+	return nil
+}
+
+// validateRedditCredentials validates Reddit API credentials.
+func validateRedditCredentials(c *Config) error {
 	var missing []string
 
 	if c.Reddit.ClientID == "" {
@@ -244,7 +297,6 @@ func (c *Config) Validate() error {
 
 	// Skip password/refresh token check when in auth mode
 	if !c.Auth {
-		// Require either password or refresh token
 		if c.Reddit.Password == "" && c.Reddit.RefreshToken == "" {
 			missing = append(missing, "REDDIT_PASSWORD or REDDIT_REFRESH_TOKEN")
 		}
@@ -254,21 +306,31 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
 	}
 
-	// Validate numeric values
+	return nil
+}
+
+// validateNumericValues validates Concurrency and FetchLimit.
+func validateNumericValues(c *Config) error {
 	if c.Download.Concurrency <= 0 {
 		return fmt.Errorf("CONCURRENCY must be greater than 0, got %d", c.Download.Concurrency)
 	}
 	if c.Download.FetchLimit <= 0 {
 		return fmt.Errorf("FETCH_LIMIT must be greater than 0, got %d", c.Download.FetchLimit)
 	}
+	return nil
+}
 
-	// Validate log level
+// validateLogLevel validates the log level setting.
+func validateLogLevel(c *Config) error {
 	validLogLevels := []string{"debug", "info", "warn", "error"}
 	if !contains(validLogLevels, strings.ToLower(c.Log.Level)) {
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error, got %s", c.Log.Level)
 	}
+	return nil
+}
 
-	// Validate backoff settings
+// validateBackoffSettings validates exponential backoff settings.
+func validateBackoffSettings(c *Config) error {
 	if c.Backoff.Base <= 0 {
 		return fmt.Errorf("BACKOFF_BASE must be greater than 0, got %v", c.Backoff.Base)
 	}
@@ -276,45 +338,44 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("BACKOFF_MAX must be greater than 0, got %v", c.Backoff.Max)
 	}
 	if c.Backoff.Base > c.Backoff.Max {
-		return fmt.Errorf("BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)", c.Backoff.Base, c.Backoff.Max)
+		return fmt.Errorf(
+			"BACKOFF_BASE (%v) must be less than or equal to BACKOFF_MAX (%v)",
+			c.Backoff.Base,
+			c.Backoff.Max,
+		)
 	}
-
-	// Validate retry threshold
-	if c.SmartPolling.RetryThreshold < 0 {
-		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
-	}
-
-	// Validate migration configuration
-	if c.Migrate.ReorganizeEnabled {
-		src := strings.TrimSpace(c.Migrate.SourceDir)
-		if src == "" {
-			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
-		}
-	}
-
 	return nil
 }
 
-// GetEnv returns the value of an environment variable or a default
+// joinErrors combines multiple errors into a single error.
+func joinErrors(errs []error) error {
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return errors.Join(errs...)
+}
+
+// GetEnv returns the value of an environment variable or a default.
 func GetEnv(key, defaultValue string) string {
 	return getEnv(key, defaultValue)
 }
 
-// GetEnvInt returns an integer environment variable or a default
+// GetEnvInt returns an integer environment variable or a default.
 func GetEnvInt(key string, defaultValue int) int {
 	return getEnvInt(key, defaultValue)
 }
 
-// GetEnvBool returns a boolean environment variable or a default
+// GetEnvBool returns a boolean environment variable or a default.
 func GetEnvBool(key string, defaultValue bool) bool {
 	return getEnvBool(key, defaultValue)
 }
 
-// Helper functions
+// Helper functions.
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return defaultValue
 }
 
@@ -332,6 +393,7 @@ func getEnvBool(key string, defaultValue bool) bool {
 		lower := strings.ToLower(value)
 		return lower == "true" || lower == "1" || lower == "yes"
 	}
+
 	return defaultValue
 }
 

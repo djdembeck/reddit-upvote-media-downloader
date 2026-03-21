@@ -6,10 +6,13 @@ import (
 )
 
 var (
-	postIDPattern      = regexp.MustCompile(`_([a-zA-Z0-9]{6,})(?:_\d+)?\.[^.]+$`)
+	// postIDPattern matches POSTID from filenames with title prefix.
+	postIDPattern = regexp.MustCompile(`_([a-zA-Z0-9]{6,})(?:_\d+)?\.[^.]+$`)
+	// postIDPatternPlain matches POSTID from plain filenames.
 	postIDPatternPlain = regexp.MustCompile(`^([a-zA-Z0-9]{6,})\.[^.]+$`)
 )
 
+// ExtractPostID extracts the Reddit post ID from a filename.
 func ExtractPostID(filename string) (string, error) {
 	matches := postIDPatternPlain.FindStringSubmatch(filename)
 	if len(matches) >= 2 {

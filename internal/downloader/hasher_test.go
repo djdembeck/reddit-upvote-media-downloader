@@ -28,7 +28,9 @@ func TestCalculateFileHash(t *testing.T) {
 				dir := t.TempDir()
 				tmpFile, err := os.Create(filepath.Join(dir, "empty.txt"))
 				require.NoError(t, err)
-				defer tmpFile.Close()
+				defer func() {
+					_ = tmpFile.Close()
+				}()
 				return tmpFile.Name()
 			},
 			expectError: false,
@@ -42,7 +44,7 @@ func TestCalculateFileHash(t *testing.T) {
 				dir := t.TempDir()
 				tmpFile, err := os.Create(filepath.Join(dir, "known.txt"))
 				require.NoError(t, err)
-				defer tmpFile.Close()
+				defer func() { _ = tmpFile.Close() }()
 				_, err = tmpFile.Write([]byte("hello world"))
 				require.NoError(t, err)
 				return tmpFile.Name()
@@ -55,7 +57,7 @@ func TestCalculateFileHash(t *testing.T) {
 				require.NoError(t, err)
 				hash, err := CalculateFileHash(filePath)
 				require.NoError(t, err)
-				assert.Equal(t, hash, expectedHash, "hash should be deterministic")
+				assert.Equal(t, expectedHash, hash, "hash should be deterministic")
 			},
 			description: "calculates hash for known content",
 		},
@@ -65,7 +67,7 @@ func TestCalculateFileHash(t *testing.T) {
 				dir := t.TempDir()
 				file1, err := os.Create(filepath.Join(dir, "contentA.txt"))
 				require.NoError(t, err)
-				defer file1.Close()
+				defer func() { _ = file1.Close() }()
 				_, err = file1.Write([]byte("content A"))
 				require.NoError(t, err)
 				return file1.Name()
@@ -77,7 +79,7 @@ func TestCalculateFileHash(t *testing.T) {
 				dir := t.TempDir()
 				file2, err := os.Create(filepath.Join(dir, "contentB.txt"))
 				require.NoError(t, err)
-				defer file2.Close()
+				defer func() { _ = file2.Close() }()
 				_, err = file2.Write([]byte("content B"))
 				require.NoError(t, err)
 
@@ -98,7 +100,7 @@ func TestCalculateFileHash(t *testing.T) {
 				content := []byte("identical content for both files")
 				file1, err := os.Create(filepath.Join(dir, "file1.txt"))
 				require.NoError(t, err)
-				defer file1.Close()
+				defer func() { _ = file1.Close() }()
 				_, err = file1.Write(content)
 				require.NoError(t, err)
 				return file1.Name()
@@ -111,7 +113,7 @@ func TestCalculateFileHash(t *testing.T) {
 				content := []byte("identical content for both files")
 				file2, err := os.Create(filepath.Join(dir, "file2.txt"))
 				require.NoError(t, err)
-				defer file2.Close()
+				defer func() { _ = file2.Close() }()
 				_, err = file2.Write(content)
 				require.NoError(t, err)
 
@@ -140,7 +142,7 @@ func TestCalculateFileHash(t *testing.T) {
 				dir := t.TempDir()
 				tmpFile, err := os.Create(filepath.Join(dir, "large.bin"))
 				require.NoError(t, err)
-				defer tmpFile.Close()
+				defer func() { _ = tmpFile.Close() }()
 				largeContent := make([]byte, 1024*1024)
 				for i := range largeContent {
 					largeContent[i] = byte(i % 256)
@@ -246,7 +248,7 @@ func TestCalculateHashFromReader(t *testing.T) {
 		assert.Len(t, hash, 64)
 		expectedHash, err := CalculateFileHashFromBytes(content)
 		require.NoError(t, err)
-		assert.Equal(t, hash, expectedHash)
+		assert.Equal(t, expectedHash, hash)
 	})
 }
 
@@ -255,7 +257,7 @@ func TestHashConsistency_FileAndReader(t *testing.T) {
 	content := []byte("consistency test content")
 	tmpFile, err := os.Create(filepath.Join(dir, "consistency.txt"))
 	require.NoError(t, err)
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 	_, err = tmpFile.Write(content)
 	require.NoError(t, err)
 
@@ -272,7 +274,7 @@ func TestHashHexFormat(t *testing.T) {
 	dir := t.TempDir()
 	tmpFile, err := os.Create(filepath.Join(dir, "hexformat.txt"))
 	require.NoError(t, err)
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 	_, err = tmpFile.Write([]byte("test"))
 	require.NoError(t, err)
 
@@ -293,7 +295,7 @@ func TestCalculateFileHash_KnownReference(t *testing.T) {
 	dir := t.TempDir()
 	tmpFile, err := os.Create(filepath.Join(dir, "knownref.txt"))
 	require.NoError(t, err)
-	defer tmpFile.Close()
+	defer func() { _ = tmpFile.Close() }()
 	content := []byte("hello world")
 	_, err = tmpFile.Write(content)
 	require.NoError(t, err)
@@ -319,14 +321,14 @@ type errorReader struct {
 	err error
 }
 
-func (r *errorReader) Read(p []byte) (n int, err error) {
+func (r *errorReader) Read(_ []byte) (int, error) {
 	return 0, r.err
 }
 
 // eofReader is a reader that returns EOF immediately
 type eofReader struct{}
 
-func (r *eofReader) Read(p []byte) (n int, err error) {
+func (r *eofReader) Read(_ []byte) (int, error) {
 	return 0, io.EOF
 }
 
@@ -336,7 +338,7 @@ type partialReader struct {
 	offset int
 }
 
-func (r *partialReader) Read(p []byte) (n int, err error) {
+func (r *partialReader) Read(p []byte) (int, error) {
 	if r.offset >= len(r.data) {
 		return 0, io.EOF
 	}

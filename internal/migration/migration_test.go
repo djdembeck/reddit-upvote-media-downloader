@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
-func assertHasDuplicateSkip(t *testing.T, operations []MigrationRecord) {
+func assertHasDuplicateSkip(t *testing.T, operations []Record) {
 	t.Helper()
 	for _, op := range operations {
 		if op.Status == "skipped" &&
@@ -87,6 +88,38 @@ func TestSanitizePath(t *testing.T) {
 	}
 }
 
+func TestSanitizePathWindowsReservedNames(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"CON", "_CON"},
+		{"PRN", "_PRN"},
+		{"AUX", "_AUX"},
+		{"NUL", "_NUL"},
+		{"COM1", "_COM1"},
+		{"COM2", "_COM2"},
+		{"COM9", "_COM9"},
+		{"LPT1", "_LPT1"},
+		{"LPT9", "_LPT9"},
+		{"CON.txt", "CON_txt"},
+		{"PRN.jpg", "PRN_jpg"},
+		{"AUX.mp4", "AUX_mp4"},
+		{"path/CON/file", "path_CON_file"},
+		{"lowercase_con", "lowercase_con"},
+		{"CONVENTION", "CONVENTION"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := SanitizePath(tt.input)
+			if got != tt.expected {
+				t.Errorf("SanitizePath(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestHTMLParser(t *testing.T) {
 	tmpDir := t.TempDir()
 	indexPath := filepath.Join(tmpDir, "index.html")
@@ -109,7 +142,7 @@ func TestHTMLParser(t *testing.T) {
 	}
 
 	parser := NewHTMLParser()
-	if err := parser.ParseIndexHTML(context.Background(), indexPath); err != nil {
+	if err := parser.ParseIndexHTML(context.Background(), tmpDir, indexPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -298,11 +331,11 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write dest file: %v", err)
 	}
 
-	log := MigrationLog{
+	log := Log{
 		Version:   "1.0",
 		SourceDir: originalDir,
 		DestDir:   destDir,
-		Operations: []MigrationRecord{
+		Operations: []Record{
 			{
 				PostID:     "abc123",
 				SourcePath: originalFile,
@@ -320,8 +353,8 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil)
-	rollbackLog, err := rb.Execute()
+	rb := NewRollback(logPath, nil, originalDir, destDir)
+	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,25 +376,30 @@ func TestRollbackMissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "migration_log.json")
 
-	log := MigrationLog{
-		Version: "1.0",
-		Operations: []MigrationRecord{
+	log := Log{
+		Version:   "1.0",
+		SourceDir: filepath.Join(tmpDir, "source"),
+		DestDir:   filepath.Join(tmpDir, "dest"),
+		Operations: []Record{
 			{
 				PostID:     "abc123",
-				SourcePath: "/nonexistent/source.jpg",
-				DestPath:   "/nonexistent/dest.jpg",
+				SourcePath: filepath.Join(tmpDir, "source", "Test_abc123.jpg"),
+				DestPath:   filepath.Join(tmpDir, "dest", "Test_abc123.jpg"),
 				Status:     "moved",
 			},
 		},
 	}
 
-	logData, _ := json.Marshal(log)
+	logData, err := json.Marshal(log)
+	if err != nil {
+		t.Fatalf("Failed to marshal log: %v", err)
+	}
 	if err := os.WriteFile(logPath, logData, 0644); err != nil {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil)
-	rollbackLog, err := rb.Execute()
+	rb := NewRollback(logPath, nil, log.SourceDir, log.DestDir)
+	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,15 +409,124 @@ func TestRollbackMissingFile(t *testing.T) {
 	}
 }
 
-func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, file1, file2 string, postMap map[string]PostInfo) {
+func TestRollbackPathValidation(t *testing.T) {
 	tmpDir := t.TempDir()
-	sourceDir = filepath.Join(tmpDir, "source")
-	destDir = filepath.Join(tmpDir, "dest")
+	trustedSource := filepath.Join(tmpDir, "trusted_source")
+	trustedDest := filepath.Join(tmpDir, "trusted_dest")
+
+	if err := os.MkdirAll(trustedSource, 0755); err != nil {
+		t.Fatalf("Failed to create source directory: %v", err)
+	}
+	if err := os.MkdirAll(trustedDest, 0755); err != nil {
+		t.Fatalf("Failed to create dest directory: %v", err)
+	}
+
+	untrustedPath := filepath.Join(tmpDir, "untrusted", "file.jpg")
+	validSourcePath := filepath.Join(trustedSource, "Test_abc123.jpg")
+	validDestPath := filepath.Join(trustedDest, "pics", "Test_abc123.jpg")
+
+	destPicsDir := filepath.Join(trustedDest, "pics")
+	if err := os.MkdirAll(destPicsDir, 0755); err != nil {
+		t.Fatalf("Failed to create dest pics directory: %v", err)
+	}
+
+	tests := []struct {
+		name            string
+		destPath        string
+		setupFile       string
+		wantErrorCount  int
+		wantSuccess     int
+		wantErrContains string
+	}{
+		{
+			name:            "path_escapes_root",
+			destPath:        untrustedPath,
+			wantErrorCount:  1,
+			wantSuccess:     0,
+			wantErrContains: "escapes root",
+		},
+		{
+			name:            "valid_path_in_root",
+			destPath:        validDestPath,
+			setupFile:       validDestPath,
+			wantErrorCount:  0,
+			wantSuccess:     1,
+			wantErrContains: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logPath := filepath.Join(tmpDir, "migration_log_"+tt.name+".json")
+
+			if tt.setupFile != "" {
+				if err := os.WriteFile(tt.setupFile, []byte("test content"), 0644); err != nil {
+					t.Fatalf("Failed to write test file: %v", err)
+				}
+				defer func() { _ = os.Remove(tt.setupFile) }()
+			}
+
+			log := Log{
+				Version:   "1.0",
+				SourceDir: trustedSource,
+				DestDir:   trustedDest,
+				Operations: []Record{
+					{
+						PostID:     "abc123",
+						SourcePath: validSourcePath,
+						DestPath:   tt.destPath,
+						Status:     "moved",
+					},
+				},
+			}
+
+			logData, err := json.Marshal(log)
+			if err != nil {
+				t.Fatalf("Failed to marshal log: %v", err)
+			}
+			if err := os.WriteFile(logPath, logData, 0644); err != nil {
+				t.Fatalf("Failed to write log file: %v", err)
+			}
+			defer func() { _ = os.Remove(logPath) }()
+
+			rb := NewRollback(logPath, nil, trustedSource, trustedDest)
+			rollbackLog, err := rb.Execute(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if rollbackLog.ErrorCount != tt.wantErrorCount {
+				t.Errorf("ErrorCount = %d, want %d", rollbackLog.ErrorCount, tt.wantErrorCount)
+			}
+
+			if rollbackLog.SuccessCount != tt.wantSuccess {
+				t.Errorf("SuccessCount = %d, want %d", rollbackLog.SuccessCount, tt.wantSuccess)
+			}
+
+			if len(rollbackLog.Operations) != 1 {
+				t.Fatalf("Expected 1 operation, got %d", len(rollbackLog.Operations))
+			}
+
+			if tt.wantErrContains != "" && !contains(rollbackLog.Operations[0].Error, tt.wantErrContains) {
+				t.Errorf("Expected error containing %q, got: %s", tt.wantErrContains, rollbackLog.Operations[0].Error)
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
+}
+
+func setupDuplicateScenario(t *testing.T, content []byte) (string, string, string, string, map[string]PostInfo) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	destDir := filepath.Join(tmpDir, "dest")
 
 	require.NoError(t, os.MkdirAll(sourceDir, 0755), "Failed to create source directory")
 
-	file1 = filepath.Join(sourceDir, "Post1_abc123.jpg")
-	file2 = filepath.Join(sourceDir, "Post2_def456.jpg")
+	file1 := filepath.Join(sourceDir, "Post1_abc123.jpg")
+	file2 := filepath.Join(sourceDir, "Post2_def456.jpg")
 
 	require.NoError(t, os.WriteFile(file1, content, 0644), "Failed to write file1")
 	require.NoError(t, os.WriteFile(file2, content, 0644), "Failed to write file2")
@@ -388,12 +535,12 @@ func setupDuplicateScenario(t *testing.T, content []byte) (sourceDir, destDir, f
 	require.NoError(t, os.Chtimes(file1, baseTime, baseTime), "Failed to set file1 time")
 	require.NoError(t, os.Chtimes(file2, baseTime.Add(time.Second), baseTime.Add(time.Second)), "Failed to set file2 time")
 
-	postMap = map[string]PostInfo{
+	postMap := map[string]PostInfo{
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user1", IsUserPost: false},
 		"def456": {PostID: "def456", Subreddit: "pics", Username: "user2", IsUserPost: false},
 	}
 
-	return
+	return sourceDir, destDir, file1, file2, postMap
 }
 
 func TestDuplicateHandling(t *testing.T) {
@@ -426,7 +573,6 @@ func TestDuplicateHandling(t *testing.T) {
 				require.NoError(t, os.Rename(file1, newFile1), "Failed to rename file1")
 				require.NoError(t, os.Rename(file2, newFile2), "Failed to rename file2")
 
-				file1 = newFile1
 				file2 = newFile2
 			}
 
@@ -493,10 +639,10 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 
 	destFile1 := filepath.Join(destDir, "pics", "Post1_abc123.jpg")
 	_, err := os.Stat(destFile1)
-	assert.NoError(t, err, "First file should be moved")
+	require.NoError(t, err, "First file should be moved")
 
 	_, err = os.Stat(file2)
-	assert.NoError(t, err, "Duplicate source file should remain")
+	require.NoError(t, err, "Duplicate source file should remain")
 
 	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil)
 	require.NoError(t, migrator2.LoadExistingLog(context.Background(), logPath), "Failed to load existing log")
@@ -546,7 +692,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 			"mmmmmm": "Newest",
 		}[postID], postID))
 		_, err := os.Stat(destFile)
-		assert.NoError(t, err, "Dest file should exist for %s", postID)
+		require.NoError(t, err, "Dest file should exist for %s", postID)
 	}
 
 	var opPostIDs []string
@@ -826,7 +972,7 @@ func TestMigratorUnknownFiles(t *testing.T) {
 	if op.Status != "moved" {
 		t.Errorf("Status = %s, want moved", op.Status)
 	}
-	if op.Subreddit != "unknown" {
+	if op.Subreddit != UnknownSubreddit {
 		t.Errorf("Subreddit = %s, want unknown", op.Subreddit)
 	}
 }
@@ -986,7 +1132,8 @@ func TestMigrationSuite(t *testing.T) {
 			wantPostRollbackDBCheck: func(t *testing.T, db *storage.DB) {
 				ctx := context.Background()
 				post, err := db.GetPost(ctx, "abc123")
-				require.NoError(t, err)
+				require.Error(t, err)
+				require.ErrorIs(t, err, storage.ErrPostNotFound, "Expected ErrPostNotFound, got: %v", err)
 				assert.Nil(t, post)
 			},
 		},
@@ -1016,9 +1163,9 @@ func TestMigrationSuite(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte(content), 0644), "Failed to write %s", filename)
 			}
 
-			db, err := storage.NewDB(dbPath)
+			db, err := storage.NewDB(context.Background(), dbPath)
 			require.NoError(t, err, "Failed to create database")
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			if tt.prePopulateDB != nil {
 				tt.prePopulateDB(t, db, sourceDir)
@@ -1033,7 +1180,7 @@ func TestMigrationSuite(t *testing.T) {
 			for _, relPath := range tt.wantDestFiles {
 				destFile := filepath.Join(destDir, relPath)
 				_, err := os.Stat(destFile)
-				assert.NoError(t, err, "Dest file should exist: %s", relPath)
+				require.NoError(t, err, "Dest file should exist: %s", relPath)
 			}
 
 			for _, filename := range tt.wantSourceRemoved {
@@ -1045,7 +1192,7 @@ func TestMigrationSuite(t *testing.T) {
 			for _, filename := range tt.wantSourceRemain {
 				srcFile := filepath.Join(sourceDir, filename)
 				_, err := os.Stat(srcFile)
-				assert.NoError(t, err, "Source file should remain: %s", filename)
+				require.NoError(t, err, "Source file should remain: %s", filename)
 			}
 
 			ctx := context.Background()
@@ -1066,8 +1213,8 @@ func TestMigrationSuite(t *testing.T) {
 			if tt.runRollback {
 				require.NoError(t, migrator.SaveLog(context.Background(), logPath), "Failed to save log")
 
-				rb := NewRollback(logPath, db)
-				rollbackLog, err := rb.Execute()
+				rb := NewRollback(logPath, db, sourceDir, destDir)
+				rollbackLog, err := rb.Execute(context.Background())
 				require.NoError(t, err, "Rollback failed")
 
 				assert.Equal(t, tt.wantRollbackSuccess, rollbackLog.SuccessCount, "Rollback success count mismatch")
@@ -1076,7 +1223,7 @@ func TestMigrationSuite(t *testing.T) {
 				for _, filename := range tt.wantSourceRemoved {
 					srcFile := filepath.Join(sourceDir, filename)
 					_, err := os.Stat(srcFile)
-					assert.NoError(t, err, "Source file should be restored: %s", filename)
+					require.NoError(t, err, "Source file should be restored: %s", filename)
 				}
 
 				for _, relPath := range tt.wantDestFiles {

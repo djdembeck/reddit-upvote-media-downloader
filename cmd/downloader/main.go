@@ -3,21 +3,26 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/downloader"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
-	"golang.org/x/oauth2"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
 )
 
 // parseSlogLevel converts a log level string to slog.Level.
@@ -36,7 +41,7 @@ func parseSlogLevel(levelStr string) slog.Level {
 	}
 }
 
-// memoryTokenStore implements reddit.TokenStore with in-memory storage
+// memoryTokenStore implements reddit.TokenStore with in-memory storage.
 type memoryTokenStore struct {
 	token *oauth2.Token
 }
@@ -50,7 +55,7 @@ func (m *memoryTokenStore) LoadToken() (*oauth2.Token, error) {
 	return m.token, nil
 }
 
-// buildTokenFromEnv builds an oauth2.Token from environment variables
+// buildTokenFromEnv builds an oauth2.Token from environment variables.
 func buildTokenFromEnv() *oauth2.Token {
 	accessToken := os.Getenv("REDDIT_ACCESS_TOKEN")
 	refreshToken := os.Getenv("REDDIT_REFRESH_TOKEN")
@@ -80,7 +85,7 @@ func buildTokenFromEnv() *oauth2.Token {
 	return nil
 }
 
-// maskToken masks a token showing only the last 4 characters
+// maskToken masks a token showing only the last 4 characters.
 func maskToken(token string) string {
 	if len(token) > 4 {
 		return "****" + token[len(token)-4:]
@@ -88,73 +93,25 @@ func maskToken(token string) string {
 	return "****"
 }
 
-func main() {
-	// Load configuration from environment variables
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
-	}
+// setupTokenStore creates and initializes the token store with tokens from environment.
+func setupTokenStore(_ *config.Config) (*memoryTokenStore, error) {
+	tokenStore := &memoryTokenStore{}
 
-	// Handle --auth flag: run OAuth2 code flow to get refresh token
-	if cfg.Auth {
-		if err := handleAuth(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
+	// Check for existing OAuth tokens from environment variables
+	token := buildTokenFromEnv()
 
-	// Setup logging
-	fmt.Printf("Log level: %s\n", cfg.Log.Level)
-
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		fmt.Println("\nShutting down gracefully...")
-		cancel()
-	}()
-
-	// Create output directories
-	if err := os.MkdirAll(cfg.Storage.OutputDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
-		os.Exit(1)
-	}
-	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Open database
-	db, err := storage.NewDB(cfg.Storage.DBPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-	// Auto-migrate on first run
-	if cfg.Migrate.OnStart {
-		if err := runAutoMigration(ctx, db, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Migration failed: %v\n", err)
-			os.Exit(1)
+	// Save token if one was built
+	if token != nil {
+		if err := tokenStore.SaveToken(token); err != nil {
+			return nil, fmt.Errorf("saving token from env: %w", err)
 		}
 	}
 
-	// Run re-check mode if enabled
-	if cfg.SmartPolling.ReCheck {
-		if err := runReCheckMode(ctx, db); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Re-check failed: %v\n", err)
-		}
-	}
+	return tokenStore, nil
+}
 
-	// Create Reddit client
+// setupRedditClient creates and initializes the Reddit client.
+func setupRedditClient(cfg *config.Config, tokenStore *memoryTokenStore) (reddit.Client, error) {
 	redditConfig := &reddit.Config{
 		ClientID:     cfg.Reddit.ClientID,
 		ClientSecret: cfg.Reddit.ClientSecret,
@@ -164,31 +121,21 @@ func main() {
 		RefreshToken: cfg.Reddit.RefreshToken,
 	}
 
-	tokenStore := &memoryTokenStore{}
-
-	// Check for existing OAuth tokens from environment variables
-	token := buildTokenFromEnv()
-
-	// Save token if one was built
-	if token != nil {
-		if err := tokenStore.SaveToken(token); err != nil {
-			fmt.Fprintf(os.Stderr, "Error saving token from env: %v\n", err)
-		}
-	}
-
 	redditClient, err := reddit.NewClient(redditConfig, tokenStore)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating Reddit client: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("creating Reddit client: %w", err)
 	}
-	defer redditClient.Close()
 
-	// Parse log level from configuration
+	return redditClient, nil
+}
+
+// setupLogger creates and configures the structured logger.
+func setupLogger(cfg *config.Config) *slog.Logger {
 	parsedLevel := parseSlogLevel(cfg.Log.Level)
 
 	slogLogger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: parsedLevel,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				a.Key = "timestamp"
 			}
@@ -204,22 +151,228 @@ func main() {
 			return a
 		},
 	}))
-	slog.SetDefault(slogLogger)
 
-	// Create downloader with structured slog logger
+	return slogLogger
+}
+
+// setupDownloader creates and configures the downloader.
+func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger) *downloader.Downloader {
 	downloaderConfig := downloader.Config{
 		OutputDir:   cfg.Storage.OutputDir,
 		Concurrency: cfg.Download.Concurrency,
-		Logger:      slogLogger,
+		Logger:      logger,
 	}
-	dl := downloader.NewDownloader(downloaderConfig, db)
+	return downloader.NewDownloader(downloaderConfig, db)
+}
+
+// findAndParseIndexHTML searches for and parses index.html in common locations.
+func findAndParseIndexHTML(ctx context.Context, parser *migration.HTMLParser, sourceDir string) error {
+	indexPaths := []struct {
+		path    string
+		baseDir string
+	}{
+		{filepath.Join(filepath.Dir(sourceDir), "index.html"), filepath.Dir(sourceDir)},
+		{filepath.Join(sourceDir, "index.html"), sourceDir},
+	}
+
+	for _, idx := range indexPaths {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context canceled: %w", err)
+		}
+		if _, err := os.Stat(idx.path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("checking index.html at %s: %w", idx.path, err)
+		}
+		fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", idx.path)
+		if err := parser.ParseIndexHTML(ctx, idx.baseDir, idx.path); err != nil {
+			return fmt.Errorf("parsing index.html at %s: %w", idx.path, err)
+		}
+
+		break
+	}
+
+	return nil
+}
+
+// checkFullSyncStatus determines if full sync is needed and returns the fetch limit.
+//
+//nolint:unparam
+func checkFullSyncStatus(ctx context.Context, db *storage.DB, cfg *config.Config) (bool, int, error) {
+	fetchLimit := cfg.Download.FetchLimit
+
+	// Check if full sync is pending (first run after migration)
+	fullSyncOnce, err := db.GetMetadata(ctx, "full_sync_once")
+	if err != nil {
+		// Continue with empty metadata - full sync can be skipped if metadata unavailable
+		fullSyncOnce = ""
+	}
+
+	isFullSync := fullSyncOnce == storage.MetadataValuePending && cfg.Migrate.FullSyncOnce
+
+	if isFullSync {
+		// Use higher limit for full sync (fetch all posts)
+		fetchLimit = 1000
+		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
+	}
+
+	return isFullSync, fetchLimit, nil
+}
+
+// filterNewPosts filters posts to include only new posts and posts eligible for retry.
+//
+//nolint:unparam
+func filterNewPosts(ctx context.Context, db *storage.DB, posts []storage.Post, cfg *config.Config) ([]storage.Post, error) {
+	var newPosts []storage.Post
+
+	for _, post := range posts {
+		status, err := db.CheckPostStatus(
+			ctx,
+			post.ID,
+			cfg.SmartPolling.RetryThreshold,
+			cfg.Backoff.Base,
+			cfg.Backoff.Max,
+		)
+		if err != nil {
+			// Propagate error so full sync cannot complete when lookups fail
+			return nil, fmt.Errorf("checking post status for %s: %w", post.ID, err)
+		}
+		if !status.Exists || status.RetryEligible {
+			newPosts = append(newPosts, post)
+		}
+	}
+
+	return newPosts, nil
+}
+
+// saveDownloadedPosts saves downloaded posts to the database.
+func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Post, hashes map[string]string, slogLogger *slog.Logger) error {
+	var firstSaveErr error
+	for _, post := range posts {
+		hash := findHashForPost(hashes, post.ID)
+		if hash != "" {
+			post.DownloadedAt = time.Now()
+			if strings.HasPrefix(hash, "DUPLICATE:") {
+				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
+			} else {
+				post.Hash = hash
+			}
+			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
+				if firstSaveErr == nil {
+					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
+				}
+			}
+		}
+	}
+
+	return firstSaveErr
+}
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+//nolint:cyclop,gocyclo
+func run() error {
+	// Load configuration from environment variables
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	// Handle --auth flag: run OAuth2 code flow to get refresh token
+	if cfg.Auth {
+		if err := handleAuth(cfg); err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+		return nil
+	}
+
+	// Setup logging
+	fmt.Printf("Log level: %s\n", cfg.Log.Level)
+
+	// Create context with cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Println("\nShutting down gracefully...")
+		cancel()
+	}()
+
+	// Create output directories
+	if err := os.MkdirAll(cfg.Storage.OutputDir, 0750); err != nil {
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750); err != nil {
+		return fmt.Errorf("creating data directory: %w", err)
+	}
+
+	// Open database
+	db, err := storage.NewDB(ctx, cfg.Storage.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing database: %v\n", err)
+		}
+	}()
+
+	// Auto-migrate on first run
+	if cfg.Migrate.OnStart {
+		if err := runAutoMigration(ctx, db, cfg); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
+
+	// Run re-check mode if enabled
+	if cfg.SmartPolling.ReCheck {
+		if err := runReCheckMode(ctx, db); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Re-check failed: %v\n", err)
+		}
+	}
+
+	// Setup token store
+	tokenStore, err := setupTokenStore(cfg)
+	if err != nil {
+		return fmt.Errorf("setting up token store: %w", err)
+	}
+
+	// Setup Reddit client
+	redditClient, err := setupRedditClient(cfg, tokenStore)
+	if err != nil {
+		return fmt.Errorf("creating Reddit client: %w", err)
+	}
+	defer func() {
+		if err := redditClient.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error closing Reddit client: %v\n", err)
+		}
+	}()
+
+	// Setup logger
+	slogLogger := setupLogger(cfg)
+	slog.SetDefault(slogLogger)
+
+	// Setup downloader
+	dl := setupDownloader(cfg, db, slogLogger)
 
 	// Main loop
 	for {
 		select {
 		case <-ctx.Done():
 			slogLogger.Info("Shutdown complete")
-			return
+			return nil
 		default:
 			if err := runCycle(ctx, db, redditClient, dl, cfg, slogLogger); err != nil {
 				slogLogger.Error("Cycle error", "error", err)
@@ -228,13 +381,14 @@ func main() {
 			// Sleep for 1 hour
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(1 * time.Hour):
 			}
 		}
 	}
 }
 
+//nolint:cyclop
 func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) error {
 	outputDir := cfg.Storage.OutputDir
 
@@ -256,12 +410,16 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 		if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 			return fmt.Errorf("setting migration_complete metadata: %w", err)
 		}
+
 		return nil
 	}
 
 	if cfg.Migrate.ReorganizeEnabled {
 		if cfg.Migrate.SourceDir == "" {
-			return fmt.Errorf("migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; set MIGRATE_SOURCE_DIR environment variable")
+			return fmt.Errorf(
+				"migration cannot proceed: ReorganizeEnabled is true but SourceDir is empty; " +
+					"set MIGRATE_SOURCE_DIR environment variable",
+			)
 		}
 		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
 			return fmt.Errorf("file reorganization failed: %w", err)
@@ -271,6 +429,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	idListPath := filepath.Join(filepath.Dir(outputDir), "idList.txt")
 	if _, err := os.Stat(idListPath); err == nil {
 		fmt.Printf("Migrating existing data from %s...\n", idListPath)
+
 		count, err := db.ImportFromIDList(ctx, idListPath)
 		if err != nil {
 			return fmt.Errorf("importing idList: %w", err)
@@ -293,6 +452,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 	return nil
 }
 
+//nolint:cyclop,gocyclo
 func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB) error {
 	fmt.Println("===================")
 	fmt.Println("File Reorganization")
@@ -303,7 +463,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	fmt.Println()
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context canceled: %w", err)
 	}
 
 	info, err := os.Stat(sourceDir)
@@ -331,25 +491,8 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		}
 
 		if len(parser.PostMap) == 0 {
-			indexPaths := []string{
-				filepath.Join(filepath.Dir(sourceDir), "index.html"),
-				filepath.Join(sourceDir, "index.html"),
-			}
-			for _, indexPath := range indexPaths {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if _, err := os.Stat(indexPath); err != nil {
-					if os.IsNotExist(err) {
-						continue
-					}
-					return fmt.Errorf("checking index.html at %s: %w", indexPath, err)
-				}
-				fmt.Printf("No individual HTML files found. Parsing index.html at %s...\n", indexPath)
-				if err := parser.ParseIndexHTML(ctx, indexPath); err != nil {
-					return fmt.Errorf("parsing index.html at %s: %w", indexPath, err)
-				}
-				break
+			if err := findAndParseIndexHTML(ctx, parser, sourceDir); err != nil {
+				return err
 			}
 		}
 	}
@@ -360,14 +503,15 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	fmt.Printf("Total: %d posts in HTML metadata\n\n", len(parser.PostMap))
 
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context canceled: %w", err)
 	}
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
 
 	logPath := filepath.Join(destDir, ".migration_log.json")
+
 	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db)
 	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
 		return fmt.Errorf("loading existing log: %w", err)
@@ -401,7 +545,9 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	if err != nil {
 		return fmt.Errorf("getting all posts: %w", err)
 	}
+
 	var verifiedCount, missingCount int
+
 	for _, post := range posts {
 		if post.FilePath == "" {
 			continue
@@ -413,12 +559,15 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 				fmt.Fprintf(os.Stderr, "Error resetting retry for %s: %v\n", post.ID, err)
 				continue
 			}
+
 			missingCount++
 		} else {
 			fmt.Printf("File verified: %s\n", post.FilePath)
+
 			verifiedCount++
 		}
 	}
+
 	fmt.Printf("Re-check complete: %d files verified, %d missing\n", verifiedCount, missingCount)
 	return nil
 }
@@ -428,21 +577,16 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 // Parameters:
 //   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
 //     Must be non-nil. Use this for structured logging with contextual attributes.
-func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
+//
+//nolint:cyclop
+func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
-	// Check if full sync is pending (first run after migration)
-	fullSyncOnce, _ := db.GetMetadata(ctx, "full_sync_once")
-	isFullSync := fullSyncOnce == "pending" && cfg.Migrate.FullSyncOnce
-
-	fetchLimit := cfg.Download.FetchLimit
-	if isFullSync {
-		// Use higher limit for full sync (fetch all posts)
-		fetchLimit = 1000
-		fmt.Println("Full sync mode: fetching all posts (first run after migration)")
+	isFullSync, fetchLimit, err := checkFullSyncStatus(ctx, db, cfg)
+	if err != nil {
+		slogLogger.Debug("failed to check full sync status", "error", err)
 	}
 
-	// Fetch upvoted and saved posts
 	upvoted, err := client.GetUpvoted(ctx, fetchLimit)
 	if err != nil {
 		return fmt.Errorf("fetching upvoted: %w", err)
@@ -455,20 +599,13 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 
 	fmt.Printf("Fetched %d upvoted and %d saved posts\n", len(upvoted), len(saved))
 
-	// Combine all posts
-	allPosts := append(upvoted, saved...)
+	allPosts := make([]storage.Post, 0, len(upvoted)+len(saved))
+	allPosts = append(allPosts, upvoted...)
+	allPosts = append(allPosts, saved...)
 
-	// Filter posts: include new posts and posts eligible for retry
-	var newPosts []storage.Post
-	for _, post := range allPosts {
-		status, err := db.CheckPostStatus(ctx, post.ID, cfg.SmartPolling.RetryThreshold, cfg.Backoff.Base, cfg.Backoff.Max)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking post status: %v\n", err)
-			continue
-		}
-		if !status.Exists || status.RetryEligible {
-			newPosts = append(newPosts, post)
-		}
+	newPosts, err := filterNewPosts(ctx, db, allPosts, cfg)
+	if err != nil {
+		return fmt.Errorf("filtering posts: %w", err)
 	}
 
 	fmt.Printf("Found %d new posts to download\n", len(newPosts))
@@ -482,13 +619,14 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 				fmt.Println("Full sync completed, switching to incremental mode")
 			}
 		}
+
 		return nil
 	}
 
-	// Convert storage.Post to reddit.RedditPost for extraction
-	redditPosts := make([]reddit.RedditPost, len(newPosts))
+	redditPosts := make([]reddit.Post, len(newPosts))
+
 	for i, post := range newPosts {
-		redditPosts[i] = reddit.RedditPost{
+		redditPosts[i] = reddit.Post{
 			ID:        post.ID,
 			Title:     post.Title,
 			URL:       post.URL,
@@ -497,7 +635,6 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 		}
 	}
 
-	// Extract downloadable items
 	items, err := dl.Extract(ctx, redditPosts)
 	if err != nil {
 		return fmt.Errorf("extracting media: %w", err)
@@ -505,29 +642,9 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	// Download items and get hashes (may return partial hashes + error)
 	hashes, err := dl.Download(ctx, items)
 
-	// Save posts with whatever hashes we have (preserves partial results on error)
-	// Collect any save errors to prevent finalizing full_sync_once on persistence failures
-	var firstSaveErr error
-	for _, post := range newPosts {
-		if hash, ok := hashes[post.ID]; ok {
-			post.DownloadedAt = time.Now()
-			// Strip DUPLICATE: prefix if present before saving to database
-			if strings.HasPrefix(hash, "DUPLICATE:") {
-				post.Hash = strings.TrimPrefix(hash, "DUPLICATE:")
-			} else {
-				post.Hash = hash
-			}
-			if saveErr := db.SavePost(ctx, &post); saveErr != nil {
-				slogLogger.Error("Error saving post", "error", saveErr, "post_id", post.ID)
-				if firstSaveErr == nil {
-					firstSaveErr = fmt.Errorf("failed to save post %s: %w", post.ID, saveErr)
-				}
-			}
-		}
-	}
+	firstSaveErr := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger)
 
 	if err != nil {
 		slogLogger.Warn("Warning: download completed with errors", "error", err)
@@ -546,6 +663,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.RedditClient, d
 	}
 
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
+
 	return nil
 }
 
@@ -600,6 +718,60 @@ func handleAuth(cfg *config.Config) error {
 	if err := os.WriteFile("./refresh_token.txt", []byte(refreshToken), 0600); err != nil {
 		return fmt.Errorf("failed to write token file: %w", err)
 	}
+
 	fmt.Println("Token written to ./refresh_token.txt - please secure this file!")
+
 	return nil
+}
+
+//nolint:fieldalignment
+type itemHash struct {
+	hash  string
+	index int
+}
+
+func aggregateItemHashes(hashes []itemHash) string {
+	sort.Slice(hashes, func(i, j int) bool {
+		return hashes[i].index < hashes[j].index
+	})
+
+	var combined strings.Builder
+
+	for i, item := range hashes {
+		if i > 0 {
+			combined.WriteByte(',')
+		}
+		combined.WriteString(item.hash)
+	}
+
+	aggregateHash := sha256.Sum256([]byte(combined.String()))
+	return fmt.Sprintf("%x", aggregateHash)
+}
+
+func findHashForPost(hashes map[string]string, postID string) string {
+	if hash, ok := hashes[postID]; ok {
+		return hash
+	}
+
+	var itemHashes []itemHash
+	for key, hash := range hashes {
+		parts := strings.Split(key, "_")
+		if len(parts) == 2 && parts[0] == postID && strutil.IsNumeric(parts[1]) {
+			idx, err := strconv.Atoi(parts[1])
+			if err != nil {
+				slog.Warn("Failed to parse gallery index", "post_id", postID, "key", key, "error", err)
+				continue
+			}
+			itemHashes = append(itemHashes, itemHash{index: idx, hash: hash})
+		}
+	}
+
+	if len(itemHashes) == 0 {
+		return ""
+	}
+	if len(itemHashes) == 1 {
+		return itemHashes[0].hash
+	}
+
+	return aggregateItemHashes(itemHashes)
 }

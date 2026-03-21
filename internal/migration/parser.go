@@ -10,14 +10,79 @@ import (
 	"strings"
 )
 
+func isPathWithin(baseDir, targetPath string) bool {
+	// Resolve symlinks to prevent path traversal via symlink attacks
+	evalBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return false
+	}
+	evalTarget, err := filepath.EvalSymlinks(targetPath)
+	if err != nil {
+		return false
+	}
+
+	absBase, err := filepath.Abs(evalBase)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(evalTarget)
+	if err != nil {
+		return false
+	}
+	absBaseClean := filepath.Clean(absBase)
+	absTargetClean := filepath.Clean(absTarget)
+
+	if absTargetClean == absBaseClean {
+		return true
+	}
+
+	if !strings.HasSuffix(absBaseClean, string(filepath.Separator)) {
+		absBaseClean += string(filepath.Separator)
+	}
+	return strings.HasPrefix(absTargetClean, absBaseClean)
+}
+
+// HTMLParser parses bdfr-html files to extract post metadata.
 type HTMLParser struct {
 	PostMap map[string]PostInfo
 }
 
+// NewHTMLParser creates a new HTMLParser instance.
 func NewHTMLParser() *HTMLParser {
 	return &HTMLParser{
 		PostMap: make(map[string]PostInfo),
 	}
+}
+
+// match represents a regex match with its value and position.
+type match struct {
+	value string
+	pos   int
+}
+
+// convertMatchesToStructured converts regex match indices to structured match data.
+func convertMatchesToStructured(contentStr string, subredditMatches, userMatches [][]int) ([]match, []match) {
+	var subreddits []match
+	for _, m := range subredditMatches {
+		if len(m) >= 4 {
+			subreddits = append(subreddits, match{
+				value: contentStr[m[2]:m[3]],
+				pos:   m[0],
+			})
+		}
+	}
+
+	var users []match
+	for _, m := range userMatches {
+		if len(m) >= 4 {
+			users = append(users, match{
+				value: contentStr[m[2]:m[3]],
+				pos:   m[0],
+			})
+		}
+	}
+
+	return subreddits, users
 }
 
 // ParseIndexHTML parses the bdfr-html index.html file to extract post metadata.
@@ -31,11 +96,19 @@ func NewHTMLParser() *HTMLParser {
 //
 // The function reads the entire file and uses regex to extract all post IDs,
 // subreddits, and usernames, correlating them by position in the file.
-func (p *HTMLParser) ParseIndexHTML(ctx context.Context, indexPath string) error {
+//
+//nolint:cyclop
+func (p *HTMLParser) ParseIndexHTML(ctx context.Context, baseDir, indexPath string) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context canceled: %w", err)
 	}
 
+	// Validate that indexPath is within baseDir to prevent path traversal
+	if !isPathWithin(baseDir, indexPath) {
+		return fmt.Errorf("index path %s is not within allowed directory %s", indexPath, baseDir)
+	}
+
+	//nolint:gosec // G304: indexPath is validated with isPathWithin before this call
 	content, err := os.ReadFile(indexPath)
 	if err != nil {
 		return fmt.Errorf("open index.html: %w", err)
@@ -54,32 +127,8 @@ func (p *HTMLParser) ParseIndexHTML(ctx context.Context, indexPath string) error
 	subredditMatches := subredditPattern.FindAllStringSubmatchIndex(contentStr, -1)
 	userMatches := userPattern.FindAllStringSubmatchIndex(contentStr, -1)
 
-	type match struct {
-		value string
-		pos   int
-	}
-
-	// Convert subreddit matches to structured data
-	var subreddits []match
-	for _, m := range subredditMatches {
-		if len(m) >= 4 {
-			subreddits = append(subreddits, match{
-				value: contentStr[m[2]:m[3]],
-				pos:   m[0],
-			})
-		}
-	}
-
-	// Convert user matches to structured data
-	var users []match
-	for _, m := range userMatches {
-		if len(m) >= 4 {
-			users = append(users, match{
-				value: contentStr[m[2]:m[3]],
-				pos:   m[0],
-			})
-		}
-	}
+	// Convert matches to structured data
+	subreddits, users := convertMatchesToStructured(contentStr, subredditMatches, userMatches)
 
 	// Process each post link, finding the closest subreddit and user span
 	// Using two-pointer approach for O(n) complexity
@@ -145,7 +194,7 @@ func (p *HTMLParser) addPost(postID, subreddit, username string) {
 // Uses empty string if subreddit or username is missing (does not fail).
 func (p *HTMLParser) ParseHTMLFile(ctx context.Context, filePath string) (PostInfo, error) {
 	if err := ctx.Err(); err != nil {
-		return PostInfo{}, err
+		return PostInfo{}, fmt.Errorf("context canceled: %w", err)
 	}
 
 	filename := filepath.Base(filePath)
@@ -161,6 +210,7 @@ func (p *HTMLParser) ParseHTMLFile(ctx context.Context, filePath string) (PostIn
 	}
 
 	// Read HTML content
+	//nolint:gosec // G304: filePath comes from filepath.Walk with user-provided root
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return PostInfo{}, fmt.Errorf("read file %s: %w", filePath, err)
@@ -210,7 +260,7 @@ func (p *HTMLParser) ParseHTMLFiles(ctx context.Context, htmlDir string) error {
 
 	err := filepath.Walk(htmlDir, func(path string, info os.FileInfo, err error) error {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("context canceled: %w", err)
 		}
 
 		if err != nil {

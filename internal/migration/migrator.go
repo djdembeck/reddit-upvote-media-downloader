@@ -13,36 +13,43 @@ import (
 	"strings"
 	"time"
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/zeebo/blake3"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 func contextChecker(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 		return nil
 	}
 }
 
+// Migrator handles file reorganization from flat to subreddit-based structure.
+//
+//nolint:fieldalignment // Internal struct.
 type Migrator struct {
-	SourceDir string
-	DestDir   string
-	PostMap   map[string]PostInfo
-	DryRun    bool
-	Log       *MigrationLog
-	DB        *storage.DB
-	// Hash tracking for duplicate detection
+	Log        *Log
+	DB         *storage.DB
+	PostMap    map[string]PostInfo
 	seenHashes map[string]FileHashInfo
+	SourceDir  string
+	DestDir    string
+	DryRun     bool
 }
 
+// FileHashInfo tracks file hash information for duplicate detection.
+//
+//nolint:fieldalignment // Internal struct.
 type FileHashInfo struct {
+	Timestamp  time.Time
 	PostID     string
 	SourcePath string
-	Timestamp  time.Time
 }
 
+// NewMigrator creates a new Migrator instance.
 func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB) *Migrator {
 	m := &Migrator{
 		SourceDir: sourceDir,
@@ -50,24 +57,25 @@ func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun 
 		PostMap:   postMap,
 		DryRun:    dryRun,
 		DB:        db,
-		Log: &MigrationLog{
+		Log: &Log{
 			Version:    "1.0",
 			Timestamp:  time.Now(),
 			SourceDir:  sourceDir,
 			DestDir:    destDir,
-			Operations: []MigrationRecord{},
+			Operations: []Record{},
 		},
 		seenHashes: make(map[string]FileHashInfo),
 	}
 	return m
 }
 
-// LoadExistingLog populates seenHashes from an existing migration log for idempotent re-runs
+// LoadExistingLog populates seenHashes from an existing migration log for idempotent re-runs.
 func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 	if err := contextChecker(ctx); err != nil {
 		return err
 	}
 
+	//nolint:gosec // G304: intentional file reading from user-provided path
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,13 +84,13 @@ func (m *Migrator) LoadExistingLog(ctx context.Context, logPath string) error {
 		return fmt.Errorf("read existing log: %w", err)
 	}
 
-	var existingLog MigrationLog
+	var existingLog Log
 	if err := json.Unmarshal(data, &existingLog); err != nil {
 		return fmt.Errorf("parse existing log: %w", err)
 	}
 
 	for _, op := range existingLog.Operations {
-		if op.Hash != "" && (op.Status == "moved" || op.Status == "moved_with_warning") {
+		if op.Hash != "" && (op.Status == StatusMoved || op.Status == StatusMovedWithWarning) {
 			m.seenHashes[op.Hash] = FileHashInfo{
 				PostID:     op.PostID,
 				SourcePath: op.SourcePath,
@@ -103,6 +111,9 @@ func shouldLogProgress(i, total int) bool {
 	return (i+1)%100 == 0 || i == 0 || i == total-1
 }
 
+// Execute runs the migration process.
+//
+//nolint:cyclop
 func (m *Migrator) Execute(ctx context.Context) error {
 	if err := contextChecker(ctx); err != nil {
 		return err
@@ -114,11 +125,13 @@ func (m *Migrator) Execute(ctx context.Context) error {
 	}
 
 	// Collect file info for sorting by modification time
+	//nolint:fieldalignment // Internal local struct.
 	type fileEntry struct {
-		name    string
 		modTime time.Time
+		name    string
 	}
-	var files []fileEntry
+	files := make([]fileEntry, 0, len(entries))
+	var firstErr error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -128,7 +141,11 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		}
 		info, err := entry.Info()
 		if err != nil {
+			m.Log.TotalFiles++
 			m.recordError(entry.Name(), "", "stat_file", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("stat file %s: %w", entry.Name(), err)
+			}
 			continue
 		}
 		files = append(files, fileEntry{
@@ -150,26 +167,101 @@ func (m *Migrator) Execute(ctx context.Context) error {
 		if shouldLogProgress(i, total) {
 			slog.Info("Processing file", "current", i+1, "total", total, "filename", f.name)
 		}
-		m.processFile(ctx, f.name)
+		if err := m.processFile(ctx, f.name); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
+}
+
+// checkHashDuplicate checks if the file hash is a duplicate (either in memory or database).
+// Returns true if duplicate, false otherwise. Returns error if DB check fails.
+func (m *Migrator) checkHashDuplicate(ctx context.Context, fileHash, sourcePath, _ string) (bool, error) {
+	// Check if hash already seen (duplicate detection) - includes idempotent re-run check
+	if _, hashSeen := m.seenHashes[fileHash]; hashSeen {
+		return true, nil
+	}
+
+	// Check if hash exists in database (if DB is available and not dry-run)
+	if m.DB != nil && !m.DryRun {
+		exists, dbErr := m.DB.HashExists(ctx, fileHash)
+		if dbErr != nil {
+			return false, fmt.Errorf("check hash exists for %s: %w", sourcePath, dbErr)
+		}
+		if exists {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// saveMigratedPost saves the migrated post to the database.
+func (m *Migrator) saveMigratedPost(ctx context.Context, postID, filename string, postInfo PostInfo, fileInfo os.FileInfo, fileHash string) error {
+	// Detect media type from file extension
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	mediaType := "unknown"
+
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+		mediaType = "image"
+	case ".mp4", ".webm", ".mov", ".avi", ".mkv":
+		mediaType = "video"
+	case ".gifv":
+		mediaType = "gif"
+	}
+
+	// Use parsed metadata with fallbacks for empty values
+	subreddit := postInfo.Subreddit
+	if subreddit == "" {
+		subreddit = "migrated"
+	}
+	author := postInfo.Username
+	if author == "" {
+		author = UnknownSubreddit
+	}
+
+	destPath := m.buildDestPath(filename, postInfo)
+
+	post := &storage.Post{
+		ID:           postID,
+		Title:        "Migrated from bdfr-html",
+		Subreddit:    subreddit,
+		Author:       author,
+		URL:          "",
+		Permalink:    "",
+		CreatedAt:    fileInfo.ModTime(),
+		DownloadedAt: time.Now(),
+		MediaType:    mediaType,
+		FilePath:     destPath,
+		Source:       "migrated",
+		Hash:         fileHash,
+	}
+
+	if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
+		return fmt.Errorf("save post to db: %w", saveErr)
+	}
+
 	return nil
 }
 
-func (m *Migrator) processFile(ctx context.Context, filename string) {
+//nolint:cyclop
+func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	m.Log.TotalFiles++
 
 	// Extract POSTID
 	postID, err := ExtractPostID(filename)
 	if err != nil {
 		m.recordError(filename, "", "extract_postid", err)
-		return
+		return fmt.Errorf("extract postid from %s: %w", filename, err)
 	}
 
 	// Lookup in PostMap
 	postInfo, exists := m.PostMap[postID]
 	if !exists {
 		postInfo = PostInfo{
-			Subreddit:  "unknown",
+			Subreddit:  UnknownSubreddit,
 			Username:   "",
 			IsUserPost: false,
 		}
@@ -183,98 +275,75 @@ func (m *Migrator) processFile(ctx context.Context, filename string) {
 	fileInfo, err := os.Stat(sourcePath)
 	if err != nil {
 		m.recordError(filename, postID, "stat_file", err)
-		return
+		return fmt.Errorf("stat file %s: %w", sourcePath, err)
 	}
 
 	// Calculate hash for duplicate detection
 	fileHash, err := calculateHash(sourcePath)
 	if err != nil {
 		m.recordError(filename, postID, "calculate_hash", err)
-		return
+		return fmt.Errorf("calculate hash for %s: %w", sourcePath, err)
 	}
 
-	// Check if hash already seen (duplicate detection) - includes idempotent re-run check
-	if existingInfo, hashSeen := m.seenHashes[fileHash]; hashSeen {
-		m.recordSkipped(filename, postID, fmt.Sprintf("duplicate hash (first seen: %s)", existingInfo.SourcePath))
-		return
+	// Check if hash is a duplicate
+	isDuplicate, checkErr := m.checkHashDuplicate(ctx, fileHash, sourcePath, postID)
+	if checkErr != nil {
+		m.recordError(filename, postID, "check_hash_exists", checkErr)
+		return checkErr
 	}
-
-	// Check if hash exists in database (if DB is available and not dry-run)
-	if m.DB != nil && !m.DryRun {
-		exists, dbErr := m.DB.HashExists(ctx, fileHash)
-		if dbErr != nil {
-			m.recordError(filename, postID, "check_hash_exists", dbErr)
-			return
-		}
-		if exists {
+	if isDuplicate {
+		if _, hashSeen := m.seenHashes[fileHash]; hashSeen {
+			existingInfo := m.seenHashes[fileHash]
+			m.recordSkipped(filename, postID, fmt.Sprintf("duplicate hash (first seen: %s)", existingInfo.SourcePath))
+		} else {
 			m.recordSkipped(filename, postID, "duplicate hash (exists in database)")
-			return
 		}
+		return nil
 	}
 
 	// Check if destination exists
 	if _, err := os.Stat(destPath); err == nil {
+		// Mark the hash as seen so subsequent duplicates are detected in-memory
+		m.seenHashes[fileHash] = FileHashInfo{SourcePath: sourcePath, PostID: postID}
 		m.recordSkipped(filename, postID, "destination already exists")
-		return
+		return nil
+	} else if !os.IsNotExist(err) {
+		m.recordError(filename, postID, "stat destination", err)
+		return fmt.Errorf("stat destination %s: %w", destPath, err)
 	}
 
 	if m.DryRun {
 		m.recordDryRun(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash)
-		return
+		return nil
 	}
 
 	// Move file
 	if err := m.moveFile(sourcePath, destPath); err != nil {
 		m.recordError(filename, postID, "move_file", err)
-		return
+		return fmt.Errorf("move file %s to %s: %w", sourcePath, destPath, err)
 	}
 
 	// Save post to database (if DB is available and not dry-run)
 	if m.DB != nil && !m.DryRun {
-		// Detect media type from file extension
-		ext := strings.ToLower(filepath.Ext(filename))
-		mediaType := "unknown"
-		switch ext {
-		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
-			mediaType = "image"
-		case ".mp4", ".webm", ".mov", ".avi", ".mkv":
-			mediaType = "video"
-		case ".gifv":
-			mediaType = "gif"
-		}
-
-		// Use parsed metadata with fallbacks for empty values
-		subreddit := postInfo.Subreddit
-		if subreddit == "" {
-			subreddit = "migrated"
-		}
-		author := postInfo.Username
-		if author == "" {
-			author = "unknown"
-		}
-
-		post := &storage.Post{
-			ID:           postID,
-			Title:        "Migrated from bdfr-html",
-			Subreddit:    subreddit,
-			Author:       author,
-			URL:          "",
-			Permalink:    "",
-			CreatedAt:    fileInfo.ModTime(),
-			DownloadedAt: time.Now(),
-			MediaType:    mediaType,
-			FilePath:     destPath,
-			Source:       "migrated",
-			Hash:         fileHash,
-		}
-
-		if saveErr := m.DB.SavePost(ctx, post); saveErr != nil {
-			// Log warning but don't fail migration - file was already moved successfully
-			m.recordWarning(filename, postID, "save_post", fmt.Errorf("save post to db: %w", saveErr))
+		if saveErr := m.saveMigratedPost(ctx, postID, filename, postInfo, fileInfo, fileHash); saveErr != nil {
+			m.recordSuccessWithWarning(
+				filename,
+				postID,
+				destPath,
+				postInfo,
+				fileInfo.Size(),
+				fileHash,
+				fmt.Errorf("save post to db: %w", saveErr),
+			)
+			m.seenHashes[fileHash] = FileHashInfo{
+				PostID:     postID,
+				SourcePath: sourcePath,
+				Timestamp:  time.Now(),
+			}
+			return saveErr
 		}
 	}
 
-	// Record hash as seen
 	m.seenHashes[fileHash] = FileHashInfo{
 		PostID:     postID,
 		SourcePath: sourcePath,
@@ -282,49 +351,61 @@ func (m *Migrator) processFile(ctx context.Context, filename string) {
 	}
 
 	m.recordSuccess(filename, postID, destPath, postInfo, fileInfo.Size(), fileHash)
+	return nil
 }
 
 func (m *Migrator) buildDestPath(filename string, info PostInfo) string {
 	var subdir string
-	if info.IsUserPost && info.Username != "" {
+	switch {
+	case info.IsUserPost && info.Username != "":
 		subdir = filepath.Join("users", info.Username)
-	} else if info.Subreddit != "" {
+	case info.Subreddit != "":
 		subdir = SanitizePath(info.Subreddit)
-	} else {
-		subdir = "unknown"
+	default:
+		subdir = UnknownSubreddit
 	}
 	return filepath.Join(m.DestDir, subdir, filename)
 }
 
+// wrapWithCleanup wraps an error with context and attempts to clean up the destination file.
+// It returns the wrapped error after attempting to remove dst (ignoring os.IsNotExist).
+func wrapWithCleanup(err error, dst, contextFmt string, args ...any) error {
+	contextMsg := fmt.Sprintf(contextFmt, args...)
+	wrappedErr := fmt.Errorf("%s: %w", contextMsg, err)
+	if removeErr := os.Remove(dst); removeErr != nil && !os.IsNotExist(removeErr) {
+		return fmt.Errorf("%w; cleanup also failed: %v", wrappedErr, removeErr)
+	}
+	return wrappedErr
+}
+
 func (m *Migrator) moveFile(src, dst string) error {
-	// Create directory
 	dir := filepath.Dir(dst)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
-	// Copy
 	if err := copyFile(src, dst); err != nil {
-		return fmt.Errorf("copy file: %w", err)
+		return wrapWithCleanup(err, dst, "copy file")
 	}
 
-	// Verify
 	srcInfo, err := os.Stat(src)
 	if err != nil {
-		os.Remove(dst)
-		return fmt.Errorf("stat source file %s: %w", src, err)
+		return wrapWithCleanup(err, dst, "stat source file %s", src)
 	}
 	dstInfo, err := os.Stat(dst)
 	if err != nil {
-		os.Remove(dst)
-		return fmt.Errorf("stat destination file %s: %w", dst, err)
+		return wrapWithCleanup(err, dst, "stat destination file %s", dst)
 	}
 	if srcInfo.Size() != dstInfo.Size() {
-		os.Remove(dst)
-		return fmt.Errorf("size mismatch after copy: expected %d, got %d", srcInfo.Size(), dstInfo.Size())
+		return wrapWithCleanup(
+			fmt.Errorf("size mismatch"),
+			dst,
+			"size mismatch after copy: expected %d, got %d",
+			srcInfo.Size(),
+			dstInfo.Size(),
+		)
 	}
 
-	// Delete source
 	if err := os.Remove(src); err != nil {
 		return fmt.Errorf("remove source %s: %w", src, err)
 	}
@@ -332,45 +413,69 @@ func (m *Migrator) moveFile(src, dst string) error {
 	return nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
+	//nolint:gosec // G304: intentional file reading from user-provided migration paths
 	sourceFile, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source %s: %w", src, err)
 	}
-	defer sourceFile.Close()
+	defer func() {
+		if cerr := sourceFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close source %s: %w", src, cerr)
+		}
+	}()
 
+	//nolint:gosec // G304: intentional file creation at user-provided destination
 	destFile, err := os.Create(dst)
 	if err != nil {
-		return err
+		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
-	defer destFile.Close()
+	defer func() {
+		if cerr := destFile.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close dest %s: %w", dst, cerr)
+		}
+	}()
 
 	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return err
+		return fmt.Errorf("copy %s->%s: %w", src, dst, err)
 	}
 
-	return destFile.Sync()
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("sync dest %s: %w", dst, err)
+	}
+
+	return nil
 }
 
-func (m *Migrator) SaveLog(ctx context.Context, logPath string) error {
+// SaveLog saves the migration log to a JSON file for audit and rollback purposes.
+func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err := contextChecker(ctx); err != nil {
 		return err
 	}
 
+	//nolint:gosec // G304: intentional log file creation at user-provided path
 	file, err := os.Create(logPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("create log file %s: %w", logPath, err)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close log file %s: %w", logPath, cerr)
+		}
+	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(m.Log)
+	if err := encoder.Encode(m.Log); err != nil {
+		return fmt.Errorf("encode log to %s: %w", logPath, err)
+	}
+
+	return nil
 }
 
-// Recording methods
+// Recording methods.
 func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInfo, size int64, hash string) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		DestPath:   destPath,
@@ -386,7 +491,7 @@ func (m *Migrator) recordSuccess(filename, postID, destPath string, info PostInf
 }
 
 func (m *Migrator) recordSkipped(filename, postID, reason string) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		Status:     "skipped",
@@ -397,7 +502,7 @@ func (m *Migrator) recordSkipped(filename, postID, reason string) {
 }
 
 func (m *Migrator) recordError(filename, postID, operation string, err error) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		Status:     "error",
@@ -407,19 +512,8 @@ func (m *Migrator) recordError(filename, postID, operation string, err error) {
 	m.Log.ErrorCount++
 }
 
-func (m *Migrator) recordWarning(filename, postID, operation string, err error) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
-		PostID:     postID,
-		SourcePath: filepath.Join(m.SourceDir, filename),
-		Status:     "moved_with_warning",
-		Error:      fmt.Sprintf("warning: %s: %v", operation, err),
-		Timestamp:  time.Now(),
-	})
-	m.Log.WarningCount++
-}
-
 func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo, size int64, hash string) {
-	m.Log.Operations = append(m.Log.Operations, MigrationRecord{
+	m.Log.Operations = append(m.Log.Operations, Record{
 		PostID:     postID,
 		SourcePath: filepath.Join(m.SourceDir, filename),
 		DestPath:   destPath,
@@ -433,13 +527,44 @@ func (m *Migrator) recordDryRun(filename, postID, destPath string, info PostInfo
 	})
 }
 
-// calculateHash computes BLAKE3 hash of a file
+func (m *Migrator) recordSuccessWithWarning(
+	filename,
+	postID,
+	destPath string,
+	info PostInfo,
+	size int64,
+	hash string,
+	warnErr error,
+) {
+	m.Log.Operations = append(m.Log.Operations, Record{
+		PostID:     postID,
+		SourcePath: filepath.Join(m.SourceDir, filename),
+		DestPath:   destPath,
+		Subreddit:  info.Subreddit,
+		Username:   info.Username,
+		IsUserPost: info.IsUserPost,
+		Status:     "moved_with_warning",
+		Error:      fmt.Sprintf("warning: %v", warnErr),
+		Timestamp:  time.Now(),
+		FileSize:   size,
+		Hash:       hash,
+	})
+	m.Log.MovedCount++
+	m.Log.WarningCount++
+}
+
+// calculateHash computes BLAKE3 hash of a file.
 func calculateHash(filePath string) (string, error) {
+	//nolint:gosec // G304: filePath is validated by caller (processFile) before calling
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("open %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close hash file: %w", cerr)
+		}
+	}()
 
 	hash := blake3.New()
 	if _, err := io.Copy(hash, file); err != nil {

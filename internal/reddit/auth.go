@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os/exec"
@@ -19,12 +20,12 @@ import (
 
 // OAuth2CodeFlow performs OAuth2 code flow to obtain a refresh token.
 // It opens a browser for user authentication and listens for the callback.
-func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
+func OAuth2CodeFlow(clientID, clientSecret, _ string) (string, error) {
 	// Try multiple ports in case of conflict
 	defaultPorts := []int{7765, 7766, 7767, 7768, 7769}
 	var lastErr error
 	for _, port := range defaultPorts {
-		token, err := tryOAuth2Flow(clientID, clientSecret, userAgent, port)
+		token, err := tryOAuth2Flow(clientID, clientSecret, port)
 		if err == nil {
 			return token, nil
 		}
@@ -39,7 +40,7 @@ func OAuth2CodeFlow(clientID, clientSecret, userAgent string) (string, error) {
 }
 
 // tryOAuth2Flow attempts OAuth2 flow on a specific port
-func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, error) {
+func tryOAuth2Flow(clientID, clientSecret string, port int) (string, error) {
 	// Generate random state for CSRF protection
 	state, err := generateRandomState(16)
 	if err != nil {
@@ -56,7 +57,7 @@ func tryOAuth2Flow(clientID, clientSecret, userAgent string, port int) (string, 
 		},
 		RedirectURL: fmt.Sprintf("http://127.0.0.1:%d/callback", port),
 		Scopes:      []string{"identity", "history", "read", "save"},
-}
+	}
 
 	// Build the authorization URL with duration=permanent to get refresh tokens
 	authURL := oauthConfig.AuthCodeURL(state, oauth2.SetAuthURLParam("duration", "permanent"))
@@ -98,7 +99,7 @@ func generateRandomState(n int) (string, error) {
 	for i := range result {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("generate random state: %w", err)
 		}
 		result[i] = letters[num.Int64()]
 	}
@@ -106,19 +107,25 @@ func generateRandomState(n int) (string, error) {
 }
 
 // openURL opens a URL in the default browser.
-func openURL(url string) error {
+func openURL(urlStr string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		//nolint:gosec,noctx // G204: subprocess launched with variable - standard browser opening command; noctx: browser command doesn't need context
+		cmd = exec.Command("open", urlStr)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		//nolint:gosec,noctx // G204: subprocess launched with variable - standard browser opening command; noctx: browser command doesn't need context
+		cmd = exec.Command("xdg-open", urlStr)
 	case "windows":
-		cmd = exec.Command("cmd", "/C", "start", "", url)
+		//nolint:gosec,noctx // G204: subprocess launched with variable - standard browser opening command; noctx: browser command doesn't need context
+		cmd = exec.Command("cmd", "/C", "start", "", urlStr)
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start browser command: %w", err)
+	}
+	return nil
 }
 
 // waitForCallback starts an HTTP server and waits for the OAuth callback.
@@ -133,35 +140,45 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			escapedErrMsg := html.EscapeString(errMsg)
 			escapedDesc := html.EscapeString(r.URL.Query().Get("error_description"))
-			fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc)
+			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			//nolint:gosec // G705: data is escaped with html.EscapeString
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Error: %s</h1><p>%s</p></body></html>", escapedErrMsg, escapedDesc) //nolint:errcheck
 			errorChan <- fmt.Errorf("oauth error: %s - %s", escapedErrMsg, escapedDesc)
 			return
 		}
 
 		// Verify state matches
 		if r.URL.Query().Get("state") != state {
-			fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>")
+			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			_, _ = fmt.Fprintf(w, "<html><body><h1>State mismatch!</h1></body></html>") //nolint:errcheck
 			errorChan <- errors.New("state mismatch")
 			return
 		}
 
 		// Exchange code for token
 		code := r.URL.Query().Get("code")
-		token, err := exchangeCodeForToken(code, oauthConfig)
+		token, err := exchangeCodeForToken(r.Context(), code, oauthConfig)
 		if err != nil {
 			escapedErr := html.EscapeString(err.Error())
-			fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr)
+			// Ignoring error - writing to local HTTP response, nothing we can do if it fails
+			//nolint:gosec // G705: data is escaped with html.EscapeString
+			_, _ = fmt.Fprintf(w, "<html><body><h1>Error exchanging code: %s</h1></body></html>", escapedErr) //nolint:errcheck
 			errorChan <- fmt.Errorf("exchanging code for token: %s", escapedErr)
 			return
 		}
 
 		// Success - show token
-		fmt.Fprintf(w, "<html><body><h1>Authentication successful!</h1><p>You can close this window.</p></body></html>")
+		//nolint:errcheck // Writing to HTTP response, best effort is acceptable
+		_, _ = fmt.Fprint(
+			w,
+			"<html><body><h1>Authentication successful!</h1>"+
+				"<p>You can close this window.</p></body></html>",
+		)
 		resultChan <- token
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	// Start server in goroutine and capture errors
 	errChan := make(chan error, 1)
@@ -172,30 +189,27 @@ func waitForCallback(port int, state string, oauthConfig *oauth2.Config) (string
 	// Wait for callback with timeout
 	timer := time.NewTimer(30 * time.Second)
 	defer func() {
-		_ = server.Close()
+		if closeErr := server.Close(); closeErr != nil {
+			slog.Error("failed to close OAuth server", "error", closeErr)
+		}
 		timer.Stop()
 	}()
 
 	select {
 	case token := <-resultChan:
-		_ = server.Close()
 		return token, nil
 	case err := <-errorChan:
-		_ = server.Close()
 		return "", err
 	case err := <-errChan:
-		_ = server.Close()
 		return "", fmt.Errorf("server error: %w", err)
 	case <-timer.C:
-		_ = server.Close()
 		return "", errors.New("timeout waiting for OAuth callback (30 seconds)")
 	}
 }
 
 // exchangeCodeForToken exchanges an authorization code for a refresh token.
-func exchangeCodeForToken(code string, oauthConfig *oauth2.Config) (string, error) {
-	// Use oauth2.Config.Exchange with context
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func exchangeCodeForToken(ctx context.Context, code string, oauthConfig *oauth2.Config) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	token, err := oauthConfig.Exchange(ctx, code)

@@ -8,8 +8,10 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
-// RedditPost represents the JSON structure of a Reddit post from the API.
-type RedditPost struct {
+// Post represents the JSON structure of a Reddit post from the API.
+//
+//nolint:fieldalignment
+type Post struct {
 	ID          string                   `json:"id"`
 	Title       string                   `json:"title"`
 	Subreddit   string                   `json:"subreddit"`
@@ -30,15 +32,20 @@ type RedditPost struct {
 	URLOverride string                   `json:"url_overridden_by_dest"`
 }
 
+// GalleryData represents the gallery data structure from Reddit API.
 type GalleryData struct {
 	Items []GalleryItem `json:"items"`
 }
 
+// GalleryItem represents a single item in a Reddit gallery.
 type GalleryItem struct {
 	MediaID string `json:"media_id"`
 	ID      int    `json:"id"`
 }
 
+// MediaMetadata represents metadata for a media item in a gallery.
+//
+//nolint:fieldalignment
 type MediaMetadata struct {
 	Status   string               `json:"status"`
 	Kind     string               `json:"e"`
@@ -47,6 +54,7 @@ type MediaMetadata struct {
 	Previews []MediaMetadataImage `json:"p"`
 }
 
+// MediaMetadataImage represents image source information.
 type MediaMetadataImage struct {
 	URL string `json:"u"`
 	X   int    `json:"x"`
@@ -55,12 +63,14 @@ type MediaMetadataImage struct {
 
 // Media represents media metadata for a Reddit post.
 type Media struct {
-	RedditVideo *RedditVideo `json:"reddit_video"`
-	OEmbed      *OEmbed      `json:"oembed"`
+	Video  *Video  `json:"reddit_video"`
+	OEmbed *OEmbed `json:"oembed"`
 }
 
-// RedditVideo represents Reddit-hosted video metadata.
-type RedditVideo struct {
+// Video represents Reddit-hosted video metadata.
+//
+//nolint:fieldalignment
+type Video struct {
 	BitrateKbps       int    `json:"bitrate_kbps"`
 	FallbackURL       string `json:"fallback_url"`
 	Height            int    `json:"height"`
@@ -87,20 +97,20 @@ type OEmbed struct {
 	Version      string `json:"version"`
 }
 
-// RedditListing represents the Reddit API listing response.
-type RedditListing struct {
+// Listing represents the Reddit API listing response.
+type Listing struct {
 	Kind string `json:"kind"`
 	Data struct {
-		After    *string       `json:"after"`
-		Before   *string       `json:"before"`
-		Children []RedditChild `json:"children"`
+		After    *string `json:"after"`
+		Before   *string `json:"before"`
+		Children []Child `json:"children"`
 	} `json:"data"`
 }
 
-// RedditChild represents a child item in a Reddit listing.
-type RedditChild struct {
-	Kind string     `json:"kind"`
-	Data RedditPost `json:"data"`
+// Child represents a child item in a Reddit listing.
+type Child struct {
+	Kind string `json:"kind"`
+	Data Post   `json:"data"`
 }
 
 // MediaType represents the type of media in a Reddit post.
@@ -121,9 +131,9 @@ const (
 	MediaTypeUnknown MediaType = "unknown"
 )
 
-// ToStoragePost converts a RedditPost to the internal storage.Post struct.
+// ToStoragePost converts a Post to the internal storage.Post struct.
 // The source parameter indicates whether the post was upvoted or saved.
-func (rp *RedditPost) ToStoragePost(source string) storage.Post {
+func (rp *Post) ToStoragePost(source string) storage.Post {
 	return storage.Post{
 		ID:        rp.ID,
 		Title:     rp.Title,
@@ -138,18 +148,25 @@ func (rp *RedditPost) ToStoragePost(source string) storage.Post {
 }
 
 // DetectMediaType determines the media type of the Reddit post.
-func (rp *RedditPost) DetectMediaType() MediaType {
-	// Check for Reddit-hosted video
-	if rp.IsVideo && rp.Media != nil && rp.Media.RedditVideo != nil {
-		return MediaTypeVideo
+//
+//nolint:cyclop
+func (rp *Post) DetectMediaType() MediaType {
+	// Check gallery detection
+	if mt := rp.detectGalleryType(); mt != MediaTypeUnknown {
+		return mt
 	}
 
-	// Check for self/text post
+	// Check video detection
+	if mt := rp.detectVideoType(); mt != MediaTypeUnknown {
+		return mt
+	}
+
+	// Check text post
 	if rp.IsSelf {
 		return MediaTypeText
 	}
 
-	// Check post_hint for common media types
+	// Check post hint
 	switch rp.PostHint {
 	case "image":
 		return MediaTypeImage
@@ -161,21 +178,57 @@ func (rp *RedditPost) DetectMediaType() MediaType {
 		return MediaTypeText
 	}
 
-	// Try to infer from URL for image types
-	if isImageURL(rp.URL) {
-		return MediaTypeImage
+	// Check URL-based detection
+	if mt := rp.detectTypeFromURL(rp.URL); mt != MediaTypeUnknown {
+		return mt
 	}
 
-	// Try to infer from URL for video types
-	if isVideoURL(rp.URL) {
-		return MediaTypeVideo
-	}
-
-	// Default to link for external URLs
+	// Check if URL is different from permalink (external link)
 	if rp.URL != "" && rp.URL != rp.Permalink {
 		return MediaTypeLink
 	}
 
+	return MediaTypeUnknown
+}
+
+// detectGalleryType checks for gallery media type.
+func (rp *Post) detectGalleryType() MediaType {
+	if rp.GalleryData != nil && len(rp.GalleryData.Items) > 0 {
+		return MediaTypeGallery
+	}
+	if len(rp.MediaMeta) > 1 {
+		for _, meta := range rp.MediaMeta {
+			if strings.HasPrefix(strings.ToLower(meta.Mime), "image/") {
+				return MediaTypeGallery
+			}
+		}
+	}
+	if len(rp.MediaMeta) == 1 {
+		for _, meta := range rp.MediaMeta {
+			if strings.HasPrefix(strings.ToLower(meta.Mime), "image/") {
+				return MediaTypeImage
+			}
+		}
+	}
+	return MediaTypeUnknown
+}
+
+// detectVideoType checks for video media type.
+func (rp *Post) detectVideoType() MediaType {
+	if rp.IsVideo && rp.Media != nil && rp.Media.Video != nil {
+		return MediaTypeVideo
+	}
+	return MediaTypeUnknown
+}
+
+// detectTypeFromURL detects media type from URL.
+func (rp *Post) detectTypeFromURL(url string) MediaType {
+	if isImageURL(url) {
+		return MediaTypeImage
+	}
+	if isVideoURL(url) {
+		return MediaTypeVideo
+	}
 	return MediaTypeUnknown
 }
 

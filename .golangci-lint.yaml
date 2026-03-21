@@ -1,0 +1,214 @@
+version: "2"
+
+run:
+  timeout: 5m
+  allow-parallel-runners: true
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - contextcheck
+    - cyclop
+    - decorder
+    - dogsled
+    - dupl
+    - dupword
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - gocheckcompilerdirectives
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - godox
+    - goheader
+    - gomoddirectives
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - loggercheck
+    - makezero
+    - misspell
+    - nakedret
+    - nilerr
+    - nilnil
+    - noctx
+    - nosprintfhostport
+    - prealloc
+    - predeclared
+    - promlinter
+    - reassign
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - tagliatelle
+    - testifylint
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+    - wrapcheck
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+        - name: package-comments
+          severity: warning
+        - name: blank-imports
+          severity: warning
+        - name: context-as-argument
+          severity: warning
+        - name: error-return
+          severity: warning
+        - name: error-strings
+          severity: warning
+        - name: increment-decrement
+          severity: warning
+        - name: receiver-naming
+          severity: warning
+        - name: struct-tag
+          severity: warning
+        - name: unexported-return
+          severity: warning
+        - name: unused-parameter
+          severity: warning
+        - name: use-any
+          severity: warning
+        - name: var-declaration
+          severity: warning
+        - name: waitgroup-by-value
+          severity: warning
+
+    govet:
+      enable-all: true
+      disable:
+        - shadow
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    gocyclo:
+      min-complexity: 15
+
+    dupl:
+      threshold: 100
+
+    lll:
+      line-length: 120
+      tab-width: 4
+
+    misspell:
+      locale: US
+
+    staticcheck:
+      checks:
+        - "all"
+
+    unparam:
+      check-exported: false
+
+  exclusions:
+    paths:
+      - vendor
+      - .git
+    rules:
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - lll
+          - cyclop
+          - nestif
+
+      - text: "weak cryptographic primitive"
+        linters:
+          - gosec
+
+      - path: _test\.go
+        text: "shadow"
+        linters:
+          - govet
+
+      - path: _test\.go
+        text: "fieldalignment"
+        linters:
+          - govet
+
+      - text: "non-wrapping format verb for fmt.Errorf"
+        linters:
+          - errorlint
+
+      - path: internal/
+        text: "should have a package comment"
+        linters:
+          - revive
+          - staticcheck
+
+      # Exclude fieldalignment warnings - struct reordering for marginal memory savings
+      - path: .*
+        linters:
+          - govet
+        text: "fieldalignment"
+
+      # Exclude errcheck for fmt.Fprint to HTTP responses - best effort is acceptable
+      - path: .*
+        text: "fmt.Fprint"
+        linters:
+          - errcheck
+
+      # Exclude revive unused-parameter for HTTP handlers - parameter is part of interface
+      - path: _test\.go
+        text: "unused-parameter"
+        linters:
+          - revive
+
+      # Exclude govet unusedwrite in tests - often used for test data setup
+      - path: _test\.go
+        linters:
+          - govet
+        text: "unusedwrite"
+
+      # Exclude govet nilness - complex flow analysis issues
+      - path: .*
+        linters:
+          - govet
+        text: "nilness"
+
+      # Exclude tagliatelle for Reddit API structs - Reddit uses snake_case
+      - path: internal/reddit/post.go
+        linters:
+          - tagliatelle
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/djdembeck/reddit-upvote-media-downloader
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 3

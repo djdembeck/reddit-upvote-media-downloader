@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,18 +16,19 @@ import (
 
 func setupTestDB(t *testing.T) (*DB, string) {
 	t.Helper()
+	ctx := context.Background()
 
 	// Create a temporary directory for the test database
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := NewDB(dbPath)
+	db, err := NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
 
 	// Register cleanup
 	t.Cleanup(func() {
-		db.Close()
+		_ = db.Close()
 	})
 
 	return db, tempDir
@@ -130,8 +132,11 @@ func TestGetPost_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	retrieved, err := db.GetPost(ctx, "nonexistent")
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("Expected error for non-existent post, got nil")
+	}
+	if !errors.Is(err, ErrPostNotFound) {
+		t.Fatalf("Expected ErrPostNotFound, got: %v", err)
 	}
 	if retrieved != nil {
 		t.Error("Expected nil for non-existent post")
@@ -367,17 +372,26 @@ func TestFilenamePattern(t *testing.T) {
 		expectID    string
 		shouldMatch bool
 	}{
+		// Legacy format: {POSTID}.ext
 		{"abc123.jpg", "abc123", true},
+		{"jkl012.gif", "jkl012", true},
+		{"readme.txt", "readme", true},
+		// Real-world format: {title}_{POSTID}.ext
+		{"My_Post_abc123.jpg", "abc123", true},
+		{"Cool_Image_jkl012.png", "jkl012", true},
+		// Gallery format: {title}_{index}_{POSTID}.ext
+		{"My_Post_1_def456.mp4", "def456", true},
+		{"Gallery_Item_2_ghi789.png", "ghi789", true},
+		// Legacy gallery: {POSTID}_{index}.ext
 		{"def456_1.mp4", "def456", true},
 		{"ghi789_2.png", "ghi789", true},
-		{"jkl012.gif", "jkl012", true},
 		{"mno345_10.webp", "mno345", true},
-		{"readme.txt", "readme", true},
-		{"a.txt", "", false},
-		{".hidden", "", false},
-		{"noextension", "", false},
-		{"_123.jpg", "", false},
-		{"12345.jpg", "", false},
+		// Should not match
+		{"a.txt", "", false},       // POSTID too short (5 chars)
+		{".hidden", "", false},     // No extension
+		{"noextension", "", false}, // No extension
+		{"_123.jpg", "", false},    // POSTID too short (3 chars)
+		{"12345.jpg", "", false},   // POSTID too short (5 chars)
 	}
 
 	for _, tc := range testCases {
@@ -390,10 +404,8 @@ func TestFilenamePattern(t *testing.T) {
 			if matches[1] != tc.expectID {
 				t.Errorf("Expected ID %s for %s, got %s", tc.expectID, tc.filename, matches[1])
 			}
-		} else {
-			if matches != nil {
-				t.Errorf("Expected %s to NOT match pattern", tc.filename)
-			}
+		} else if matches != nil {
+			t.Errorf("Expected %s to NOT match pattern", tc.filename)
 		}
 	}
 }
@@ -401,14 +413,14 @@ func TestFilenamePattern(t *testing.T) {
 func TestClose(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
+	ctx := context.Background()
 
-	db, err := NewDB(dbPath)
+	db, err := NewDB(ctx, dbPath)
 	require.NoError(t, err, "Failed to create database")
 
 	require.NoError(t, db.Close(), "Failed to close database")
 
 	// Verify connection is closed by trying to use it
-	ctx := context.Background()
 	_, err = db.IsDownloaded(ctx, "test")
 	assert.Error(t, err, "Expected error when using closed database")
 }
@@ -556,19 +568,19 @@ func TestGetPostByHash_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	retrieved, err := db.GetPostByHash(ctx, "nonexistenthash")
-	require.NoError(t, err, "Unexpected error")
+	require.Error(t, err, "Expected error for non-existent hash")
+	require.ErrorIs(t, err, ErrPostNotFound, "Expected ErrPostNotFound, got: %v", err)
 	assert.Nil(t, retrieved, "Expected nil for non-existent hash")
 }
 
 func TestHashColumnMigration(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-
-	db, err := NewDB(dbPath)
-	require.NoError(t, err)
-	defer db.Close()
-
 	ctx := context.Background()
+
+	db, err := NewDB(ctx, dbPath)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
 
 	hash := "migrationtesthash"
 	post := &Post{

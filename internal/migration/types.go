@@ -2,37 +2,51 @@ package migration
 
 import "time"
 
+// Default values for migration operations
+const (
+	UnknownSubreddit = "unknown"
+)
+
+// PostInfo holds metadata extracted from HTML files.
+//
+//nolint:fieldalignment
 type PostInfo struct {
 	PostID     string
 	Subreddit  string
 	Username   string
-	IsUserPost bool
 	Hash       string // Optional: pre-computed hash for deduplication
+	IsUserPost bool
 }
 
-type MigrationRecord struct {
-	PostID     string    `json:"post_id"`
-	SourcePath string    `json:"source_path"`
-	DestPath   string    `json:"dest_path"`
+// Record represents a single file migration operation.
+//
+//nolint:fieldalignment
+type Record struct {
+	Timestamp  time.Time `json:"timestamp"`
+	PostID     string    `json:"postId"`
+	SourcePath string    `json:"sourcePath"`
+	DestPath   string    `json:"destPath"`
 	Subreddit  string    `json:"subreddit"`
 	Username   string    `json:"username"`
-	IsUserPost bool      `json:"is_user_post"`
 	Status     string    `json:"status"`
 	Error      string    `json:"error,omitempty"`
-	Timestamp  time.Time `json:"timestamp"`
-	FileSize   int64     `json:"file_size"`
 	Hash       string    `json:"hash,omitempty"`
+	FileSize   int64     `json:"fileSize"`
+	IsUserPost bool      `json:"isUserPost"`
 }
 
-type MigrationLog struct {
-	Version      string            `json:"version"`
-	Timestamp    time.Time         `json:"timestamp"`
-	SourceDir    string            `json:"source_dir"`
-	DestDir      string            `json:"dest_dir"`
-	TotalFiles   int               `json:"total_files"`
-	MovedCount   int               `json:"moved_count"`
-	SkippedCount int               `json:"skipped_count"`
-	ErrorCount   int               `json:"error_count"`
-	WarningCount int               `json:"warning_count"`
-	Operations   []MigrationRecord `json:"operations"`
+// Log contains all migration operations and statistics.
+//
+//nolint:fieldalignment
+type Log struct {
+	Timestamp    time.Time `json:"timestamp"`
+	Operations   []Record  `json:"operations"`
+	Version      string    `json:"version"`
+	SourceDir    string    `json:"sourceDir"`
+	DestDir      string    `json:"destDir"`
+	TotalFiles   int       `json:"totalFiles"`
+	MovedCount   int       `json:"movedCount"`
+	SkippedCount int       `json:"skippedCount"`
+	ErrorCount   int       `json:"errorCount"`
+	WarningCount int       `json:"warningCount"`
 }

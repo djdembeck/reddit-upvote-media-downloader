@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -13,8 +14,11 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Required for SQLite driver registration
 )
+
+// ErrPostNotFound is returned when a post is not found in the database.
+var ErrPostNotFound = errors.New("post not found")
 
 // DB wraps the database connection.
 type DB struct {
@@ -43,7 +47,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 );
 `
 
-// migration statements to add new columns if they don't exist
+// migration statements to add new columns if they don't exist.
 const addRetryCountColumn = `
 ALTER TABLE posts ADD COLUMN retry_count INTEGER DEFAULT 0;
 `
@@ -58,13 +62,18 @@ ALTER TABLE posts ADD COLUMN last_attempt INTEGER;
 
 // runMigrations adds new columns to the posts table if they don't exist.
 // This is idempotent - safe to run multiple times.
-func (db *DB) runMigrations() error {
+//
+//nolint:cyclop
+func (db *DB) runMigrations(ctx context.Context) error {
 	// Get existing columns
-	rows, err := db.conn.Query("PRAGMA table_info(posts)")
+	rows, err := db.conn.QueryContext(ctx, "PRAGMA table_info(posts)")
 	if err != nil {
 		return fmt.Errorf("failed to query table info: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		// Ignoring error - rows.Close() in cleanup, read-only operation
+		_ = rows.Close() //nolint:errcheck
+	}()
 
 	existingColumns := make(map[string]bool)
 	for rows.Next() {
@@ -72,9 +81,9 @@ func (db *DB) runMigrations() error {
 		var name string
 		var type_ string
 		var notnull int
-		var dflt_value interface{}
+		var dfltValue any
 		var pk int
-		if err := rows.Scan(&cid, &name, &type_, &notnull, &dflt_value, &pk); err != nil {
+		if err := rows.Scan(&cid, &name, &type_, &notnull, &dfltValue, &pk); err != nil {
 			return fmt.Errorf("failed to scan table info: %w", err)
 		}
 		existingColumns[name] = true
@@ -85,21 +94,21 @@ func (db *DB) runMigrations() error {
 
 	// Add retry_count column if it doesn't exist
 	if !existingColumns["retry_count"] {
-		if _, err := db.conn.Exec(addRetryCountColumn); err != nil {
+		if _, err := db.conn.ExecContext(ctx, addRetryCountColumn); err != nil {
 			return fmt.Errorf("failed to add retry_count column: %w", err)
 		}
 	}
 
 	// Add last_error column if it doesn't exist
 	if !existingColumns["last_error"] {
-		if _, err := db.conn.Exec(addLastErrorColumn); err != nil {
+		if _, err := db.conn.ExecContext(ctx, addLastErrorColumn); err != nil {
 			return fmt.Errorf("failed to add last_error column: %w", err)
 		}
 	}
 
 	// Add last_attempt column if it doesn't exist
 	if !existingColumns["last_attempt"] {
-		if _, err := db.conn.Exec(addLastAttemptColumn); err != nil {
+		if _, err := db.conn.ExecContext(ctx, addLastAttemptColumn); err != nil {
 			return fmt.Errorf("failed to add last_attempt column: %w", err)
 		}
 	}
@@ -107,11 +116,38 @@ func (db *DB) runMigrations() error {
 	return nil
 }
 
-// NewDB creates a new database connection and initializes the schema.
-func NewDB(dbPath string) (*DB, error) {
-	// Ensure the directory exists
+// NewDB opens and initializes the database at the specified path.
+// It creates the database directory if needed, runs migrations to ensure
+// the schema is up to date, and ensures the hash column exists.
+// Parameters:
+//   - ctx: context for cancellation and timeouts
+//   - dbPath: path to the SQLite database file
+//
+// Returns a pointer to the initialized DB and any error encountered.
+func NewDB(ctx context.Context, dbPath string) (*DB, error) {
+	conn, err := openAndInitializeDB(ctx, dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	db := &DB{conn: conn}
+
+	if err := db.runMigrations(ctx); err != nil {
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w; close error: %v", err, cerr)
+	}
+
+	if err := ensureHashColumn(ctx, conn); err != nil {
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to ensure hash column: %w; close error: %v", err, cerr)
+	}
+
+	return db, nil
+}
+
+func openAndInitializeDB(ctx context.Context, dbPath string) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
@@ -120,44 +156,40 @@ func NewDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Test the connection
-	if err := conn.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	if err := conn.PingContext(ctx); err != nil {
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to ping database: %w; close error: %v", err, cerr)
 	}
 
-	// Create the schema
-	if _, err := conn.Exec(schema); err != nil {
-		return nil, fmt.Errorf("failed to create schema: %w", err)
+	if _, err := conn.ExecContext(ctx, schema); err != nil {
+		cerr := conn.Close()
+		return nil, fmt.Errorf("failed to create schema: %w; close error: %v", err, cerr)
 	}
 
-	db := &DB{conn: conn}
+	return conn, nil
+}
 
-	// Run migrations to add new columns
-	if err := db.runMigrations(); err != nil {
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
+// ensureHashColumn adds the hash column and index if they don't exist.
+func ensureHashColumn(ctx context.Context, conn *sql.DB) error {
+	if _, err := conn.ExecContext(ctx, `ALTER TABLE posts ADD COLUMN hash TEXT`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to add hash column: %w", err)
+		}
 	}
 
-	// Migration: Add hash column if not exists (preserve existing data)
-	_, err = conn.Exec(`ALTER TABLE posts ADD COLUMN hash TEXT`)
-	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		conn.Close()
-		return nil, fmt.Errorf("failed to add hash column: %w", err)
+	if _, err := conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`); err != nil {
+		return fmt.Errorf("failed to create hash index: %w", err)
 	}
 
-	// Create index on hash column for fast lookups
-	_, err = conn.Exec(`CREATE INDEX IF NOT EXISTS idx_hash ON posts(hash)`)
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to create hash index: %w", err)
-	}
-
-	return db, nil
+	return nil
 }
 
 // Close closes the database connection.
 func (db *DB) Close() error {
 	if db.conn != nil {
-		return db.conn.Close()
+		if err := db.conn.Close(); err != nil {
+			return fmt.Errorf("close database connection: %w", err)
+		}
 	}
 	return nil
 }
@@ -166,7 +198,11 @@ func (db *DB) Close() error {
 // Also saves retry-related fields: retry_count, last_error, last_attempt.
 func (db *DB) SavePost(ctx context.Context, post *Post) error {
 	query := `
-		INSERT INTO posts (id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash)
+		INSERT INTO posts (
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source,
+			retry_count, last_error, last_attempt, hash
+		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
@@ -221,9 +257,16 @@ func (db *DB) SavePost(ctx context.Context, post *Post) error {
 
 	return nil
 }
+
+// GetPost retrieves a post from the database by ID.
+//
+//nolint:cyclop,gocyclo
 func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
+		SELECT
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source,
+			retry_count, last_error, last_attempt, hash
 		FROM posts
 		WHERE id = ?
 	`
@@ -257,12 +300,21 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
 
+	db.populatePostFromNullFields(&post, title, subreddit, author, url, permalink, mediaType, filePath, source, createdAtUnix, downloadedAtUnix, retryCount, lastError, lastAttempt, hash)
+
+	return &post, nil
+}
+
+// populatePostFromNullFields populates a Post from nullable database fields.
+//
+//nolint:cyclop
+func (db *DB) populatePostFromNullFields(post *Post, title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString, createdAtUnix, downloadedAtUnix, retryCount sql.NullInt64, lastError sql.NullString, lastAttempt sql.NullInt64, hash sql.NullString) {
 	if createdAtUnix.Valid {
 		post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
 	}
@@ -306,8 +358,6 @@ func (db *DB) GetPost(ctx context.Context, id string) (*Post, error) {
 	if hash.Valid {
 		post.Hash = hash.String
 	}
-
-	return &post, nil
 }
 
 // IsDownloaded checks if a post has been downloaded.
@@ -330,6 +380,8 @@ func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
 //   - threshold: max retry count before permanent skip (0 = ignore)
 //   - backoffBase: base delay for exponential backoff calculation (0 = ignore)
 //   - backoffMax: max delay cap for backoff calculation (0 = ignore)
+//
+//nolint:cyclop,gocyclo
 func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, backoffBase, backoffMax time.Duration) (*PostStatus, error) {
 	query := `
 		SELECT retry_count, last_error, last_attempt, file_path
@@ -383,46 +435,68 @@ func (db *DB) CheckPostStatus(ctx context.Context, id string, threshold int, bac
 		status.FilePath = filePath.String
 	}
 
-	// Check 1: Retry count exceeds threshold (permanent skip)
-	if threshold > 0 && status.RetryCount >= threshold {
-		status.ShouldSkip = true
-		status.RetryEligible = false
+	if db.checkRetryThreshold(status, threshold) {
 		return status, nil
 	}
 
-	// Check 2: File exists on disk (if file_path is set)
+	if db.checkFileExists(status) {
+		return status, nil
+	}
+
+	if db.checkBackoffWindow(status, backoffBase, backoffMax) {
+		return status, nil
+	}
+
+	status.RetryEligible = true
+	return status, nil
+}
+
+// checkRetryThreshold checks if retry count exceeds threshold.
+func (db *DB) checkRetryThreshold(status *PostStatus, threshold int) bool {
+	if threshold > 0 && status.RetryCount >= threshold {
+		status.ShouldSkip = true
+		status.RetryEligible = false
+		return true
+	}
+	return false
+}
+
+// checkFileExists checks if file exists on disk.
+func (db *DB) checkFileExists(status *PostStatus) bool {
 	if status.FilePath != "" {
 		if _, err := os.Stat(status.FilePath); err == nil {
 			status.FileExists = true
 			status.ShouldSkip = true
 			status.RetryEligible = false
-			return status, nil
+			return true
 		}
 	}
+	return false
+}
 
-	// Check 3: Backoff window - if last_attempt is within backoff window, skip retry
+func (db *DB) checkBackoffWindow(status *PostStatus, backoffBase, backoffMax time.Duration) bool {
 	if backoffBase > 0 && !status.LastAttempt.IsZero() {
-		// Calculate backoff delay: min(backoffBase * 2^retryCount, backoffMax)
-		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(status.RetryCount)))
+		exponent := status.RetryCount - 1
+		if exponent < 0 {
+			exponent = 0
+		}
+		backoffDelay := time.Duration(float64(backoffBase) * math.Pow(2, float64(exponent)))
 		if backoffMax > 0 && backoffDelay > backoffMax {
 			backoffDelay = backoffMax
 		}
 
-		// Check if we're still within the backoff window
 		elapsed := time.Since(status.LastAttempt)
 		if elapsed < backoffDelay {
-			// Within backoff window - skip this cycle
 			status.ShouldSkip = true
 			status.RetryEligible = false
-			return status, nil
+			return true
 		}
 	}
-
-	// If we got here, the post is eligible for retry
-	status.RetryEligible = true
-	return status, nil
+	return false
 }
 
+// HashExists checks if a file hash already exists in the database.
+// Returns true if the hash exists, false otherwise, along with any error.
 func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE hash = ?)`
 
@@ -436,9 +510,13 @@ func (db *DB) HashExists(ctx context.Context, hash string) (bool, error) {
 }
 
 // GetPostByHash retrieves a post by its hash.
+//
+//nolint:cyclop
 func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, hash
+		SELECT
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source, hash
 		FROM posts
 		WHERE hash = ?
 	`
@@ -466,7 +544,7 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, ErrPostNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get post by hash: %w", err)
@@ -509,6 +587,46 @@ func (db *DB) GetPostByHash(ctx context.Context, hash string) (*Post, error) {
 	return &post, nil
 }
 
+// scanCountsRows iterates through query rows and scans key-count pairs.
+// It handles iteration errors and returns an error if any scan or iteration fails.
+func scanCountsRows(rows *sql.Rows, setter func(string, int64)) error {
+	for rows.Next() {
+		var key string
+		var count int64
+		if err := rows.Scan(&key, &count); err != nil {
+			return fmt.Errorf("scan failed: %w", err)
+		}
+		setter(key, count)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iteration failed: %w", err)
+	}
+	return nil
+}
+
+// getCounts executes a query and populates counts using the provided setter function.
+// It handles query execution, resource cleanup, and delegates scanning to scanCountsRows.
+func getCounts(ctx context.Context, conn *sql.DB, query string, setter func(string, int64)) (err error) {
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("query failed: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			if err == nil {
+				err = fmt.Errorf("rows close failed: %w", cerr)
+			} else {
+				err = fmt.Errorf("%v; rows close failed: %w", err, cerr)
+			}
+		}
+	}()
+
+	if err = scanCountsRows(rows, setter); err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetStats returns download statistics.
 func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 	stats := &Stats{
@@ -517,67 +635,24 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 		PostsByMediaType: make(map[string]int64),
 	}
 
-	// Get total count
 	row := db.conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM posts`)
 	if err := row.Scan(&stats.TotalPosts); err != nil {
 		return nil, fmt.Errorf("failed to get total count: %w", err)
 	}
 
-	// Get counts by source
-	rows, err := db.conn.QueryContext(ctx, `SELECT source, COUNT(*) FROM posts GROUP BY source`)
-	if err != nil {
+	if err := getCounts(ctx, db.conn, `SELECT source, COUNT(*) FROM posts GROUP BY source`,
+		func(k string, c int64) { stats.PostsBySource[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get source counts: %w", err)
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var source string
-		var count int64
-		if err := rows.Scan(&source, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan source count: %w", err)
-		}
-		stats.PostsBySource[source] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating source rows: %w", err)
-	}
-
-	// Get counts by subreddit
-	rows, err = db.conn.QueryContext(ctx, `SELECT subreddit, COUNT(*) FROM posts GROUP BY subreddit`)
-	if err != nil {
+	if err := getCounts(ctx, db.conn, `SELECT subreddit, COUNT(*) FROM posts GROUP BY subreddit`,
+		func(k string, c int64) { stats.PostsBySubreddit[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get subreddit counts: %w", err)
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var subreddit string
-		var count int64
-		if err := rows.Scan(&subreddit, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan subreddit count: %w", err)
-		}
-		stats.PostsBySubreddit[subreddit] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating subreddit rows: %w", err)
-	}
-
-	// Get counts by media type
-	rows, err = db.conn.QueryContext(ctx, `SELECT media_type, COUNT(*) FROM posts GROUP BY media_type`)
-	if err != nil {
+	if err := getCounts(ctx, db.conn, `SELECT media_type, COUNT(*) FROM posts GROUP BY media_type`,
+		func(k string, c int64) { stats.PostsByMediaType[k] = c }); err != nil {
 		return nil, fmt.Errorf("failed to get media type counts: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var mediaType string
-		var count int64
-		if err := rows.Scan(&mediaType, &count); err != nil {
-			return nil, fmt.Errorf("failed to scan media type count: %w", err)
-		}
-		stats.PostsByMediaType[mediaType] = count
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating media type rows: %w", err)
 	}
 
 	return stats, nil
@@ -585,12 +660,18 @@ func (db *DB) GetStats(ctx context.Context) (*Stats, error) {
 
 // ImportFromIDList imports post IDs from an idList.txt file.
 // The file format is one post ID per line. Empty lines and comments (starting with #) are ignored.
+//
+//nolint:cyclop
 func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error) {
+	//nolint:gosec // G304: intentional file reading from user-provided idList file for migration
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, fmt.Errorf("failed to open idList file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		// Ignoring error - file.Close() in cleanup, read-only operation
+		_ = file.Close() //nolint:errcheck
+	}()
 
 	scanner := bufio.NewScanner(file)
 	imported := 0
@@ -644,13 +725,16 @@ func (db *DB) ImportFromIDList(ctx context.Context, filePath string) (int, error
 	return imported, nil
 }
 
-// FilenamePattern matches bdfr-html filenames like {POSTID}.ext or {POSTID}_1.ext
-// Examples: abc123.jpg, def456_1.mp4, xyz789_2.png
+// FilenamePattern matches bdfr-html filenames with POSTID extraction.
+// Supports: {POSTID}.ext, {POSTID}_{index}.ext, {title}_{POSTID}.ext, {title}_{index}_{POSTID}.ext
+// Examples: abc123.jpg, abc123_1.mp4, My_Post_abc123.jpg, My_Post_1_def456.mp4
 // Reddit post IDs are typically 6-7 alphanumeric characters.
-var FilenamePattern = regexp.MustCompile(`^([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
+var FilenamePattern = regexp.MustCompile(`^(?:.+_)?([a-zA-Z0-9]{6,})(?:_\d+)?\.\w+$`)
 
 // ImportFromDirectory scans a directory for media files and imports post IDs from filenames.
-// Supports bdfr-html filename patterns: {POSTID}.ext, {POSTID}_1.ext
+// Supports bdfr-html filename patterns: {title}_{POSTID}.ext, {title}_{index}_{POSTID}.ext
+//
+//nolint:cyclop
 func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -674,6 +758,21 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 
 		postID := matches[1]
 
+		// Validate extension before marking as seen
+		ext := strings.ToLower(filepath.Ext(filename))
+		var mediaType string
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+			mediaType = "image"
+		case ".mp4", ".webm", ".mov", ".avi", ".mkv":
+			mediaType = "video"
+		case ".gifv":
+			mediaType = "gif"
+		default:
+			// Skip unsupported extensions
+			continue
+		}
+
 		// Skip if we've already processed this ID in this import
 		if seenIDs[postID] {
 			continue
@@ -687,18 +786,6 @@ func (db *DB) ImportFromDirectory(ctx context.Context, dirPath string) (int, err
 		}
 
 		if !exists {
-			// Determine media type from extension
-			ext := strings.ToLower(filepath.Ext(filename))
-			mediaType := "unknown"
-			switch ext {
-			case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
-				mediaType = "image"
-			case ".mp4", ".webm", ".mov", ".avi", ".mkv":
-				mediaType = "video"
-			case ".gifv":
-				mediaType = "gif"
-			}
-
 			// Create a post entry with file path
 			post := &Post{
 				ID:           postID,
@@ -813,7 +900,10 @@ func (db *DB) ResetRetry(ctx context.Context, postID string) error {
 // Used for re-check mode to verify file existence on disk.
 func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	query := `
-		SELECT id, title, subreddit, author, url, permalink, created_at, downloaded_at, media_type, file_path, source, retry_count, last_error, last_attempt, hash
+		SELECT
+			id, title, subreddit, author, url, permalink, created_at,
+			downloaded_at, media_type, file_path, source,
+			retry_count, last_error, last_attempt, hash
 		FROM posts
 	`
 
@@ -821,83 +911,17 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query all posts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close() //nolint:errcheck
+	}()
 
 	var posts []Post
 
 	for rows.Next() {
-		var post Post
-		var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
-		var createdAtUnix, downloadedAtUnix sql.NullInt64
-		var retryCount sql.NullInt64
-		var lastError sql.NullString
-		var lastAttempt sql.NullInt64
-		var hash sql.NullString
-
-		err := rows.Scan(
-			&post.ID,
-			&title,
-			&subreddit,
-			&author,
-			&url,
-			&permalink,
-			&createdAtUnix,
-			&downloadedAtUnix,
-			&mediaType,
-			&filePath,
-			&source,
-			&retryCount,
-			&lastError,
-			&lastAttempt,
-			&hash,
-		)
+		post, err := db.scanPostRow(rows)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan post: %w", err)
+			return nil, err
 		}
-
-		if createdAtUnix.Valid {
-			post.CreatedAt = time.Unix(createdAtUnix.Int64, 0)
-		}
-		if downloadedAtUnix.Valid {
-			post.DownloadedAt = time.Unix(downloadedAtUnix.Int64, 0)
-		}
-		if title.Valid {
-			post.Title = title.String
-		}
-		if subreddit.Valid {
-			post.Subreddit = subreddit.String
-		}
-		if author.Valid {
-			post.Author = author.String
-		}
-		if url.Valid {
-			post.URL = url.String
-		}
-		if permalink.Valid {
-			post.Permalink = permalink.String
-		}
-		if mediaType.Valid {
-			post.MediaType = mediaType.String
-		}
-		if filePath.Valid {
-			post.FilePath = filePath.String
-		}
-		if source.Valid {
-			post.Source = source.String
-		}
-		if retryCount.Valid {
-			post.RetryCount = int(retryCount.Int64)
-		}
-		if lastError.Valid {
-			post.LastError = lastError.String
-		}
-		if lastAttempt.Valid {
-			post.LastAttempt = time.Unix(lastAttempt.Int64, 0)
-		}
-		if hash.Valid {
-			post.Hash = hash.String
-		}
-
 		posts = append(posts, post)
 	}
 
@@ -906,6 +930,42 @@ func (db *DB) GetAllPosts(ctx context.Context) ([]Post, error) {
 	}
 
 	return posts, nil
+}
+
+// scanPostRow scans a single row from the posts table into a Post struct.
+func (db *DB) scanPostRow(rows *sql.Rows) (Post, error) {
+	var post Post
+	var title, subreddit, author, url, permalink, mediaType, filePath, source sql.NullString
+	var createdAtUnix, downloadedAtUnix sql.NullInt64
+	var retryCount sql.NullInt64
+	var lastError sql.NullString
+	var lastAttempt sql.NullInt64
+	var hash sql.NullString
+
+	err := rows.Scan(
+		&post.ID,
+		&title,
+		&subreddit,
+		&author,
+		&url,
+		&permalink,
+		&createdAtUnix,
+		&downloadedAtUnix,
+		&mediaType,
+		&filePath,
+		&source,
+		&retryCount,
+		&lastError,
+		&lastAttempt,
+		&hash,
+	)
+	if err != nil {
+		return post, fmt.Errorf("failed to scan post: %w", err)
+	}
+
+	db.populatePostFromNullFields(&post, title, subreddit, author, url, permalink, mediaType, filePath, source, createdAtUnix, downloadedAtUnix, retryCount, lastError, lastAttempt, hash)
+
+	return post, nil
 }
 
 // GetRetryCount returns the current retry count for a post.
@@ -956,6 +1016,8 @@ func (db *DB) DeletePost(ctx context.Context, id string) error {
 // - retry_count < threshold (not permanently skipped)
 // - Either retry_count == 0 (never tried) OR enough time has passed since last_attempt
 // backoffDelay = min(backoffBase * 2^(retryCount-1), backoffMax)
+//
+//nolint:cyclop // complexity required for backoff calculation and eligibility logic
 func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.Duration, threshold int) ([]string, error) {
 	query := `
 		SELECT id, retry_count, last_attempt FROM posts
@@ -966,7 +1028,9 @@ func (db *DB) GetPostsToRetry(ctx context.Context, backoffBase, backoffMax time.
 	if err != nil {
 		return nil, fmt.Errorf("failed to query posts to retry: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close() //nolint:errcheck
+	}()
 
 	var eligiblePosts []string
 

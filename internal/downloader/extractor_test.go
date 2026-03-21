@@ -14,7 +14,7 @@ import (
 func TestExtractorPermalink(t *testing.T) {
 	tests := []struct {
 		name           string
-		post           reddit.RedditPost
+		post           reddit.Post
 		wantCount      int
 		wantURL        string
 		wantFilename   string
@@ -26,7 +26,7 @@ func TestExtractorPermalink(t *testing.T) {
 	}{
 		{
 			name: "URLOverride image",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:          "url123",
 				Title:       "Test Post",
 				Subreddit:   "pics",
@@ -40,7 +40,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "URLOverride image on old.reddit.com",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:          "old123",
 				Title:       "Old Reddit Post",
 				Subreddit:   "pics",
@@ -54,7 +54,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "URLOverride image on reddit.com",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:          "reddit123",
 				Title:       "Reddit Post",
 				Subreddit:   "pics",
@@ -68,7 +68,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "MediaMeta",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "meta123",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -87,7 +87,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "MediaMeta multiple keys unsorted",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "meta456",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -113,7 +113,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Gallery",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "gal123",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -136,14 +136,14 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Video priority",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "vid123",
 				Title:     "Test Video Post",
 				Subreddit: "videos",
 				URL:       "https://www.reddit.com/r/videos/comments/vid123/test/",
 				IsVideo:   true,
 				Media: &reddit.Media{
-					RedditVideo: &reddit.RedditVideo{
+					Video: &reddit.Video{
 						FallbackURL: "https://v.redd.it/vid123/DASH_720.mp4",
 					},
 				},
@@ -155,7 +155,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Video wins over others",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:          "vidmix",
 				Title:       "Test Video Post",
 				Subreddit:   "videos",
@@ -172,7 +172,7 @@ func TestExtractorPermalink(t *testing.T) {
 					},
 				},
 				Media: &reddit.Media{
-					RedditVideo: &reddit.RedditVideo{
+					Video: &reddit.Video{
 						FallbackURL: "https://v.redd.it/vidmix/DASH_720.mp4",
 					},
 				},
@@ -184,7 +184,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "No media",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "nomedia",
 				Title:     "Text Post",
 				Subreddit: "pics",
@@ -195,7 +195,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "MediaMeta with empty Source.URL (no fallback)",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "emptyurl",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -211,7 +211,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "MediaMeta with empty Source.URL (fallback to preview)",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "fallback",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -233,7 +233,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "MediaMeta with empty/unsupported Mime",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "bademime",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -252,7 +252,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Gallery with MediaID missing from MediaMeta",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "galmiss",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -279,7 +279,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Gallery with all MediaIDs missing from MediaMeta",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:        "galallmiss",
 				Title:     "Test Post",
 				Subreddit: "pics",
@@ -298,7 +298,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Gallery URL with MediaMeta but no GalleryData",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:          "1reif3h",
 				Title:       "Gallery Post",
 				Subreddit:   "pics",
@@ -319,7 +319,7 @@ func TestExtractorPermalink(t *testing.T) {
 		},
 		{
 			name: "Gallery URL without MediaMeta - should skip",
-			post: reddit.RedditPost{
+			post: reddit.Post{
 				ID:          "1reif3h",
 				Title:       "Gallery Post",
 				Subreddit:   "pics",
@@ -401,7 +401,7 @@ func TestFetchTextAndJSONErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.statusCode)
 			}))
 			defer server.Close()
@@ -482,12 +482,12 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if tt.statusCode == http.StatusOK && tt.contentType != "" {
 					w.Header().Set("Content-Type", tt.contentType)
 					if tt.contentType == "application/json" {
-						resp := map[string]interface{}{
-							"gif": map[string]interface{}{
+						resp := map[string]any{
+							"gif": map[string]any{
 								"urls": map[string]string{
 									"hd": "https://redgifs.com/get/HD.mp4",
 									"sd": "https://redgifs.com/get/SD.mp4",
@@ -512,7 +512,7 @@ func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 			defer server.Close()
 
 			extractor := NewExtractor(server.Client(), "test-agent")
-			post := reddit.RedditPost{ID: "test123", Title: "Test", Subreddit: "test"}
+			post := reddit.Post{ID: "test123", Title: "Test", Subreddit: "test"}
 
 			items, err := extractor.extractGfycatRedgifs(context.Background(), post, server.URL+tt.endpointPath)
 

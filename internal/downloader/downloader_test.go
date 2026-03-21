@@ -16,10 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
 func validJPEGData() []byte {
@@ -27,6 +28,7 @@ func validJPEGData() []byte {
 	data[0] = 0xFF
 	data[1] = 0xD8
 	data[2] = 0xFF
+
 	for i := 3; i < len(data); i++ {
 		data[i] = byte(i % 256)
 	}
@@ -81,7 +83,11 @@ func (h *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 
 	host := strings.ToLower(req.URL.Host)
 	if _, ok := h.hosts[host]; !ok {
-		return base.RoundTrip(req)
+		resp, err := base.RoundTrip(req)
+		if err != nil {
+			return nil, fmt.Errorf("round trip failed: %w", err)
+		}
+		return resp, nil
 	}
 
 	clone := req.Clone(req.Context())
@@ -90,12 +96,18 @@ func (h *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 	cloneURL.Host = h.target.Host
 	clone.URL = &cloneURL
 	clone.Host = req.URL.Host
-	return base.RoundTrip(clone)
+	resp, err := base.RoundTrip(clone)
+	if err != nil {
+		return nil, fmt.Errorf("round trip failed: %w", err)
+	}
+	return resp, nil
 }
 
 func newRewriteClient(server *httptest.Server, hosts ...string) *http.Client {
 	target, _ := url.Parse(server.URL)
+
 	hostMap := make(map[string]struct{}, len(hosts))
+
 	for _, host := range hosts {
 		hostMap[strings.ToLower(host)] = struct{}{}
 	}
@@ -122,7 +134,7 @@ func waitForCondition(t *testing.T, condition func() bool, timeout time.Duration
 
 func TestExtractorRedditImage(t *testing.T) {
 	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "abc123",
 		Subreddit: "pics",
 		URL:       "https://i.redd.it/abc123.jpg",
@@ -144,7 +156,7 @@ func TestExtractorRedditImage(t *testing.T) {
 }
 
 func TestExtractorGallery(t *testing.T) {
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "gal123",
 		Subreddit: "pics",
 		GalleryData: &reddit.GalleryData{
@@ -192,12 +204,12 @@ func TestExtractorRedditVideoDash(t *testing.T) {
 
 	client := newRewriteClient(server, "v.redd.it")
 	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "abc",
 		Subreddit: "videos",
 		IsVideo:   true,
 		Media: &reddit.Media{
-			RedditVideo: &reddit.RedditVideo{DashURL: "https://v.redd.it/abc/DASHPlaylist.mpd"},
+			Video: &reddit.Video{DashURL: "https://v.redd.it/abc/DASHPlaylist.mpd"},
 		},
 		URL: "https://v.redd.it/abc",
 	}
@@ -215,15 +227,15 @@ func TestExtractorRedditVideoDash(t *testing.T) {
 }
 
 func TestExtractorImgurPage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintln(w, `<meta property="og:image" content="https://i.imgur.com/test.jpg">`)
+		_, _ = fmt.Fprintln(w, `<meta property="og:image" content="https://i.imgur.com/test.jpg">`)
 	}))
 	defer server.Close()
 
 	client := newRewriteClient(server, "imgur.com")
 	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "img1",
 		Subreddit: "pics",
 		URL:       "https://imgur.com/abcd",
@@ -254,13 +266,13 @@ func TestExtractorRedgifsAPI(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(w).Encode(payload)
+		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	defer server.Close()
 
 	client := newRewriteClient(server, "api.redgifs.com")
 	extractor := NewExtractor(client, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "rg1",
 		Subreddit: "gifs",
 		URL:       "https://redgifs.com/watch/sample",
@@ -280,7 +292,7 @@ func TestExtractorRedgifsAPI(t *testing.T) {
 
 func TestExtractorDirectLink(t *testing.T) {
 	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
-	post := reddit.RedditPost{
+	post := reddit.Post{
 		ID:        "dir1",
 		Subreddit: "videos",
 		URL:       "https://example.com/clip.webm",
@@ -308,14 +320,15 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 	// Create a valid JPEG file (at least 1KB) to test validation
 	bdfrStyleFilePath := filepath.Join(subredditDir, "abc123.jpg")
 	// Valid JPEG magic bytes: 0xFF 0xD8 0xFF
-	validContent := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00}
+	validContent := make([]byte, 0, 11)
+	validContent = append(validContent, 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00)
 	// Pad to at least 1KB
 	validContent = append(validContent, make([]byte, 1024-len(validContent))...)
 	if err := os.WriteFile(bdfrStyleFilePath, validContent, 0644); err != nil {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return nil, errors.New("unexpected request")
 	})}
 
@@ -332,6 +345,7 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "abc123_1.jpg",
 		URL:       "https://example.com/abc123.jpg",
+		ItemIndex: -1,
 	}}
 
 	hashes, err := downloader.Download(context.Background(), items)
@@ -347,14 +361,14 @@ func TestDownloaderSkipsExisting(t *testing.T) {
 func TestDownloaderRetries(t *testing.T) {
 	validData := validJPEGData()
 	var calls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		count := atomic.AddInt32(&calls, 1)
 		if count < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -374,6 +388,7 @@ func TestDownloaderRetries(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "retry1_1.jpg",
 		URL:       server.URL + "/file.jpg",
+		ItemIndex: -1,
 	}}
 
 	if _, err := downloader.Download(context.Background(), items); err != nil {
@@ -396,11 +411,12 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
 	outputDir := t.TempDir()
+
 	downloader := NewDownloader(Config{
 		OutputDir:   outputDir,
 		HTTPClient:  server.Client(),
@@ -411,8 +427,8 @@ func TestDownloaderContinuesOnError(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{
-		{PostID: "fail", Subreddit: "pics", Filename: "fail_1.jpg", URL: server.URL + "/fail.jpg"},
-		{PostID: "ok", Subreddit: "pics", Filename: "ok_1.jpg", URL: server.URL + "/ok.jpg"},
+		{PostID: "fail", Subreddit: "pics", Filename: "fail_1.jpg", URL: server.URL + "/fail.jpg", ItemIndex: -1},
+		{PostID: "ok", Subreddit: "pics", Filename: "ok_1.jpg", URL: server.URL + "/ok.jpg", ItemIndex: -1},
 	}
 
 	if _, err := downloader.Download(context.Background(), items); err == nil {
@@ -429,15 +445,17 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	validData := validJPEGData()
 	var active int32
 	var maxActive int32
+
 	block := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		current := atomic.AddInt32(&active, 1)
 		for {
-			max := atomic.LoadInt32(&maxActive)
-			if current <= max {
+			m := atomic.LoadInt32(&maxActive)
+			if current <= m {
 				break
 			}
-			if atomic.CompareAndSwapInt32(&maxActive, max, current) {
+			if atomic.CompareAndSwapInt32(&maxActive, m, current) {
 				break
 			}
 		}
@@ -445,11 +463,12 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 		<-block
 		atomic.AddInt32(&active, -1)
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
 	outputDir := t.TempDir()
+
 	downloader := NewDownloader(Config{
 		OutputDir:   outputDir,
 		HTTPClient:  server.Client(),
@@ -460,13 +479,14 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{
-		{PostID: "p1", Subreddit: "pics", Filename: "p1_1.jpg", URL: server.URL + "/1.jpg"},
-		{PostID: "p2", Subreddit: "pics", Filename: "p2_1.jpg", URL: server.URL + "/2.jpg"},
-		{PostID: "p3", Subreddit: "pics", Filename: "p3_1.jpg", URL: server.URL + "/3.jpg"},
-		{PostID: "p4", Subreddit: "pics", Filename: "p4_1.jpg", URL: server.URL + "/4.jpg"},
+		{PostID: "p1", Subreddit: "pics", Filename: "p1_1.jpg", URL: server.URL + "/1.jpg", ItemIndex: -1},
+		{PostID: "p2", Subreddit: "pics", Filename: "p2_1.jpg", URL: server.URL + "/2.jpg", ItemIndex: -1},
+		{PostID: "p3", Subreddit: "pics", Filename: "p3_1.jpg", URL: server.URL + "/3.jpg", ItemIndex: -1},
+		{PostID: "p4", Subreddit: "pics", Filename: "p4_1.jpg", URL: server.URL + "/4.jpg", ItemIndex: -1},
 	}
 
 	done := make(chan error, 1)
+
 	go func() {
 		_, err := downloader.Download(context.Background(), items)
 		done <- err
@@ -480,19 +500,17 @@ func TestDownloaderConcurrencyLimit(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("Download() error = %v", err)
 	}
-	if max := atomic.LoadInt32(&maxActive); max > 2 {
-		t.Fatalf("max concurrency = %d, want <= 2", max)
+	if m := atomic.LoadInt32(&maxActive); m > 2 {
+		t.Fatalf("max concurrency = %d, want <= 2", m)
 	}
 }
 
 type dedupTestSetup struct {
-	outputDir    string
-	subredditDir string
 	db           *storage.DB
 	server       *httptest.Server
 	downloader   *Downloader
-	existingFile string
-	existingHash string
+	outputDir    string
+	subredditDir string
 }
 
 func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup {
@@ -504,12 +522,12 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err, "NewDB error")
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(serverContent)
+		_, _ = w.Write(serverContent)
 	}))
 
 	d := NewDownloader(Config{
@@ -532,7 +550,7 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 func (s *dedupTestSetup) cleanup() {
 	s.server.Close()
-	s.db.Close()
+	_ = s.db.Close()
 }
 
 func (s *dedupTestSetup) createExistingFile(t *testing.T, filename string, content []byte, postID string) string {
@@ -563,14 +581,14 @@ func TestDeduplication(t *testing.T) {
 	uniqueData[100] = 0xAB
 
 	tests := []struct {
-		name                string
 		serverContent       []byte
-		existingFile        bool
 		existingFileContent []byte
+		name                string
 		existingFilename    string
 		existingPostID      string
 		newPostID           string
 		newFilename         string
+		existingFile        bool
 		wantEmptyHash       bool
 		wantFileExists      bool
 		wantExistingFile    bool
@@ -643,10 +661,11 @@ func TestDeduplication(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  tt.newFilename,
 				URL:       setup.server.URL + "/download.jpg",
+				ItemIndex: -1,
 			}}
 
 			if tt.triggerDBError {
-				setup.db.Close()
+				_ = setup.db.Close()
 			}
 
 			hashes, err := setup.downloader.Download(context.Background(), items)
@@ -660,21 +679,18 @@ func TestDeduplication(t *testing.T) {
 					assert.Empty(t, hashes[tt.newPostID], "Expected empty hash (error)")
 				} else {
 					hash := hashes[tt.newPostID]
-					assert.NotEmpty(t, hash, "Hash should be marked with DUPLICATE prefix for duplicates")
-					assert.True(t, strings.HasPrefix(hash, "DUPLICATE:"), "Expected hash to start with DUPLICATE: prefix, got %s", hash)
+					assert.NotEmpty(t, hash, "Hash should be returned for duplicates")
+					assert.Len(t, hash, 64, "Expected raw hash length 64 for duplicates")
+					assert.Equal(t, "true", hashes[tt.newPostID+"_duplicate"], "Expected duplicate marker to be set")
 				}
 			} else {
 				assert.NotEmpty(t, hashes[tt.newPostID], "Hash should be returned for new file")
-				assert.False(t, strings.HasPrefix(hashes[tt.newPostID], "DUPLICATE:"), "Hash should not be marked as duplicate for new file")
+				assert.Empty(t, hashes[tt.newPostID+"_duplicate"], "Hash should not be marked as duplicate for new file")
 			}
 
 			if tt.checkHashLength {
 				hash := hashes[tt.newPostID]
-				expectedLen := 64
-				if strings.HasPrefix(hash, "DUPLICATE:") {
-					expectedLen = 75
-				}
-				assert.Equal(t, expectedLen, len(hash), "Expected hash length %d, got %d (hash: %s)", expectedLen, len(hash), hash)
+				assert.Len(t, hash, 64, "Expected hash length 64, got %d (hash: %s)", len(hash), hash)
 			}
 
 			newFilePath := filepath.Join(setup.subredditDir, tt.newFilename)
@@ -702,7 +718,7 @@ func TestHashCalculation_Integration(t *testing.T) {
 	hash, err := CalculateFileHash(testFilePath)
 	require.NoError(t, err, "CalculateFileHash error")
 
-	assert.Equal(t, 64, len(hash), "Expected hash length 64")
+	assert.Len(t, hash, 64, "Expected hash length 64")
 
 	hash2, err := CalculateFileHash(testFilePath)
 	require.NoError(t, err, "CalculateFileHash error")
@@ -715,6 +731,59 @@ func TestHashCalculation_Integration(t *testing.T) {
 	assert.Equal(t, hash, hashFromBytes, "File hash and reader hash should match for same content")
 }
 
+// TestItemHashKey verifies that itemHashKey generates correct keys for single items and gallery items.
+func TestItemHashKey(t *testing.T) {
+	tests := []struct {
+		item    Downloadable
+		name    string
+		wantKey string
+	}{
+		{
+			name: "SingleItem",
+			item: Downloadable{
+				PostID:    "post123",
+				Filename:  "title_post123.jpg",
+				ItemIndex: -1,
+			},
+			wantKey: "post123",
+		},
+		{
+			name: "GalleryItemFirst",
+			item: Downloadable{
+				PostID:    "gal456",
+				Filename:  "title_1_gal456.jpg",
+				ItemIndex: 1, // 1-based indexing
+			},
+			wantKey: "gal456_1",
+		},
+		{
+			name: "GalleryItemSecond",
+			item: Downloadable{
+				PostID:    "gal456",
+				Filename:  "title_2_gal456.jpg",
+				ItemIndex: 2, // 1-based indexing
+			},
+			wantKey: "gal456_2",
+		},
+		{
+			name: "GalleryItemTenth",
+			item: Downloadable{
+				PostID:    "gal789",
+				Filename:  "title_10_gal789.jpg",
+				ItemIndex: 10, // 1-based indexing
+			},
+			wantKey: "gal789_10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotKey := itemHashKey(tt.item)
+			assert.Equal(t, tt.wantKey, gotKey)
+		})
+	}
+}
+
 func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 	smallData := []byte{0x00, 0x00, 0x00, 0x20, 'f', 't', 'y', 'p'}
 	pngData := make([]byte, 1024)
@@ -724,14 +793,14 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 	pngData[3] = 0x47
 
 	tests := []struct {
-		name                  string
 		payload               []byte
+		name                  string
 		contentType           string
+		expectedErrorContains string
 		statusCode            int
 		retries               int
-		expectedErrorContains string
-		expectFileExists      bool
 		expectedCalls         int32
+		expectFileExists      bool
 		expectHash            bool
 	}{
 		{
@@ -794,13 +863,13 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&calls, 1)
 				if tc.contentType != "" {
 					w.Header().Set("Content-Type", tc.contentType)
 				}
 				w.WriteHeader(tc.statusCode)
-				w.Write(tc.payload)
+				_, _ = w.Write(tc.payload)
 			}))
 			defer server.Close()
 
@@ -826,6 +895,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  filename,
 				URL:       server.URL + "/file" + ext,
+				ItemIndex: -1,
 			}}
 
 			hashes, err := downloader.Download(context.Background(), items)
@@ -856,7 +926,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 		validData := validMP4Data()
 		var calls int32
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			count := atomic.AddInt32(&calls, 1)
 			if count == 1 {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -864,7 +934,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "video/mp4")
 			w.WriteHeader(http.StatusOK)
-			w.Write(validData)
+			_, _ = w.Write(validData)
 		}))
 		defer server.Close()
 
@@ -884,6 +954,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			Subreddit: "pics",
 			Filename:  "retrytransient_1.mp4",
 			URL:       server.URL + "/video.mp4",
+			ItemIndex: -1,
 		}}
 
 		hashes, err := downloader.Download(context.Background(), items)
@@ -900,11 +971,11 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 		t.Run("HeaderBased", func(t *testing.T) {
 			var calls int32
 
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				atomic.AddInt32(&calls, 1)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
+				_, _ = fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content</body></html>`)
 			}))
 			defer server.Close()
 
@@ -924,6 +995,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  "permanent_1.mp4",
 				URL:       server.URL + "/video.mp4",
+				ItemIndex: -1,
 			}}
 
 			_, err := downloader.Download(context.Background(), items)
@@ -938,7 +1010,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				atomic.AddInt32(&calls, 1)
 				w.Header().Set("Content-Type", "video/mp4")
 				w.WriteHeader(http.StatusOK)
-				fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content disguised as video</body></html>`)
+				_, _ = fmt.Fprintln(w, `<!DOCTYPE html><html><body>HTML content disguised as video</body></html>`)
 			}))
 			defer server.Close()
 
@@ -958,6 +1030,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				Subreddit: "pics",
 				Filename:  "bodycheck_1.mp4",
 				URL:       server.URL + "/video.mp4",
+				ItemIndex: -1,
 			}}
 
 			_, err := downloader.Download(context.Background(), items)
@@ -975,11 +1048,11 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 				flusher.Flush()
 			}
 			// Write in chunks to ensure Content-Length isn't set
-			w.Write(smallData[:4])
+			_, _ = w.Write(smallData[:4])
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-			w.Write(smallData[4:])
+			_, _ = w.Write(smallData[4:])
 		}))
 		defer server.Close()
 
@@ -999,6 +1072,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			Subreddit: "pics",
 			Filename:  "smallchunked_1.mp4",
 			URL:       server.URL + "/small.mp4",
+			ItemIndex: -1,
 		}}
 
 		_, err := downloader.Download(context.Background(), items)
@@ -1038,6 +1112,7 @@ func TestDownloadValidationAndRetryBehavior(t *testing.T) {
 			Subreddit: "pics",
 			Filename:  "emptybody_1.mp4",
 			URL:       server.URL + "/video.mp4",
+			ItemIndex: -1,
 		}}
 
 		hashes, err := downloader.Download(context.Background(), items)
@@ -1063,7 +1138,7 @@ func TestDetectsCorruptExistingFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -1092,6 +1167,7 @@ func TestDetectsCorruptExistingFile(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "corrupttest_1.mp4",
 		URL:       server.URL + "/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, err := downloader.Download(context.Background(), items)
@@ -1118,7 +1194,7 @@ func TestValidExistingFileSkipped(t *testing.T) {
 		atomic.AddInt32(&requestCount, 1)
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
-		w.Write(validData)
+		_, _ = w.Write(validData)
 	}))
 	defer server.Close()
 
@@ -1127,7 +1203,8 @@ func TestValidExistingFileSkipped(t *testing.T) {
 	require.NoError(t, os.MkdirAll(subredditDir, 0755))
 
 	// Create valid existing file with proper POSTID pattern (6+ chars)
-	existingFile := filepath.Join(subredditDir, "existingvalid_123456.mp4")
+	// The POSTID must be the last 6+ alphanumeric segment before extension
+	existingFile := filepath.Join(subredditDir, "my_video_abc123.mp4")
 	require.NoError(t, os.WriteFile(existingFile, validData, 0644))
 
 	downloader := NewDownloader(Config{
@@ -1141,10 +1218,11 @@ func TestValidExistingFileSkipped(t *testing.T) {
 	}, nil)
 
 	items := []Downloadable{{
-		PostID:    "existingvalid",
+		PostID:    "abc123",
 		Subreddit: "pics",
-		Filename:  "existingvalid_1.mp4",
+		Filename:  "my_video_abc123.mp4",
 		URL:       server.URL + "/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, err := downloader.Download(context.Background(), items)
@@ -1152,9 +1230,9 @@ func TestValidExistingFileSkipped(t *testing.T) {
 
 	require.Equal(t, int32(0), requestCount, "Should not make any HTTP requests for existing valid file")
 
-	hash := hashes["existingvalid"]
+	hash := hashes["abc123"]
 	require.NotEmpty(t, hash, "Hash should be returned for existing file")
-	assert.False(t, strings.HasPrefix(hash, "DUPLICATE:"), "Local file reuse should NOT be marked as duplicate")
+	assert.Empty(t, hashes["abc123_duplicate"], "Local file reuse should NOT be marked as duplicate")
 }
 
 func TestKnownBadHashDetection(t *testing.T) {
@@ -1163,6 +1241,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	validTestData[5] = 't'
 	validTestData[6] = 'y'
 	validTestData[7] = 'p'
+
 	for i := 8; i < len(validTestData); i++ {
 		validTestData[i] = byte(i % 256)
 	}
@@ -1188,16 +1267,16 @@ func TestKnownBadHashDetection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
-		w.Write(validTestData)
+		_, _ = w.Write(validTestData)
 	}))
 	defer server.Close()
 
 	outputDir := t.TempDir()
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Save the post to the database first (required for IncrementRetry to work)
 	err = db.SavePost(context.Background(), &storage.Post{
@@ -1222,6 +1301,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "badhash123_1.mp4",
 		URL:       server.URL + "/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, downloadErr := downloader.Download(context.Background(), items)
@@ -1240,7 +1320,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	assert.Equal(t, errReasonKnownBadHash, post.LastError)
 
 	var valErr ValidationError
-	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
+	require.ErrorAs(t, downloadErr, &valErr, "Download error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
 }
@@ -1251,6 +1331,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 	existingFileContent[5] = 't'
 	existingFileContent[6] = 'y'
 	existingFileContent[7] = 'p'
+
 	for i := 8; i < len(existingFileContent); i++ {
 		existingFileContent[i] = byte(i % 256)
 	}
@@ -1280,9 +1361,9 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	err = db.SavePost(context.Background(), &storage.Post{
 		ID:        "existingbad",
@@ -1306,6 +1387,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 		Subreddit: "pics",
 		Filename:  "existingbad_1.mp4",
 		URL:       "http://example.com/video.mp4",
+		ItemIndex: -1,
 	}}
 
 	hashes, downloadErr := downloader.Download(context.Background(), items)
@@ -1323,7 +1405,261 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 	assert.Equal(t, errReasonKnownBadHash, post.LastError)
 
 	var valErr ValidationError
-	require.True(t, errors.As(downloadErr, &valErr), "Download error should be a ValidationError")
+	require.ErrorAs(t, downloadErr, &valErr, "Download error should be a ValidationError")
+	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
+	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
+}
+
+func TestErrRetryImmediately(t *testing.T) {
+	validData := validJPEGData()
+	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
+	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
+
+	tests := []struct {
+		name             string
+		postID           string
+		filename         string
+		wantHashKey      string
+		retries          int
+		wantRequestCount int32
+		setupFile        bool
+		blockAndCorrupt  bool
+	}{
+		{
+			name:             "BlockingFileCorruptRemoved",
+			postID:           "retrytest",
+			filename:         "retrytest_1.jpg",
+			setupFile:        true,
+			blockAndCorrupt:  true,
+			retries:          3,
+			wantRequestCount: 1,
+			wantHashKey:      "retrytest",
+		},
+		{
+			name:             "DownloadOncePath",
+			postID:           "retryimmed",
+			filename:         "retryimmed_1.jpg",
+			setupFile:        false,
+			blockAndCorrupt:  false,
+			retries:          2,
+			wantRequestCount: 1,
+			wantHashKey:      "retryimmed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requestCount int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&requestCount, 1)
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(validData)
+			}))
+			defer server.Close()
+
+			outputDir := t.TempDir()
+			subredditDir := filepath.Join(outputDir, "pics")
+			require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+			targetFile := filepath.Join(subredditDir, tt.filename)
+
+			if tt.blockAndCorrupt {
+				require.NoError(t, os.WriteFile(targetFile, corruptData, 0644))
+			}
+
+			d := NewDownloader(Config{
+				OutputDir:   outputDir,
+				HTTPClient:  server.Client(),
+				Retries:     tt.retries,
+				BackoffBase: time.Millisecond,
+				Timeout:     time.Second,
+				UserAgent:   "test-agent",
+				Concurrency: 1,
+			}, nil)
+
+			items := []Downloadable{{
+				PostID:    tt.postID,
+				Subreddit: "pics",
+				Filename:  tt.filename,
+				URL:       server.URL + "/image.jpg",
+				ItemIndex: -1,
+			}}
+
+			hashes, err := d.Download(context.Background(), items)
+			require.NoError(t, err, "Download should succeed")
+
+			assert.Equal(t, tt.wantRequestCount, atomic.LoadInt32(&requestCount), "HTTP request count mismatch")
+
+			content, readErr := os.ReadFile(targetFile)
+			require.NoError(t, readErr, "Should be able to read file")
+			assert.Equal(t, validData, content, "File should contain valid data")
+			assert.NotEmpty(t, hashes[tt.wantHashKey], "Hash should be returned")
+		})
+	}
+}
+
+// TestCheckAndHandleExistingFile tests the checkAndHandleExistingFile function
+func TestCheckAndHandleExistingFile(t *testing.T) {
+	validData := validJPEGData()
+	corruptData := []byte(`<!DOCTYPE html><html><body>Not an image</body></html>`)
+	corruptData = append(corruptData, make([]byte, 1024-len(corruptData))...)
+
+	tests := []struct {
+		fileContent    []byte
+		name           string
+		fileExists     bool
+		wantHash       bool
+		wantLocalReuse bool
+		wantRemoved    bool
+		wantErr        bool
+	}{
+		{
+			name:           "NoExistingFile",
+			fileExists:     false,
+			wantHash:       false,
+			wantLocalReuse: false,
+			wantRemoved:    false,
+			wantErr:        false,
+		},
+		{
+			name:           "ValidExistingFile",
+			fileExists:     true,
+			fileContent:    validData,
+			wantHash:       true,
+			wantLocalReuse: true,
+			wantRemoved:    false,
+			wantErr:        false,
+		},
+		{
+			name:           "CorruptFileRemoved",
+			fileExists:     true,
+			fileContent:    corruptData,
+			wantHash:       false,
+			wantLocalReuse: false,
+			wantRemoved:    true,
+			wantErr:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			subredditDir := filepath.Join(tempDir, "testsub")
+			require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+			// Use POSTID pattern: filename starting with 6+ char POSTID
+			filePath := filepath.Join(subredditDir, "abcdef.jpg")
+
+			d := NewDownloader(Config{
+				OutputDir: tempDir,
+				Retries:   1,
+				Timeout:   time.Second,
+				UserAgent: "test-agent",
+			}, nil)
+
+			if tt.fileExists {
+				require.NoError(t, os.WriteFile(filePath, tt.fileContent, 0644))
+			}
+
+			hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "abcdef", "abcdef.jpg")
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			if tt.wantHash {
+				assert.NotEmpty(t, hash, "hash should be returned")
+			} else {
+				assert.Empty(t, hash, "hash should be empty")
+			}
+
+			assert.Equal(t, tt.wantLocalReuse, isLocalReuse, "isLocalReuse mismatch")
+			assert.Equal(t, tt.wantRemoved, wasRemoved, "wasRemoved mismatch")
+
+			if tt.wantRemoved {
+				_, statErr := os.Stat(filePath)
+				assert.True(t, os.IsNotExist(statErr), "file should be removed")
+			}
+		})
+	}
+}
+
+// TestCheckAndHandleExistingFile_KnownBadHash tests that checkAndHandleExistingFile
+// properly detects and removes files with known bad hashes
+func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
+	testData := make([]byte, 1024)
+	testData[0] = 0xFF
+	testData[1] = 0xD8
+	testData[2] = 0xFF
+
+	for i := 3; i < len(testData); i++ {
+		testData[i] = byte(i % 256)
+	}
+
+	tempDir := t.TempDir()
+	subredditDir := filepath.Join(tempDir, "pics")
+	require.NoError(t, os.MkdirAll(subredditDir, 0755))
+
+	filePath := filepath.Join(subredditDir, "badhash.jpg")
+	require.NoError(t, os.WriteFile(filePath, testData, 0644))
+
+	badHash, err := CalculateFileHash(filePath)
+	require.NoError(t, err)
+
+	// Lock and modify knownBadHashes - hold lock for entire test
+	knownBadHashesMu.Lock()
+	defer knownBadHashesMu.Unlock()
+	originalBadHashes := make(map[string]bool)
+	for k, v := range knownBadHashes {
+		originalBadHashes[k] = v
+	}
+	knownBadHashes[badHash] = true
+
+	defer func() {
+		// Lock is already held by outer defer, just restore
+		knownBadHashes = originalBadHashes
+	}()
+
+	dbDir := t.TempDir()
+	dbPath := filepath.Join(dbDir, "test.db")
+	db, err := storage.NewDB(context.Background(), dbPath)
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	// Save post to database
+	err = db.SavePost(context.Background(), &storage.Post{
+		ID:        "badhash",
+		Title:     "Test",
+		Subreddit: "pics",
+	})
+	require.NoError(t, err)
+
+	d := NewDownloader(Config{
+		OutputDir: tempDir,
+		Retries:   1,
+		Timeout:   time.Second,
+		UserAgent: "test-agent",
+	}, db)
+
+	hash, isLocalReuse, wasRemoved, err := d.checkAndHandleExistingFile(context.Background(), subredditDir, "badhash", "badhash.jpg")
+
+	// Should return an error for known bad hash
+	require.Error(t, err, "should error for known bad hash")
+	assert.Empty(t, hash, "hash should be empty")
+	assert.False(t, isLocalReuse, "should not be local reuse")
+	assert.True(t, wasRemoved, "file should be marked as removed")
+
+	// Verify file was removed
+	_, statErr := os.Stat(filePath)
+	assert.True(t, os.IsNotExist(statErr), "file with bad hash should be removed")
+
+	// Check that error is a ValidationError with Permanent=true
+	var valErr ValidationError
+	require.ErrorAs(t, err, &valErr, "error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
 }

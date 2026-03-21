@@ -22,14 +22,15 @@ import (
 
 func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 	t.Helper()
+	ctx := context.Background()
 
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(ctx, dbPath)
 	require.NoError(t, err, "Failed to create test database")
 
 	cleanup := func() {
-		db.Close()
+		_ = db.Close()
 	}
 
 	return db, tempDir, cleanup
@@ -69,7 +70,8 @@ func TestReCheckMode_FileMissing(t *testing.T) {
 
 		_, err := os.Stat(p.FilePath)
 		if err != nil {
-			assert.NoError(t, db.ResetRetry(ctx, p.ID), "Error resetting retry for %s", p.ID)
+			require.NoError(t, db.ResetRetry(ctx, p.ID), "Error resetting retry for %s", p.ID)
+
 			missingCount++
 		}
 	}
@@ -325,15 +327,15 @@ func TestExponentialBackoffCalculation(t *testing.T) {
 	}
 }
 
-func calculateBackoffDelay(retryCount int, base, max time.Duration) time.Duration {
+func calculateBackoffDelay(retryCount int, base, maxDelay time.Duration) time.Duration {
 	if retryCount < 0 || base <= 0 {
 		return 0
 	}
 
 	delay := base * time.Duration(1<<uint(retryCount))
 
-	if max > 0 && delay > max {
-		return max
+	if maxDelay > 0 && delay > maxDelay {
+		return maxDelay
 	}
 	return delay
 }
@@ -348,9 +350,9 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 	maxDelay := time.Second
 
 	testCases := []struct {
-		name             string
 		setupFunc        func(string) (*storage.Post, error)
 		waitAfterSetup   time.Duration
+		name             string
 		expectExists     bool
 		expectFileExists bool
 		expectShouldSkip bool
@@ -361,7 +363,7 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 			setupFunc: func(id string) (*storage.Post, error) {
 				filePath := filepath.Join(tempDir, id+".jpg")
 				if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
-					return nil, err
+					return nil, fmt.Errorf("write test file: %w", err)
 				}
 				return &storage.Post{
 					ID:           id,
@@ -443,11 +445,15 @@ func TestCheckPostStatus_Integration(t *testing.T) {
 			switch tc.name {
 			case "missing_file_after_backoff":
 				for i := 0; i < 1; i++ {
-					db.IncrementRetry(ctx, postID, "error")
+					if err := db.IncrementRetry(ctx, postID, "error"); err != nil {
+						t.Fatalf("Failed to increment retry: %v", err)
+					}
 				}
 			case "exceeds_threshold":
 				for i := 0; i < 4; i++ {
-					db.IncrementRetry(ctx, postID, "error")
+					if err := db.IncrementRetry(ctx, postID, "error"); err != nil {
+						t.Fatalf("Failed to increment retry: %v", err)
+					}
 				}
 			}
 
@@ -534,10 +540,12 @@ func TestReCheckMode_NoFilePath(t *testing.T) {
 	}
 
 	var processedCount int
+
 	for _, p := range posts {
 		if p.FilePath == "" {
 			continue
 		}
+
 		processedCount++
 	}
 
@@ -558,7 +566,7 @@ type mockRedditClient struct {
 	savedCalls   int
 }
 
-func (m *mockRedditClient) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *mockRedditClient) GetUpvoted(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.upvotedCalls++
 	if limit >= len(m.upvoted) {
@@ -567,7 +575,7 @@ func (m *mockRedditClient) GetUpvoted(ctx context.Context, limit int) ([]storage
 	return m.upvoted[:limit], nil
 }
 
-func (m *mockRedditClient) GetSaved(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *mockRedditClient) GetSaved(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.savedCalls++
 	if limit >= len(m.saved) {
@@ -605,11 +613,11 @@ func TestE2E_FullWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
 	if err != nil {
@@ -633,7 +641,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
 	}
-	if err := db.SetMetadata(ctx, "full_sync_once", "pending"); err != nil {
+	if err := db.SetMetadata(ctx, "full_sync_once", storage.MetadataValuePending); err != nil {
 		t.Fatalf("Failed to set full_sync_once: %v", err)
 	}
 
@@ -649,7 +657,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once: %v", err)
 	}
-	if fullSyncOnce != "pending" {
+	if fullSyncOnce != storage.MetadataValuePending {
 		t.Errorf("Expected full_sync_once=pending, got: %s", fullSyncOnce)
 	}
 
@@ -703,7 +711,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after first run: %v", err)
 	}
-	if fullSyncOnce != "pending" {
+	if fullSyncOnce != storage.MetadataValuePending {
 		t.Errorf("Expected full_sync_once=pending after first run with errors, got: %s", fullSyncOnce)
 	}
 
@@ -725,7 +733,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after second run: %v", err)
 	}
-	if fullSyncOnce != "pending" {
+	if fullSyncOnce != storage.MetadataValuePending {
 		t.Errorf("Expected full_sync_once=pending after second run with errors, got: %s", fullSyncOnce)
 	}
 
@@ -819,11 +827,11 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
@@ -931,11 +939,11 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
@@ -975,12 +983,12 @@ func TestRunFileReorganization_Table(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := []struct {
-		name            string
 		setupFunc       func(tempDir string) (string, string, string, *storage.DB, func())
-		expectError     bool
+		name            string
 		expectErrMsg    string
 		expectMovedPath string
 		expectedDBPost  string
+		expectError     bool
 	}{
 		{
 			name: "successful reorganization",
@@ -1013,12 +1021,12 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create HTML file: %v", err)
 				}
 
-				db, err := storage.NewDB(dbPath)
+				db, err := storage.NewDB(ctx, dbPath)
 				if err != nil {
 					t.Fatalf("Failed to create database: %v", err)
 				}
 
-				return sourceDir, destDir, "", db, func() { db.Close() }
+				return sourceDir, destDir, "", db, func() { _ = db.Close() }
 			},
 			expectError:     false,
 			expectMovedPath: "testsubreddit/test_post_1r4wjj5.jpg",
@@ -1055,12 +1063,12 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create index.html: %v", err)
 				}
 
-				db, err := storage.NewDB(dbPath)
+				db, err := storage.NewDB(ctx, dbPath)
 				if err != nil {
 					t.Fatalf("Failed to create database: %v", err)
 				}
 
-				return sourceDir, destDir, "", db, func() { db.Close() }
+				return sourceDir, destDir, "", db, func() { _ = db.Close() }
 			},
 			expectError:     false,
 			expectMovedPath: "testsubreddit/test_post_1r4wjj5.jpg",
@@ -1072,13 +1080,13 @@ func TestRunFileReorganization_Table(t *testing.T) {
 				destDir := filepath.Join(tempDir, "output")
 				dbPath := filepath.Join(tempDir, "posts.db")
 
-				db, err := storage.NewDB(dbPath)
+				db, err := storage.NewDB(ctx, dbPath)
 				if err != nil {
 					t.Fatalf("Failed to create database: %v", err)
 				}
 
 				nonExistentDir := filepath.Join(tempDir, "nonexistent")
-				return nonExistentDir, destDir, "", db, func() { db.Close() }
+				return nonExistentDir, destDir, "", db, func() { _ = db.Close() }
 			},
 			expectError:  true,
 			expectErrMsg: "source directory does not exist",
@@ -1088,6 +1096,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			tempDir := t.TempDir()
+
 			sourceDir, destDir, htmlDir, db, cleanup := tc.setupFunc(tempDir)
 			defer cleanup()
 
@@ -1139,11 +1148,11 @@ func TestE2E_ReCheckMissingFiles(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	existingFile := filepath.Join(outputDir, "existing.jpg")
 	missingFile := filepath.Join(outputDir, "missing.jpg")
@@ -1212,7 +1221,7 @@ type capturingMockClient struct {
 	savedLimit   int
 }
 
-func (m *capturingMockClient) GetUpvoted(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *capturingMockClient) GetUpvoted(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.upvotedLimit = limit
 	if limit >= len(m.upvoted) {
@@ -1221,7 +1230,7 @@ func (m *capturingMockClient) GetUpvoted(ctx context.Context, limit int) ([]stor
 	return m.upvoted[:limit], nil
 }
 
-func (m *capturingMockClient) GetSaved(ctx context.Context, limit int) ([]storage.Post, error) {
+func (m *capturingMockClient) GetSaved(_ context.Context, limit int) ([]storage.Post, error) {
 	m.callCount++
 	m.savedLimit = limit
 	if limit >= len(m.saved) {
@@ -1245,16 +1254,16 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(dbPath)
+	db, err := storage.NewDB(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
 	}
-	if err := db.SetMetadata(ctx, "full_sync_once", "pending"); err != nil {
+	if err := db.SetMetadata(ctx, "full_sync_once", storage.MetadataValuePending); err != nil {
 		t.Fatalf("Failed to set full_sync_once: %v", err)
 	}
 
