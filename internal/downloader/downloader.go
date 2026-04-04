@@ -76,9 +76,9 @@ type fileLockEntry struct {
 //
 //nolint:fieldalignment
 type downloadTimer struct {
-	mu         sync.Mutex
-	lastStart  time.Time
-	minDelay   time.Duration
+	mu        sync.Mutex
+	lastStart time.Time
+	minDelay  time.Duration
 }
 
 // newDownloadTimer creates a new download timer with the specified minimum delay.

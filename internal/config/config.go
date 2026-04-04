@@ -49,9 +49,9 @@ type StorageConfig struct {
 
 // DownloadConfig holds downloader settings.
 type DownloadConfig struct {
-	Concurrency  int
-	FetchLimit   int
-	MaxRetries   int
+	Concurrency   int
+	FetchLimit    int
+	MaxRetries    int
 	DownloadDelay time.Duration
 }
 
@@ -171,9 +171,9 @@ func Load() (*Config, error) {
 			DBPath:    getEnv("DB_PATH", "./data/posts.db"),
 		},
 		Download: DownloadConfig{
-			Concurrency:  getEnvInt("CONCURRENCY", 10),
-			FetchLimit:   getEnvInt("FETCH_LIMIT", 100),
-			MaxRetries:   getEnvInt("MAX_RETRIES", 3),
+			Concurrency:   getEnvInt("CONCURRENCY", 10),
+			FetchLimit:    getEnvInt("FETCH_LIMIT", 100),
+			MaxRetries:    getEnvInt("MAX_RETRIES", 3),
 			DownloadDelay: getEnvDuration("DOWNLOAD_DELAY_MS", 200*time.Millisecond),
 		},
 		Log: LogConfig{
