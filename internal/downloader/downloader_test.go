@@ -1778,12 +1778,16 @@ func TestDownloadTimerConcurrencySafety(t *testing.T) {
 	finishTimes := make([]time.Time, numGoroutines)
 	var mu sync.Mutex
 
+	// Track errors from goroutines using a channel
+	errChan := make(chan error, numGoroutines)
+
 	for i := 0; i < numGoroutines; i++ {
 		idx := i
 		go func() {
 			defer wg.Done()
-			err := timer.Wait(ctx)
-			require.NoError(t, err, "Wait should not return error")
+			if err := timer.Wait(ctx); err != nil {
+				errChan <- fmt.Errorf("goroutine %d: %w", idx, err)
+			}
 			mu.Lock()
 			finishTimes[idx] = time.Now()
 			mu.Unlock()
@@ -1791,6 +1795,12 @@ func TestDownloadTimerConcurrencySafety(t *testing.T) {
 	}
 
 	wg.Wait()
+	close(errChan)
+
+	// Check for any errors from goroutines
+	for err := range errChan {
+		require.NoError(t, err, "Wait should not return error")
+	}
 
 	// Verify that calls were properly spaced out
 	// Sort finish times to check intervals
@@ -1826,12 +1836,16 @@ func TestDownloadTimerMultipleGoroutinesSpacedExecution(t *testing.T) {
 	completionTimes := make([]time.Time, numGoroutines)
 	var mu sync.Mutex
 
+	// Track errors from goroutines using a channel
+	errChan := make(chan error, numGoroutines)
+
 	for i := 0; i < numGoroutines; i++ {
 		idx := i
 		go func() {
 			defer wg.Done()
-			err := timer.Wait(ctx)
-			require.NoError(t, err, "Wait should not return error")
+			if err := timer.Wait(ctx); err != nil {
+				errChan <- fmt.Errorf("goroutine %d: %w", idx, err)
+			}
 			mu.Lock()
 			completionTimes[idx] = time.Now()
 			mu.Unlock()
@@ -1839,6 +1853,12 @@ func TestDownloadTimerMultipleGoroutinesSpacedExecution(t *testing.T) {
 	}
 
 	wg.Wait()
+	close(errChan)
+
+	// Check for any errors from goroutines
+	for err := range errChan {
+		require.NoError(t, err, "Wait should not return error")
+	}
 
 	// Sort completion times to check intervals
 	sort.Slice(completionTimes, func(i, j int) bool {
