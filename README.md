@@ -64,6 +64,7 @@ OUTPUT_DIR=./data/output          # Where to save media
 DB_PATH=./data/posts.db           # SQLite database path
 CONCURRENCY=10                    # Parallel downloads
 FETCH_LIMIT=100                   # Posts per fetch
+DOWNLOAD_DELAY_MS=200ms           # Delay between downloads
 
 # Retry and Backoff (optional)
 RETRY_THRESHOLD=3                 # Max retries before permanent skip
@@ -108,6 +109,7 @@ The application reads all configuration from environment variables. These can be
 | `DB_PATH` | `./data/posts.db` | SQLite database file path |
 | `CONCURRENCY` | `10` | Number of parallel downloads |
 | `FETCH_LIMIT` | `100` | Number of posts to fetch per cycle |
+| `DOWNLOAD_DELAY_MS` | `200ms` | Delay between downloads to avoid rate limiting |
 | `RETRY_THRESHOLD` | `3` | Max retries before permanently skipping a failed post |
 | `BACKOFF_BASE` | `5s` | Base delay for exponential backoff |
 | `BACKOFF_MAX` | `60s` | Maximum backoff delay |

@@ -158,9 +158,10 @@ func setupLogger(cfg *config.Config) *slog.Logger {
 // setupDownloader creates and configures the downloader.
 func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger) *downloader.Downloader {
 	downloaderConfig := downloader.Config{
-		OutputDir:   cfg.Storage.OutputDir,
-		Concurrency: cfg.Download.Concurrency,
-		Logger:      logger,
+		OutputDir:     cfg.Storage.OutputDir,
+		Concurrency:   cfg.Download.Concurrency,
+		DownloadDelay: cfg.Download.DownloadDelay,
+		Logger:        logger,
 	}
 	return downloader.NewDownloader(downloaderConfig, db)
 }

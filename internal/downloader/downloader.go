@@ -28,6 +28,7 @@ const (
 	defaultTimeout        = 30 * time.Second
 	defaultOutputDir      = "output"
 	defaultBackoffBase    = 500 * time.Millisecond
+	defaultDownloadDelay  = 200 * time.Millisecond
 	errReasonKnownBadHash = "corrupted content (known bad hash)"
 	maxImmediateRetries   = 5 // Maximum number of immediate retries to prevent infinite loops
 )
@@ -51,14 +52,15 @@ var knownBadHashesMu sync.Mutex
 //
 //nolint:fieldalignment
 type Config struct {
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
-	Timeout     time.Duration
-	BackoffBase time.Duration
-	OutputDir   string
-	UserAgent   string
-	Concurrency int
-	Retries     int
+	HTTPClient    *http.Client
+	Logger        *slog.Logger
+	Timeout       time.Duration
+	BackoffBase   time.Duration
+	DownloadDelay time.Duration
+	OutputDir     string
+	UserAgent     string
+	Concurrency   int
+	Retries       int
 }
 
 // fileLockEntry holds a mutex and reference count for per-path locking.
@@ -69,14 +71,81 @@ type fileLockEntry struct {
 	refs int32
 }
 
+// downloadTimer provides rate limiting for download requests.
+// It enforces a minimum delay between download starts to avoid overwhelming media hosts.
+//
+//nolint:fieldalignment
+type downloadTimer struct {
+	mu        sync.Mutex
+	lastStart time.Time
+	minDelay  time.Duration
+}
+
+// newDownloadTimer creates a new download timer with the specified minimum delay.
+// A delay of 0 means no rate limiting.
+func newDownloadTimer(minDelay time.Duration) *downloadTimer {
+	return &downloadTimer{
+		minDelay:  minDelay,
+		lastStart: time.Time{}, // Zero time means no downloads yet
+	}
+}
+
+// Wait blocks until the minimum delay has passed since the last download started.
+// Returns an error if the context is canceled.
+//
+// Slot reservation: Each goroutine atomically reserves a slot by calculating
+// its target time while holding the lock. This ensures sequential downloads
+// even under high contention. When context is canceled, the reservation
+// is NOT undone - the slot remains reserved for the next download.
+func (dt *downloadTimer) Wait(ctx context.Context) error {
+	if dt.minDelay <= 0 {
+		return nil
+	}
+
+	dt.mu.Lock()
+
+	// Calculate elapsed time since last download start
+	elapsed := time.Since(dt.lastStart)
+	if elapsed >= dt.minDelay {
+		// Enough time has passed, record this start time
+		dt.lastStart = time.Now()
+		dt.mu.Unlock()
+		return nil
+	}
+
+	// Need to wait for the remaining time
+	// Reserve a slot by calculating target time atomically while holding the lock
+	// This ensures each goroutine gets a sequential slot
+	target := dt.lastStart.Add(dt.minDelay)
+	dt.lastStart = target
+	dt.mu.Unlock()
+
+	// Wait until the reserved target time or context is canceled
+	waitDuration := time.Until(target)
+	if waitDuration <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(waitDuration)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context canceled: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
+}
+
 // Downloader orchestrates media downloads from Reddit posts.
 //
 //nolint:fieldalignment
 type Downloader struct {
-	config    Config
-	extractor *Extractor
-	logger    *slog.Logger
-	db        *storage.DB
+	config        Config
+	extractor     *Extractor
+	logger        *slog.Logger
+	db            *storage.DB
+	downloadTimer *downloadTimer
 	// fileLocks provides per-path mutexes to prevent race conditions
 	// when validating/removing files created with O_EXCL by another writer.
 	// Uses ref-counted entries to allow cleanup when no longer needed.
@@ -101,10 +170,11 @@ func NewDownloader(config Config, db *storage.DB) *Downloader {
 	}
 
 	return &Downloader{
-		config:    config,
-		extractor: NewExtractorWithLogger(config.HTTPClient, config.UserAgent, logger),
-		logger:    logger,
-		db:        db,
+		config:        config,
+		extractor:     NewExtractorWithLogger(config.HTTPClient, config.UserAgent, logger),
+		logger:        logger,
+		db:            db,
+		downloadTimer: newDownloadTimer(config.DownloadDelay),
 	}
 }
 
@@ -160,28 +230,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 		item := item
 
 		group.Go(func() error {
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("context canceled: %w", err)
-			}
-			hash, isDuplicate, err := d.downloadItem(ctx, item)
-			if err != nil {
-				d.logger.Error("download failed", "post_id", item.PostID, "url", item.URL, "error", err)
-				mu.Lock()
-
-				errs = append(errs, err)
-				mu.Unlock()
-				return fmt.Errorf("download item %s: %w", item.PostID, err)
-			}
-			mu.Lock()
-			if hash != "" {
-				key := itemHashKey(item)
-				hashes[key] = hash
-				if isDuplicate {
-					hashes[key+"_duplicate"] = "true"
-				}
-			}
-			mu.Unlock()
-			return nil
+			return d.downloadOne(ctx, item, hashes, &mu, &errs)
 		})
 	}
 
@@ -195,6 +244,44 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	}
 
 	return hashes, nil
+}
+
+// downloadOne downloads a single item and updates shared state.
+// It handles the ctx check, rate limiting, download, and shared state updates.
+// Returns any error that occurred during the download process.
+func (d *Downloader) downloadOne(
+	ctx context.Context,
+	item Downloadable,
+	hashes map[string]string,
+	mu *sync.Mutex,
+	errs *[]error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context canceled: %w", err)
+	}
+	// Wait for rate limiter before starting download
+	if err := d.downloadTimer.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
+	}
+	hash, isDuplicate, err := d.downloadItem(ctx, item)
+	if err != nil {
+		d.logger.Error("download failed", "post_id", item.PostID, "url", item.URL, "error", err)
+		mu.Lock()
+
+		*errs = append(*errs, err)
+		mu.Unlock()
+		return fmt.Errorf("download item %s: %w", item.PostID, err)
+	}
+	mu.Lock()
+	if hash != "" {
+		key := itemHashKey(item)
+		hashes[key] = hash
+		if isDuplicate {
+			hashes[key+"_duplicate"] = "true"
+		}
+	}
+	mu.Unlock()
+	return nil
 }
 
 // DownloadPosts extracts and downloads media from Reddit posts in one operation.
@@ -583,6 +670,9 @@ func applyDefaults(config Config) Config {
 	}
 	if config.BackoffBase <= 0 {
 		config.BackoffBase = defaultBackoffBase
+	}
+	if config.DownloadDelay < 0 {
+		config.DownloadDelay = defaultDownloadDelay
 	}
 	if config.UserAgent == "" {
 		config.UserAgent = defaultUserAgent

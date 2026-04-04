@@ -14,6 +14,7 @@ services:
       - DB_PATH=/data/posts.db
       - CONCURRENCY=${CONCURRENCY:-10}
       - FETCH_LIMIT=${FETCH_LIMIT:-100}
+      - DOWNLOAD_DELAY_MS=${DOWNLOAD_DELAY_MS:-200ms}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - MIGRATE_ON_START=${MIGRATE_ON_START:-true}
       - MIGRATE_REORGANIZE=${MIGRATE_REORGANIZE:-false}
