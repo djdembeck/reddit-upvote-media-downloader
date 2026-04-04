@@ -28,6 +28,7 @@ const (
 	defaultTimeout        = 30 * time.Second
 	defaultOutputDir      = "output"
 	defaultBackoffBase    = 500 * time.Millisecond
+	defaultDownloadDelay  = 200 * time.Millisecond
 	errReasonKnownBadHash = "corrupted content (known bad hash)"
 	maxImmediateRetries   = 5 // Maximum number of immediate retries to prevent infinite loops
 )
@@ -51,14 +52,15 @@ var knownBadHashesMu sync.Mutex
 //
 //nolint:fieldalignment
 type Config struct {
-	HTTPClient  *http.Client
-	Logger      *slog.Logger
-	Timeout     time.Duration
-	BackoffBase time.Duration
-	OutputDir   string
-	UserAgent   string
-	Concurrency int
-	Retries     int
+	HTTPClient    *http.Client
+	Logger        *slog.Logger
+	Timeout       time.Duration
+	BackoffBase   time.Duration
+	DownloadDelay time.Duration
+	OutputDir     string
+	UserAgent     string
+	Concurrency   int
+	Retries       int
 }
 
 // fileLockEntry holds a mutex and reference count for per-path locking.
@@ -69,14 +71,68 @@ type fileLockEntry struct {
 	refs int32
 }
 
+// downloadTimer provides rate limiting for download requests.
+// It enforces a minimum delay between download starts to avoid overwhelming media hosts.
+//
+//nolint:fieldalignment
+type downloadTimer struct {
+	mu         sync.Mutex
+	lastStart  time.Time
+	minDelay   time.Duration
+}
+
+// newDownloadTimer creates a new download timer with the specified minimum delay.
+// A delay of 0 means no rate limiting.
+func newDownloadTimer(minDelay time.Duration) *downloadTimer {
+	return &downloadTimer{
+		minDelay:  minDelay,
+		lastStart: time.Time{}, // Zero time means no downloads yet
+	}
+}
+
+// Wait blocks until the minimum delay has passed since the last download started.
+// Returns an error if the context is canceled.
+func (dt *downloadTimer) Wait(ctx context.Context) error {
+	if dt.minDelay <= 0 {
+		return nil
+	}
+
+	dt.mu.Lock()
+
+	// Calculate how long to wait
+	elapsed := time.Since(dt.lastStart)
+	if elapsed >= dt.minDelay {
+		// Enough time has passed, record this start time
+		dt.lastStart = time.Now()
+		dt.mu.Unlock()
+		return nil
+	}
+
+	// Need to wait for the remaining time
+	waitTime := dt.minDelay - elapsed
+	dt.mu.Unlock() // Unlock before sleeping to allow other goroutines to queue
+
+	select {
+	case <-ctx.Done():
+		// Context canceled, no need to update lastStart
+		return fmt.Errorf("context canceled: %w", ctx.Err())
+	case <-time.After(waitTime):
+		dt.mu.Lock()
+		dt.lastStart = time.Now()
+		dt.mu.Unlock()
+		return nil
+	}
+}
+
 // Downloader orchestrates media downloads from Reddit posts.
 //
 //nolint:fieldalignment
 type Downloader struct {
-	config    Config
-	extractor *Extractor
-	logger    *slog.Logger
-	db        *storage.DB
+	config        Config
+	extractor     *Extractor
+	logger        *slog.Logger
+	db            *storage.DB
+	downloadTimer *downloadTimer
 	// fileLocks provides per-path mutexes to prevent race conditions
 	// when validating/removing files created with O_EXCL by another writer.
 	// Uses ref-counted entries to allow cleanup when no longer needed.
@@ -101,10 +157,11 @@ func NewDownloader(config Config, db *storage.DB) *Downloader {
 	}
 
 	return &Downloader{
-		config:    config,
-		extractor: NewExtractorWithLogger(config.HTTPClient, config.UserAgent, logger),
-		logger:    logger,
-		db:        db,
+		config:        config,
+		extractor:     NewExtractorWithLogger(config.HTTPClient, config.UserAgent, logger),
+		logger:        logger,
+		db:            db,
+		downloadTimer: newDownloadTimer(config.DownloadDelay),
 	}
 }
 
@@ -162,6 +219,10 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 		group.Go(func() error {
 			if err := ctx.Err(); err != nil {
 				return fmt.Errorf("context canceled: %w", err)
+			}
+			// Wait for rate limiter before starting download
+			if err := d.downloadTimer.Wait(ctx); err != nil {
+				return fmt.Errorf("rate limiter: %w", err)
 			}
 			hash, isDuplicate, err := d.downloadItem(ctx, item)
 			if err != nil {
@@ -583,6 +644,9 @@ func applyDefaults(config Config) Config {
 	}
 	if config.BackoffBase <= 0 {
 		config.BackoffBase = defaultBackoffBase
+	}
+	if config.DownloadDelay < 0 {
+		config.DownloadDelay = defaultDownloadDelay
 	}
 	if config.UserAgent == "" {
 		config.UserAgent = defaultUserAgent
