@@ -92,6 +92,11 @@ func newDownloadTimer(minDelay time.Duration) *downloadTimer {
 
 // Wait blocks until the minimum delay has passed since the last download started.
 // Returns an error if the context is canceled.
+//
+// Slot reservation: Each goroutine atomically reserves a slot by calculating
+// its target time while holding the lock. This ensures sequential downloads
+// even under high contention. When context is canceled, the reservation
+// is NOT undone - the slot remains reserved for the next download.
 func (dt *downloadTimer) Wait(ctx context.Context) error {
 	if dt.minDelay <= 0 {
 		return nil
@@ -99,7 +104,7 @@ func (dt *downloadTimer) Wait(ctx context.Context) error {
 
 	dt.mu.Lock()
 
-	// Calculate how long to wait
+	// Calculate elapsed time since last download start
 	elapsed := time.Since(dt.lastStart)
 	if elapsed >= dt.minDelay {
 		// Enough time has passed, record this start time
@@ -109,17 +114,22 @@ func (dt *downloadTimer) Wait(ctx context.Context) error {
 	}
 
 	// Need to wait for the remaining time
-	waitTime := dt.minDelay - elapsed
-	dt.mu.Unlock() // Unlock before sleeping to allow other goroutines to queue
+	// Reserve a slot by calculating target time atomically while holding the lock
+	// This ensures each goroutine gets a sequential slot
+	target := dt.lastStart.Add(dt.minDelay)
+	dt.lastStart = target
+	dt.mu.Unlock()
+
+	// Wait until the reserved target time or context is canceled
+	waitDuration := time.Until(target)
+	if waitDuration <= 0 {
+		return nil
+	}
 
 	select {
 	case <-ctx.Done():
-		// Context canceled, no need to update lastStart
 		return fmt.Errorf("context canceled: %w", ctx.Err())
-	case <-time.After(waitTime):
-		dt.mu.Lock()
-		dt.lastStart = time.Now()
-		dt.mu.Unlock()
+	case <-time.After(waitDuration):
 		return nil
 	}
 }
@@ -217,32 +227,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 		item := item
 
 		group.Go(func() error {
-			if err := ctx.Err(); err != nil {
-				return fmt.Errorf("context canceled: %w", err)
-			}
-			// Wait for rate limiter before starting download
-			if err := d.downloadTimer.Wait(ctx); err != nil {
-				return fmt.Errorf("rate limiter: %w", err)
-			}
-			hash, isDuplicate, err := d.downloadItem(ctx, item)
-			if err != nil {
-				d.logger.Error("download failed", "post_id", item.PostID, "url", item.URL, "error", err)
-				mu.Lock()
-
-				errs = append(errs, err)
-				mu.Unlock()
-				return fmt.Errorf("download item %s: %w", item.PostID, err)
-			}
-			mu.Lock()
-			if hash != "" {
-				key := itemHashKey(item)
-				hashes[key] = hash
-				if isDuplicate {
-					hashes[key+"_duplicate"] = "true"
-				}
-			}
-			mu.Unlock()
-			return nil
+			return d.downloadOne(ctx, item, hashes, &mu, &errs)
 		})
 	}
 
@@ -256,6 +241,44 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	}
 
 	return hashes, nil
+}
+
+// downloadOne downloads a single item and updates shared state.
+// It handles the ctx check, rate limiting, download, and shared state updates.
+// Returns any error that occurred during the download process.
+func (d *Downloader) downloadOne(
+	ctx context.Context,
+	item Downloadable,
+	hashes map[string]string,
+	mu *sync.Mutex,
+	errs *[]error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context canceled: %w", err)
+	}
+	// Wait for rate limiter before starting download
+	if err := d.downloadTimer.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
+	}
+	hash, isDuplicate, err := d.downloadItem(ctx, item)
+	if err != nil {
+		d.logger.Error("download failed", "post_id", item.PostID, "url", item.URL, "error", err)
+		mu.Lock()
+
+		*errs = append(*errs, err)
+		mu.Unlock()
+		return fmt.Errorf("download item %s: %w", item.PostID, err)
+	}
+	mu.Lock()
+	if hash != "" {
+		key := itemHashKey(item)
+		hashes[key] = hash
+		if isDuplicate {
+			hashes[key+"_duplicate"] = "true"
+		}
+	}
+	mu.Unlock()
+	return nil
 }
 
 // DownloadPosts extracts and downloads media from Reddit posts in one operation.

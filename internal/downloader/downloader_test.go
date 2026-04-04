@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1662,4 +1665,361 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 	require.ErrorAs(t, err, &valErr, "error should be a ValidationError")
 	assert.True(t, valErr.Permanent, "ValidationError should be permanent")
 	assert.Equal(t, errReasonKnownBadHash, valErr.Reason)
+}
+
+// TestDownloadTimerBasicFunctionality tests the basic functionality of downloadTimer
+func TestDownloadTimerBasicFunctionality(t *testing.T) {
+	tests := []struct {
+		name       string
+		delay      time.Duration
+		waitBefore time.Duration
+		wantNilErr bool
+	}{
+		{
+			name:       "zero delay returns immediately",
+			delay:      0,
+			wantNilErr: true,
+		},
+		{
+			name:       "negative delay returns immediately",
+			delay:      -1 * time.Millisecond,
+			wantNilErr: true,
+		},
+		{
+			name:       "small delay with wait before returns immediately",
+			delay:      1 * time.Millisecond,
+			waitBefore: 10 * time.Millisecond,
+			wantNilErr: true,
+		},
+		{
+			name:       "small delay without wait before needs to wait",
+			delay:      50 * time.Millisecond,
+			waitBefore: 0,
+			wantNilErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			timer := newDownloadTimer(tt.delay)
+			ctx := context.Background()
+
+			// If we need to wait before the first call, simulate it
+			if tt.waitBefore > 0 {
+				timer.lastStart = time.Now().Add(-tt.waitBefore)
+			}
+
+			err := timer.Wait(ctx)
+			if tt.wantNilErr {
+				assert.NoError(t, err, "Wait should not return error")
+			} else {
+				assert.Error(t, err, "Wait should return error")
+			}
+		})
+	}
+}
+
+// TestDownloadTimerZeroDelay tests that Wait() with zero delay returns immediately
+func TestDownloadTimerZeroDelay(t *testing.T) {
+	timer := newDownloadTimer(0)
+	ctx := context.Background()
+
+	start := time.Now()
+	err := timer.Wait(ctx)
+	elapsed := time.Since(start)
+
+	assert.NoError(t, err, "Wait should not return error for zero delay")
+	assert.Less(t, elapsed, 10*time.Millisecond, "Wait should return immediately for zero delay")
+}
+
+// TestDownloadTimerCancelledContext tests that Wait() returns error when context is cancelled
+func TestDownloadTimerCancelledContext(t *testing.T) {
+	timer := newDownloadTimer(100 * time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// First call to set lastStart to now - this should return immediately
+	err := timer.Wait(ctx)
+	assert.NoError(t, err, "First Wait should not return error")
+
+	// Start waiting in a goroutine - this will have to wait
+	waitErr := make(chan error, 1)
+	go func() {
+		waitErr <- timer.Wait(ctx)
+	}()
+
+	// Wait for the goroutine to acquire the lock and start waiting
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancel context while the goroutine is waiting
+	cancel()
+
+	// Wait for the Wait to return
+	select {
+	case err := <-waitErr:
+		assert.Error(t, err, "Wait should return error when context is cancelled")
+		assert.Contains(t, err.Error(), "context canceled", "error should mention context canceled")
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for Wait to return")
+	}
+}
+
+// TestDownloadTimerConcurrencySafety tests that concurrent calls to Wait() are properly serialized
+func TestDownloadTimerConcurrencySafety(t *testing.T) {
+	// Use a reasonable delay that we can verify
+	delay := 20 * time.Millisecond
+	timer := newDownloadTimer(delay)
+	ctx := context.Background()
+
+	const numGoroutines = 5
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Track when each call completes
+	finishTimes := make([]time.Time, numGoroutines)
+	var mu sync.Mutex
+
+	for i := 0; i < numGoroutines; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+			err := timer.Wait(ctx)
+			assert.NoError(t, err, "Wait should not return error")
+			mu.Lock()
+			finishTimes[idx] = time.Now()
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify that calls were properly spaced out
+	// Sort finish times to check intervals
+	sort.Slice(finishTimes, func(i, j int) bool {
+		return finishTimes[i].Before(finishTimes[j])
+	})
+
+	// Check that the minimum interval between consecutive calls is close to delay
+	for i := 1; i < len(finishTimes); i++ {
+		interval := finishTimes[i].Sub(finishTimes[i-1])
+		// Allow some tolerance for test environment variations
+		assert.GreaterOrEqual(t, interval, delay/2, "calls should be spaced out by at least half the delay")
+	}
+}
+
+// TestDownloadTimerMultipleGoroutinesSpacedExecution tests that multiple goroutines waiting
+// result in spaced-out execution
+func TestDownloadTimerMultipleGoroutinesSpacedExecution(t *testing.T) {
+	// Use a larger delay to make spacing more obvious
+	delay := 50 * time.Millisecond
+	timer := newDownloadTimer(delay)
+	ctx := context.Background()
+
+	// Warm up the timer first so lastStart is set
+	err := timer.Wait(ctx)
+	require.NoError(t, err, "warmup Wait should not fail")
+
+	const numGoroutines = 3
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Track when each call completes
+	completionTimes := make([]time.Time, numGoroutines)
+	var mu sync.Mutex
+
+	for i := 0; i < numGoroutines; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+			err := timer.Wait(ctx)
+			assert.NoError(t, err, "Wait should not return error")
+			mu.Lock()
+			completionTimes[idx] = time.Now()
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+
+	// Sort completion times to check intervals
+	sort.Slice(completionTimes, func(i, j int) bool {
+		return completionTimes[i].Before(completionTimes[j])
+	})
+
+	// Verify that the time span from first to last is at least (numGoroutines - 1) * delay
+	if !completionTimes[numGoroutines-1].IsZero() && !completionTimes[0].IsZero() {
+		totalSpan := completionTimes[numGoroutines-1].Sub(completionTimes[0])
+		minExpected := time.Duration(numGoroutines-1) * delay
+		// Allow 10% tolerance for timing variations
+		tolerance := minExpected / 10
+		assert.GreaterOrEqual(t, totalSpan, minExpected-tolerance,
+			"total execution time should be at least (n-1) * delay for serialized execution")
+	}
+}
+
+// TestDownloadTimerVerySmallDelay tests with very small delays (1ms)
+func TestDownloadTimerVerySmallDelay(t *testing.T) {
+	timer := newDownloadTimer(1 * time.Millisecond)
+	ctx := context.Background()
+
+	// First call should return quickly
+	start := time.Now()
+	err := timer.Wait(ctx)
+	elapsed := time.Since(start)
+	assert.NoError(t, err, "First Wait should not return error")
+	assert.Less(t, elapsed, 50*time.Millisecond, "First call should complete quickly")
+
+	// Second call immediately after should also be quick (delay already passed)
+	start = time.Now()
+	err = timer.Wait(ctx)
+	elapsed = time.Since(start)
+	assert.NoError(t, err, "Second Wait should not return error")
+	assert.Less(t, elapsed, 50*time.Millisecond, "Second call should also complete quickly when delay passed")
+}
+
+// TestDownloadTimerLargeDelay tests with large delays (1s)
+func TestDownloadTimerLargeDelay(t *testing.T) {
+	timer := newDownloadTimer(1 * time.Second)
+	ctx := context.Background()
+
+	// First call should return quickly
+	start := time.Now()
+	err := timer.Wait(ctx)
+	elapsed := time.Since(start)
+	assert.NoError(t, err, "First Wait should not return error")
+	assert.Less(t, elapsed, 50*time.Millisecond, "First call should complete quickly")
+
+	// Second call immediately should have to wait close to the full delay
+	start = time.Now()
+	err = timer.Wait(ctx)
+	elapsed = time.Since(start)
+	assert.NoError(t, err, "Second Wait should not return error")
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond, "Second call should wait at least ~delay")
+	assert.Less(t, elapsed, 1100*time.Millisecond, "Second call should not wait too long")
+}
+
+// TestDownloadDelayConfigIntegration tests that Config.DownloadDelay is properly passed to downloadTimer
+func TestDownloadDelayConfigIntegration(t *testing.T) {
+	tests := []struct {
+		name           string
+		downloadDelay  time.Duration
+		wantTimerDelay time.Duration
+	}{
+		{
+			name:           "zero delay creates no rate limiting",
+			downloadDelay:  0,
+			wantTimerDelay: 0,
+		},
+		{
+			name:           "positive delay is passed through",
+			downloadDelay:  200 * time.Millisecond,
+			wantTimerDelay: 200 * time.Millisecond,
+		},
+		{
+			name:           "small delay is passed through",
+			downloadDelay:  1 * time.Millisecond,
+			wantTimerDelay: 1 * time.Millisecond,
+		},
+		{
+			name:           "large delay is passed through",
+			downloadDelay:  5 * time.Second,
+			wantTimerDelay: 5 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create config with specific DownloadDelay
+			config := Config{
+				HTTPClient:    &http.Client{},
+				Logger:        slog.New(slog.NewTextHandler(os.Stdout, nil)),
+				DownloadDelay: tt.downloadDelay,
+			}
+
+			// Apply defaults
+			config = applyDefaults(config)
+
+			// Create downloadTimer with the config's DownloadDelay
+			timer := newDownloadTimer(config.DownloadDelay)
+
+			// Verify the timer has the expected delay
+			assert.Equal(t, tt.wantTimerDelay, timer.minDelay, "timer should have configured delay")
+		})
+	}
+}
+
+// TestDownloaderRespectsConfiguredDelay tests that the downloader respects the configured delay
+func TestDownloaderRespectsConfiguredDelay(t *testing.T) {
+	// Create a temporary directory for output
+	tempDir := t.TempDir()
+
+	// Create test server that responds quickly
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(validMP4Data())
+	}))
+	defer server.Close()
+
+	// Create config with a significant delay
+	delay := 100 * time.Millisecond
+	config := Config{
+		HTTPClient:    newRewriteClient(server),
+		Logger:        slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		DownloadDelay: delay,
+		OutputDir:     tempDir,
+		Timeout:       30 * time.Second,
+		Retries:       0, // No retries for simpler test
+	}
+
+	// Create a temporary database file path
+	dbFile := filepath.Join(tempDir, "test.db")
+
+	// Create database
+	db, err := storage.NewDB(context.Background(), dbFile)
+	require.NoError(t, err, "NewDB should not fail")
+	defer func() { _ = db.Close() }()
+
+	// Create downloader
+	d := NewDownloader(config, db)
+
+	// Create a test item
+	item := Downloadable{
+		URL:       server.URL + "/test.mp4",
+		PostID:    "test123",
+		Subreddit: "test",
+	}
+
+	// Download multiple items and verify timing
+	items := []Downloadable{item, item, item}
+	for i := range items {
+		items[i].PostID = fmt.Sprintf("test%d", i)
+	}
+
+	start := time.Now()
+	hashes, err := d.Download(context.Background(), items)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "Download should not fail")
+	assert.NotEmpty(t, hashes, "hashes should not be empty")
+
+	// With 3 items and delay of 100ms between starts, we expect at least 200ms total
+	// (first starts immediately, second waits ~100ms, third waits ~100ms more)
+	minExpected := time.Duration(len(items)-1) * delay
+	assert.GreaterOrEqual(t, elapsed, minExpected,
+		"download should take at least (n-1) * delay between item starts")
+}
+
+// TestDownloadDelayDefaultValue tests that DownloadDelay defaults to defaultDownloadDelay when negative
+func TestDownloadDelayDefaultValue(t *testing.T) {
+	config := Config{
+		HTTPClient:    &http.Client{},
+		Logger:        slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		DownloadDelay: -1, // Negative value should trigger default
+	}
+
+	// Apply defaults
+	config = applyDefaults(config)
+
+	// Verify default is applied
+	assert.Equal(t, defaultDownloadDelay, config.DownloadDelay,
+		"negative DownloadDelay should default to defaultDownloadDelay")
 }
