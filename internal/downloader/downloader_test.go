@@ -1728,18 +1728,18 @@ func TestDownloadTimerZeroDelay(t *testing.T) {
 	err := timer.Wait(ctx)
 	elapsed := time.Since(start)
 
-	assert.NoError(t, err, "Wait should not return error for zero delay")
+	require.NoError(t, err, "Wait should not return error for zero delay")
 	assert.Less(t, elapsed, 10*time.Millisecond, "Wait should return immediately for zero delay")
 }
 
-// TestDownloadTimerCancelledContext tests that Wait() returns error when context is cancelled
-func TestDownloadTimerCancelledContext(t *testing.T) {
+// TestDownloadTimerCanceledContext tests that Wait() returns error when context is canceled
+func TestDownloadTimerCanceledContext(t *testing.T) {
 	timer := newDownloadTimer(100 * time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// First call to set lastStart to now - this should return immediately
 	err := timer.Wait(ctx)
-	assert.NoError(t, err, "First Wait should not return error")
+	require.NoError(t, err, "First Wait should not return error")
 
 	// Start waiting in a goroutine - this will have to wait
 	waitErr := make(chan error, 1)
@@ -1756,7 +1756,7 @@ func TestDownloadTimerCancelledContext(t *testing.T) {
 	// Wait for the Wait to return
 	select {
 	case err := <-waitErr:
-		assert.Error(t, err, "Wait should return error when context is cancelled")
+		assert.Error(t, err, "Wait should return error when context is canceled")
 		assert.Contains(t, err.Error(), "context canceled", "error should mention context canceled")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("timeout waiting for Wait to return")
@@ -1865,14 +1865,14 @@ func TestDownloadTimerVerySmallDelay(t *testing.T) {
 	start := time.Now()
 	err := timer.Wait(ctx)
 	elapsed := time.Since(start)
-	assert.NoError(t, err, "First Wait should not return error")
+	require.NoError(t, err, "First Wait should not return error")
 	assert.Less(t, elapsed, 50*time.Millisecond, "First call should complete quickly")
 
 	// Second call immediately after should also be quick (delay already passed)
 	start = time.Now()
 	err = timer.Wait(ctx)
 	elapsed = time.Since(start)
-	assert.NoError(t, err, "Second Wait should not return error")
+	require.NoError(t, err, "Second Wait should not return error")
 	assert.Less(t, elapsed, 50*time.Millisecond, "Second call should also complete quickly when delay passed")
 }
 

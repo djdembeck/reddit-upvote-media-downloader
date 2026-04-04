@@ -126,10 +126,13 @@ func (dt *downloadTimer) Wait(ctx context.Context) error {
 		return nil
 	}
 
+	timer := time.NewTimer(waitDuration)
+	defer timer.Stop()
+
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
-	case <-time.After(waitDuration):
+	case <-timer.C:
 		return nil
 	}
 }
