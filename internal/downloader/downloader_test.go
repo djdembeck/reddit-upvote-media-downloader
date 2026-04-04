@@ -703,7 +703,7 @@ func TestDeduplication(t *testing.T) {
 			assert.Equal(t, tt.wantFileExists, fileExists, "New file existence mismatch")
 			if tt.wantExistingFile && existingFilePath != "" {
 				_, err := os.Stat(existingFilePath)
-				assert.NoError(t, err, "Existing file should remain")
+				require.NoError(t, err, "Existing file should remain")
 			}
 		})
 	}
@@ -1711,9 +1711,9 @@ func TestDownloadTimerBasicFunctionality(t *testing.T) {
 
 			err := timer.Wait(ctx)
 			if tt.wantNilErr {
-				assert.NoError(t, err, "Wait should not return error")
+				require.NoError(t, err, "Wait should not return error")
 			} else {
-				assert.Error(t, err, "Wait should return error")
+				require.Error(t, err, "Wait should return error")
 			}
 		})
 	}
@@ -1756,8 +1756,8 @@ func TestDownloadTimerCanceledContext(t *testing.T) {
 	// Wait for the Wait to return
 	select {
 	case err := <-waitErr:
-		assert.Error(t, err, "Wait should return error when context is canceled")
-		assert.Contains(t, err.Error(), "context canceled", "error should mention context canceled")
+		require.Error(t, err, "Wait should return error when context is canceled")
+		require.Contains(t, err.Error(), "context canceled", "error should mention context canceled")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("timeout waiting for Wait to return")
 	}
@@ -1783,7 +1783,7 @@ func TestDownloadTimerConcurrencySafety(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			err := timer.Wait(ctx)
-			assert.NoError(t, err, "Wait should not return error")
+			require.NoError(t, err, "Wait should not return error")
 			mu.Lock()
 			finishTimes[idx] = time.Now()
 			mu.Unlock()
@@ -1831,7 +1831,7 @@ func TestDownloadTimerMultipleGoroutinesSpacedExecution(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			err := timer.Wait(ctx)
-			assert.NoError(t, err, "Wait should not return error")
+			require.NoError(t, err, "Wait should not return error")
 			mu.Lock()
 			completionTimes[idx] = time.Now()
 			mu.Unlock()
@@ -1885,14 +1885,14 @@ func TestDownloadTimerLargeDelay(t *testing.T) {
 	start := time.Now()
 	err := timer.Wait(ctx)
 	elapsed := time.Since(start)
-	assert.NoError(t, err, "First Wait should not return error")
+	require.NoError(t, err, "First Wait should not return error")
 	assert.Less(t, elapsed, 50*time.Millisecond, "First call should complete quickly")
 
 	// Second call immediately should have to wait close to the full delay
 	start = time.Now()
 	err = timer.Wait(ctx)
 	elapsed = time.Since(start)
-	assert.NoError(t, err, "Second Wait should not return error")
+	require.NoError(t, err, "Second Wait should not return error")
 	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond, "Second call should wait at least ~delay")
 	assert.Less(t, elapsed, 1100*time.Millisecond, "Second call should not wait too long")
 }
