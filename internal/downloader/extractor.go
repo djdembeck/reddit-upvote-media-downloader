@@ -275,27 +275,38 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable,
 func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post,
 	sourceURL string) ([]Downloadable, error) {
 	if post.Media != nil && post.Media.Video != nil {
+		// Try fallback URL first (most reliable)
 		fallback := strings.TrimSpace(post.Media.Video.FallbackURL)
 		if fallback != "" {
 			return e.buildDownloadables(post, []string{fallback}, "")
 		}
 
+		// Try DASH URL with quality selection
 		if post.Media.Video.DashURL != "" {
 			base := baseRedditVideoURL(post.Media.Video.DashURL)
 			best, err := e.selectBestRedditVideo(ctx, base)
 			if err == nil {
 				return e.buildDownloadables(post, []string{best}, "")
 			}
+			e.logger.Debug("DASH quality selection failed, trying alternatives",
+				"post_id", post.ID, "base_url", base, "error", err)
+		}
+
+		// Try HLS URL as fallback
+		if post.Media.Video.HLSURL != "" {
+			e.logger.Debug("using HLS URL as fallback", "post_id", post.ID)
+			return e.buildDownloadables(post, []string{post.Media.Video.HLSURL}, "")
 		}
 	}
 
+	// Try deriving base URL from source URL
 	base := baseRedditVideoURL(sourceURL)
 	if base == "" {
 		return nil, errors.New("unable to determine Reddit video base URL")
 	}
 	best, err := e.selectBestRedditVideo(ctx, base)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no Reddit video quality found (video may be deleted or transcoding): %w", err)
 	}
 	return e.buildDownloadables(post, []string{best}, "")
 }
@@ -367,6 +378,8 @@ func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Post,
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
 		if errors.Is(err, errGone) {
+			e.logger.Info("skipping gfycat link (service shut down in 2023)",
+				"post_id", post.ID, "url", sourceURL)
 			return nil, nil
 		}
 		e.logger.Debug("gfycat/redgifs fetch failed", "post_id", post.ID, "url", sourceURL, "error", err)
@@ -389,7 +402,12 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 		return "", errors.New("missing media ID")
 	}
 
-	// Try redgifs API (gfycat API was shut down in 2023)
+	// Gfycat shut down in September 2023 - skip these URLs entirely
+	if isGfycatHost(host) {
+		return "", errGone
+	}
+
+	// Try redgifs API
 	if isRedgifsHost(host) {
 		apiURL := fmt.Sprintf("https://api.redgifs.com/v2/gifs/%s", mediaID)
 		if mediaURL, err := e.fetchRedgifsAPI(ctx, apiURL); err == nil {
@@ -397,7 +415,7 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 		}
 	}
 
-	// Fall back to page scraping for both gfycat and redgifs
+	// Fall back to page scraping for redgifs
 	body, err := e.fetchText(ctx, pageURL)
 	if err != nil {
 		return "", err
