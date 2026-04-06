@@ -21,6 +21,9 @@ import (
 // errGone indicates the resource has been permanently removed (HTTP 410).
 var errGone = errors.New("resource gone (410)")
 
+// errGfycatShutdown indicates a Gfycat URL (service shut down in 2023).
+var errGfycatShutdown = errors.New("gfycat service shut down (2023)")
+
 const (
 	defaultUserAgent = "reddit-media-downloader/1.0"
 	maxBodyBytes     = 10 * 1024 * 1024 // 10MB max response body size
@@ -292,10 +295,10 @@ func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post,
 				"post_id", post.ID, "base_url", base, "error", err)
 		}
 
-		// Try HLS URL as fallback
+		// Try HLS URL as fallback (currently unsupported - would require playlist parsing)
 		if post.Media.Video.HLSURL != "" {
-			e.logger.Debug("using HLS URL as fallback", "post_id", post.ID)
-			return e.buildDownloadables(post, []string{post.Media.Video.HLSURL}, "")
+			e.logger.Debug("HLS URL available but unsupported, falling back to DASH derived URL", "post_id", post.ID)
+			// Fall through to derived-base DASH path below
 		}
 	}
 
@@ -377,9 +380,14 @@ func (e *Extractor) extractGfycatRedgifs(ctx context.Context, post reddit.Post,
 	sourceURL string) ([]Downloadable, error) {
 	mediaURL, err := e.fetchGfycatRedgifsURL(ctx, sourceURL)
 	if err != nil {
-		if errors.Is(err, errGone) {
+		if errors.Is(err, errGfycatShutdown) {
 			e.logger.Info("skipping gfycat link (service shut down in 2023)",
 				"post_id", post.ID, "url", sourceURL)
+			return nil, nil
+		}
+		if errors.Is(err, errGone) {
+			// Redgifs returned HTTP 410 - skip without fallthrough to page scrape
+			e.logger.Debug("skipping redgifs link (resource gone)", "post_id", post.ID, "url", sourceURL)
 			return nil, nil
 		}
 		e.logger.Debug("gfycat/redgifs fetch failed", "post_id", post.ID, "url", sourceURL, "error", err)
@@ -404,15 +412,21 @@ func (e *Extractor) fetchGfycatRedgifsURL(ctx context.Context, pageURL string) (
 
 	// Gfycat shut down in September 2023 - skip these URLs entirely
 	if isGfycatHost(host) {
-		return "", errGone
+		return "", errGfycatShutdown
 	}
 
 	// Try redgifs API
 	if isRedgifsHost(host) {
 		apiURL := fmt.Sprintf("https://api.redgifs.com/v2/gifs/%s", mediaID)
-		if mediaURL, err := e.fetchRedgifsAPI(ctx, apiURL); err == nil {
+		mediaURL, err := e.fetchRedgifsAPI(ctx, apiURL)
+		if err == nil {
 			return mediaURL, nil
 		}
+		// If the resource is gone (410), don't try page scraping
+		if errors.Is(err, errGone) {
+			return "", errGone
+		}
+		// For other errors, fall through to page scraping
 	}
 
 	// Fall back to page scraping for redgifs

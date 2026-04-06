@@ -2043,3 +2043,219 @@ func TestDownloadDelayDefaultValue(t *testing.T) {
 	assert.Equal(t, defaultDownloadDelay, config.DownloadDelay,
 		"negative DownloadDelay should default to defaultDownloadDelay")
 }
+
+// TestExtractRedditVideoFallbackURL tests that extractRedditVideo returns fallback URL when present
+func TestExtractRedditVideoFallbackURL(t *testing.T) {
+	post := reddit.Post{
+		ID:        "video1",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/abc123",
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				FallbackURL: "https://v.redd.it/abc123/DASH_720.mp4",
+				DashURL:     "https://v.redd.it/abc123/DASHPlaylist.mpd",
+			},
+		},
+	}
+
+	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error with fallback URL")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	assert.Equal(t, "https://v.redd.it/abc123/DASH_720.mp4", items[0].URL, "should use fallback URL")
+	assert.Equal(t, "video", items[0].MediaType, "should be video type")
+}
+
+// TestExtractRedditVideoDashSelection tests DASH quality selection via selectBestRedditVideo
+func TestExtractRedditVideoDashSelection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			switch r.URL.Path {
+			case "/abc/DASH_1080.mp4":
+				w.WriteHeader(http.StatusNotFound)
+			case "/abc/DASH_720.mp4":
+				w.WriteHeader(http.StatusOK)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+	post := reddit.Post{
+		ID:        "abc",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/abc/DASHPlaylist.mpd",
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				DashURL: "https://v.redd.it/abc/DASHPlaylist.mpd",
+			},
+		},
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	assert.Equal(t, "https://v.redd.it/abc/DASH_720.mp4", items[0].URL, "should select best quality")
+}
+
+// TestExtractRedditVideoHLSSkip tests that HLS falls through to DASH derived path
+func TestExtractRedditVideoHLSSkip(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			switch r.URL.Path {
+			case "/hlsvid/DASH_720.mp4":
+				w.WriteHeader(http.StatusOK)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+	post := reddit.Post{
+		ID:        "hlsvid",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/hlsvid/HLSPlaylist.m3u8",
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				DashURL: "https://v.redd.it/hlsvid/DASHPlaylist.mpd", // Fails
+				HLSURL:  "https://v.redd.it/hlsvid/HLSPlaylist.m3u8",  // Present but unsupported
+			},
+		},
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	// Should fall through to derived-base DASH path, not use HLS URL directly
+	assert.NotContains(t, items[0].URL, ".m3u8", "should not use HLS URL directly")
+	assert.Contains(t, items[0].URL, "DASH_720.mp4", "should use derived DASH URL")
+}
+
+// TestExtractRedditVideoDerivedBaseSuccess tests derived-base DASH path when Media is nil
+func TestExtractRedditVideoDerivedBaseSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			switch r.URL.Path {
+			case "/derived/DASH_480.mp4":
+				w.WriteHeader(http.StatusOK)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+	post := reddit.Post{
+		ID:        "derived",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/derived/DASH_480.mp4",
+		// Media is nil - forces derived-base path
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	assert.Equal(t, "https://v.redd.it/derived/DASH_480.mp4", items[0].URL, "should use derived URL")
+}
+
+// TestExtractRedditVideoDerivedBaseFailure tests error when no qualities found
+func TestExtractRedditVideoDerivedBaseFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// All quality checks return 404
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+	post := reddit.Post{
+		ID:        "nofind",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/nofind/DASH_720.mp4",
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				DashURL: "https://v.redd.it/nofind/DASHPlaylist.mpd",
+			},
+		},
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	// Should return error when no video qualities found
+	require.Error(t, err, "Extract should error when no qualities found")
+	assert.Nil(t, items, "items should be nil on error")
+	assert.Contains(t, err.Error(), "no Reddit video quality found", "error should indicate no quality found")
+}
+
+// TestExtractGfycatShutdownShortCircuit tests Gfycat URLs are short-circuited
+func TestExtractGfycatShutdownShortCircuit(t *testing.T) {
+	extractor := NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
+
+	post := reddit.Post{
+		ID:        "gfycat1",
+		Subreddit: "videos",
+		URL:       "https://gfycat.com/somevideo",
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error for Gfycat")
+	assert.Nil(t, items, "should return nil items for Gfycat (service shut down)")
+}
+
+// TestExtractRedgifsGoneHandling tests that Redgifs HTTP 410 returns nil without error
+func TestExtractRedgifsGoneHandling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return 410 Gone for API endpoint
+		if strings.Contains(r.URL.Path, "/v2/gifs/") {
+			w.WriteHeader(http.StatusGone)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "api.redgifs.com", "redgifs.com")
+	extractor := NewExtractor(client, "test-agent")
+
+	post := reddit.Post{
+		ID:        "redgifs1",
+		Subreddit: "videos",
+		URL:       "https://redgifs.com/watch/somevideo",
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error for 410 Gone")
+	assert.Nil(t, items, "should return nil items for gone resource")
+}
