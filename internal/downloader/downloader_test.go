@@ -2322,29 +2322,33 @@ func TestExtractorRedditVideoCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var extractor *Extractor
+			var items []Downloadable
+			var err error
 
 			if tt.serverHandler != nil {
-				server := httptest.NewServer(http.HandlerFunc(tt.serverHandler))
+				server := httptest.NewServer(tt.serverHandler)
 				defer server.Close()
 
 				client := newRewriteClient(server, tt.hosts...)
 				extractor = NewExtractor(client, "test-agent")
 
 				// Set dynamic URLs for tests that need them
+				localPost := tt.post
 				switch tt.name {
 				case "DASH_FailureWithHLSFallthrough":
-					tt.post.Media.Video.DashURL = server.URL + "/hlsvid/DASH_1080.mp4"
-					tt.post.Media.Video.HLSURL = server.URL + "/hlsvid/dash.m3u8"
+					localPost.Media.Video.DashURL = server.URL + "/hlsvid/DASH_1080.mp4"
+					localPost.Media.Video.HLSURL = server.URL + "/hlsvid/dash.m3u8"
 				case "HLS_OnlyMetadata_FallsThrough":
-					tt.post.Media.Video.HLSURL = server.URL + "/hlsonly/hls/master.m3u8"
+					localPost.Media.Video.HLSURL = server.URL + "/hlsonly/hls/master.m3u8"
 				case "DASH_BasePriority":
-					tt.post.Media.Video.DashURL = server.URL + "/dashbase/DASH_1080.mp4"
+					localPost.Media.Video.DashURL = server.URL + "/dashbase/DASH_1080.mp4"
 				}
+
+				items, err = extractor.Extract(context.Background(), localPost)
 			} else {
 				extractor = NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
+				items, err = extractor.Extract(context.Background(), tt.post)
 			}
-
-			items, err := extractor.Extract(context.Background(), tt.post)
 
 			if tt.wantError {
 				require.Error(t, err)

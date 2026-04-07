@@ -277,28 +277,47 @@ func (e *Extractor) extractImageFromMediaMeta(post reddit.Post) ([]Downloadable,
 // extractRedditVideo extracts video URLs from Reddit-hosted videos.
 func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post,
 	sourceURL string) ([]Downloadable, error) {
-	// Collect candidate base URLs
-	bases := make([]string, 0, 2)
-
+	// Try fallback URL first (most reliable)
 	if post.Media != nil && post.Media.Video != nil {
-		// Try fallback URL first (most reliable)
 		fallback := strings.TrimSpace(post.Media.Video.FallbackURL)
 		if fallback != "" {
 			return e.buildDownloadables(post, []string{fallback}, "")
 		}
+	}
 
-		// Try DASH URL with quality selection
+	uniqueBases := e.redditVideoBases(post, sourceURL)
+
+	// Try each unique base
+	for _, base := range uniqueBases {
+		best, err := e.selectBestRedditVideo(ctx, base)
+		if err == nil {
+			return e.buildDownloadables(post, []string{best}, "")
+		}
+		e.logger.Debug("DASH quality selection failed for base",
+			"post_id", post.ID, "base_url", base, "error", err)
+	}
+
+	if len(uniqueBases) == 0 {
+		return nil, errors.New("unable to determine Reddit video base URL")
+	}
+
+	return nil, fmt.Errorf("no Reddit video quality found (video may be deleted or transcoding)")
+}
+
+// redditVideoBases collects and deduplicates candidate base URLs for Reddit video extraction.
+func (e *Extractor) redditVideoBases(post reddit.Post, sourceURL string) []string {
+	bases := make([]string, 0, 2)
+
+	if post.Media != nil && post.Media.Video != nil {
 		if post.Media.Video.DashURL != "" {
 			bases = append(bases, baseRedditVideoURL(post.Media.Video.DashURL))
 		}
 
-		// HLS is unsupported - fall through to derived path below
 		if post.Media.Video.HLSURL != "" {
 			e.logger.Debug("HLS URL available but unsupported, falling back to DASH derived URL", "post_id", post.ID)
 		}
 	}
 
-	// Try deriving base URL from source URL
 	if sourceURL != "" {
 		bases = append(bases, baseRedditVideoURL(sourceURL))
 	}
@@ -317,21 +336,7 @@ func (e *Extractor) extractRedditVideo(ctx context.Context, post reddit.Post,
 		uniqueBases = append(uniqueBases, base)
 	}
 
-	// Try each unique base
-	for _, base := range uniqueBases {
-		best, err := e.selectBestRedditVideo(ctx, base)
-		if err == nil {
-			return e.buildDownloadables(post, []string{best}, "")
-		}
-		e.logger.Debug("DASH quality selection failed for base",
-			"post_id", post.ID, "base_url", base, "error", err)
-	}
-
-	if len(uniqueBases) == 0 {
-		return nil, errors.New("unable to determine Reddit video base URL")
-	}
-
-	return nil, fmt.Errorf("no Reddit video quality found (video may be deleted or transcoding)")
+	return uniqueBases
 }
 
 // extractImgur extracts media URLs from Imgur posts.
