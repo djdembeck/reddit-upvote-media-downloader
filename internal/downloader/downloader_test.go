@@ -2043,3 +2043,345 @@ func TestDownloadDelayDefaultValue(t *testing.T) {
 	assert.Equal(t, defaultDownloadDelay, config.DownloadDelay,
 		"negative DownloadDelay should default to defaultDownloadDelay")
 }
+
+// TestExtractorRedditVideoCases consolidates all Reddit video extraction test scenarios
+// into a single table-driven test to reduce duplication.
+func TestExtractorRedditVideoCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		serverHandler http.HandlerFunc
+		hosts         []string
+		post          reddit.Post
+		wantError     bool
+		errorContains string
+		expectedURL   string
+		urlChecks     map[string]bool // map[substr]shouldContain
+		wantNilItems  bool
+		wantItemCount int
+		wantMediaType string
+	}{
+		{
+			name:          "FallbackURL_Priority",
+			serverHandler: nil, // No server needed
+			hosts:         []string{},
+			post: reddit.Post{
+				ID:        "video1",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/abc123",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						FallbackURL: "https://v.redd.it/abc123/DASH_720.mp4",
+						DashURL:     "https://v.redd.it/abc123/DASHPlaylist.mpd",
+					},
+				},
+			},
+			wantError:     false,
+			expectedURL:   "https://v.redd.it/abc123/DASH_720.mp4",
+			wantItemCount: 1,
+			wantMediaType: "video",
+		},
+		{
+			name: "DASH_QualitySelection",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodHead:
+					switch r.URL.Path {
+					case "/abc/DASH_1080.mp4":
+						w.WriteHeader(http.StatusNotFound)
+					case "/abc/DASH_720.mp4":
+						w.WriteHeader(http.StatusOK)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "abc",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/abc/DASHPlaylist.mpd",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						DashURL: "https://v.redd.it/abc/DASHPlaylist.mpd",
+					},
+				},
+			},
+			wantError:     false,
+			expectedURL:   "https://v.redd.it/abc/DASH_720.mp4",
+			wantItemCount: 1,
+		},
+		{
+			name: "DASH_FailureWithHLSFallthrough",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/hlsvid/DASH_1080.mp4", "/hlsvid/DASH_720.mp4", "/hlsvid/DASH_480.mp4":
+					w.WriteHeader(http.StatusNotFound)
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "hlsvid",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/hlsvid/download",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						DashURL: "", // Will be set in test
+						HLSURL:  "", // Will be set in test
+					},
+				},
+			},
+			wantError:     false,
+			wantItemCount: 1,
+			urlChecks: map[string]bool{
+				".m3u8":       false,
+				"DASH_":       true,
+				"hlsvid":      true,
+				"invalidpath": false,
+				"dash.m3u8":   false,
+			},
+		},
+		{
+			name: "HLS_OnlyMetadata_FallsThrough",
+			serverHandler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "hlsonly",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/hlsonly",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						HLSURL: "", // Will be set in test
+					},
+				},
+			},
+			wantError:     false,
+			wantItemCount: 1,
+			urlChecks: map[string]bool{
+				".m3u8":   false,
+				"DASH_":   true,
+				"hlsonly": true,
+			},
+		},
+		{
+			name: "DASH_BasePriority",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/dashbase/DASH_1080.mp4":
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "prioritytest",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/video/invalidpath",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						DashURL: "", // Will be set in test
+						HLSURL:  "https://v.redd.it/hls/DASH_720.mp4",
+					},
+				},
+			},
+			wantError:     false,
+			wantItemCount: 1,
+			urlChecks: map[string]bool{
+				"dashbase":    true,
+				"invalidpath": false,
+				".m3u8":       false,
+			},
+		},
+		{
+			name: "HLS_FallsThroughToDerivedDASH",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodHead:
+					switch r.URL.Path {
+					case "/hlsvid/DASH_720.mp4":
+						w.WriteHeader(http.StatusOK)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "hlsvid",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/hlsvid/HLSPlaylist.m3u8",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						DashURL: "https://v.redd.it/hlsvid/DASHPlaylist.mpd",
+						HLSURL:  "https://v.redd.it/hlsvid/HLSPlaylist.m3u8",
+					},
+				},
+			},
+			wantError:     false,
+			expectedURL:   "https://v.redd.it/hlsvid/DASH_720.mp4",
+			wantItemCount: 1,
+			urlChecks: map[string]bool{
+				".m3u8": false,
+			},
+		},
+		{
+			name: "DerivedBase_SuccessWhenMediaNil",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodHead:
+					switch r.URL.Path {
+					case "/derived/DASH_480.mp4":
+						w.WriteHeader(http.StatusOK)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				default:
+					w.WriteHeader(http.StatusOK)
+				}
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "derived",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/derived/DASH_480.mp4",
+				// Media is nil - forces derived-base path
+			},
+			wantError:     false,
+			expectedURL:   "https://v.redd.it/derived/DASH_480.mp4",
+			wantItemCount: 1,
+		},
+		{
+			name: "DerivedBase_FailureNoQualities",
+			serverHandler: func(w http.ResponseWriter, _ *http.Request) {
+				// All quality checks return 404
+				w.WriteHeader(http.StatusNotFound)
+			},
+			hosts: []string{"v.redd.it"},
+			post: reddit.Post{
+				ID:        "nofind",
+				Subreddit: "videos",
+				IsVideo:   true,
+				URL:       "https://v.redd.it/nofind/DASH_720.mp4",
+				Media: &reddit.Media{
+					Video: &reddit.Video{
+						DashURL: "https://v.redd.it/nofind/DASHPlaylist.mpd",
+					},
+				},
+			},
+			wantError:     true,
+			errorContains: "no Reddit video quality found",
+			wantNilItems:  true,
+		},
+		{
+			name:          "Gfycat_ShortCircuit",
+			serverHandler: nil,
+			hosts:         []string{},
+			post: reddit.Post{
+				ID:        "gfycat1",
+				Subreddit: "videos",
+				URL:       "https://gfycat.com/somevideo",
+			},
+			wantError:    false,
+			wantNilItems: true,
+		},
+		{
+			name: "Redgifs_410GoneHandling",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/v2/gifs/") {
+					w.WriteHeader(http.StatusGone)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			hosts: []string{"api.redgifs.com", "redgifs.com"},
+			post: reddit.Post{
+				ID:        "redgifs1",
+				Subreddit: "videos",
+				URL:       "https://redgifs.com/watch/somevideo",
+			},
+			wantError:    false,
+			wantNilItems: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var extractor *Extractor
+			var items []Downloadable
+			var err error
+
+			if tt.serverHandler != nil {
+				server := httptest.NewServer(tt.serverHandler)
+				defer server.Close()
+
+				client := newRewriteClient(server, tt.hosts...)
+				extractor = NewExtractor(client, "test-agent")
+
+				// Set dynamic URLs for tests that need them
+				localPost := tt.post
+				switch tt.name {
+				case "DASH_FailureWithHLSFallthrough":
+					localPost.Media.Video.DashURL = server.URL + "/hlsvid/DASH_1080.mp4"
+					localPost.Media.Video.HLSURL = server.URL + "/hlsvid/dash.m3u8"
+				case "HLS_OnlyMetadata_FallsThrough":
+					localPost.Media.Video.HLSURL = server.URL + "/hlsonly/hls/master.m3u8"
+				case "DASH_BasePriority":
+					localPost.Media.Video.DashURL = server.URL + "/dashbase/DASH_1080.mp4"
+				}
+
+				items, err = extractor.Extract(context.Background(), localPost)
+			} else {
+				extractor = NewExtractor(&http.Client{Timeout: time.Second}, "test-agent")
+				items, err = extractor.Extract(context.Background(), tt.post)
+			}
+
+			if tt.wantError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			if tt.wantNilItems {
+				assert.Nil(t, items)
+			} else if tt.wantItemCount > 0 {
+				require.Len(t, items, tt.wantItemCount)
+			}
+
+			if tt.expectedURL != "" && len(items) > 0 {
+				assert.Equal(t, tt.expectedURL, items[0].URL)
+			}
+
+			if tt.wantMediaType != "" && len(items) > 0 {
+				assert.Equal(t, tt.wantMediaType, items[0].MediaType)
+			}
+
+			for substr, shouldContain := range tt.urlChecks {
+				if len(items) > 0 {
+					if shouldContain {
+						assert.Contains(t, items[0].URL, substr)
+					} else {
+						assert.NotContains(t, items[0].URL, substr)
+					}
+				}
+			}
+		})
+	}
+}

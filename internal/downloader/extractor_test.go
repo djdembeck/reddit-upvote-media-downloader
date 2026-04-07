@@ -425,6 +425,40 @@ func TestFetchTextAndJSONErrorHandling(t *testing.T) {
 	}
 }
 
+func TestExtractGfycatHostDetection(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		expected bool
+	}{
+		// Gfycat main domain (normalized to lowercase by caller)
+		{"gfycat.com exact match", "gfycat.com", true},
+
+		// Gfycat subdomains
+		{"thumbs.gfycat.com", "thumbs.gfycat.com", true},
+		{"stream.gfycat.com", "stream.gfycat.com", true},
+		{"giant.gfycat.com", "giant.gfycat.com", true},
+
+		// Non-Gfycat hosts (should be rejected)
+		{"redgifs.com is not gfycat", "redgifs.com", false},
+		{"redgifs subdomain", "www.redgifs.com", false},
+		{"example.com not gfycat", "example.com", false},
+		{"notgfycat.com false positive", "notgfycat.com", false},
+		{"gfycatfake.com false positive", "gfycatfake.com", false},
+		{"rapid-gfycat.com no dot prefix", "rapid-gfycat.com", false},
+		{"wibble.gfy.co different TLD", "wibble.gfy.co", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isGfycatHost(tt.host)
+			if result != tt.expected {
+				t.Errorf("isGfycatHost(%q) = %v, want %v", tt.host, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestExtractGfycatRedgifsScenarios(t *testing.T) {
 	tests := []struct {
 		name             string
