@@ -2109,6 +2109,130 @@ func TestExtractRedditVideoDashSelection(t *testing.T) {
 	assert.Equal(t, "https://v.redd.it/abc/DASH_720.mp4", items[0].URL, "should select best quality")
 }
 
+// TestExtractRedditVideoDashFailureWithHLSFallthrough tests that when DASH fails with HLS fallback
+// available, code falls through to derived path, NOT using HLS directly
+func TestExtractRedditVideoDashFailureWithHLSFallthrough(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/hlsvid/DASH_1080.mp4":
+			w.WriteHeader(http.StatusNotFound)
+		case "/hlsvid/DASH_720.mp4":
+			w.WriteHeader(http.StatusNotFound)
+		case "/hlsvid/DASH_480.mp4":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			// Allow other paths to succeed (for content delivery tests)
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+		post := reddit.Post{
+		ID:        "hlsvid",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/hlsvid/download", // Source URL with different base
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				DashURL: fmt.Sprintf("https://%s/hlsvid/DASH_1080.mp4", server.URL),
+				HLSURL:  fmt.Sprintf("https://%s/hlsvid/dash.m3u8", server.URL), // Not used directly, fallback to derived path
+			},
+		},
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	// Should fall through to derived DASH path, not use HLS directly
+	require.NoError(t, err, "Extract should not error")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	assert.NotContains(t, items[0].URL, ".m3u8", "should not use HLS URL directly")
+	assert.Contains(t, items[0].URL, "DASH_", "should use derived DASH URL pattern")
+	// Verify base URL is from DashURL, not source URL - should be v.redd.it host
+	assert.Contains(t, items[0].URL, "v.redd.it/hlsvid", "should use DashURL base")
+	// Should NOT contain the source URL path
+	assert.NotContains(t, items[0].URL, "invalidpath", "should not use base from source URL")
+	// HLSURL should not be in final result
+	assert.NotContains(t, items[0].URL, "dash.m3u8", "should not use HLS URL directly")
+}
+
+// TestExtractRedditVideoHLSOnlyMetadata tests that when only HLSURL is present (no FallbackURL or DashURL),
+// code falls through to derived path
+func TestExtractRedditVideoHLSOnlyMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify that requests use derived path pattern
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+	post := reddit.Post{
+		ID:        "hlsonly",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/hlsonly", // Different base
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				HLSURL: fmt.Sprintf("https://%s/hlsonly/hls/master.m3u8", server.URL), // HLS only, no FallbackURL or DashURL
+			},
+		},
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	// Should fall through to derived path
+	require.NoError(t, err, "Extract should not error")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	assert.NotContains(t, items[0].URL, ".m3u8", "should not use HLS URL directly")
+	assert.Contains(t, items[0].URL, "DASH_", "should use derived DASH URL pattern")
+	// Should fall through to sourceURL-derived path since no FallbackURL/DashURL
+	assert.Contains(t, items[0].URL, "v.redd.it/hlsonly", "should use source-derived path")
+}
+
+// TestExtractRedditVideoDashBasePriority tests that when DashURL is present, baseRedditVideoURL(DashURL)
+// is used instead of baseRedditVideoURL(sourceURL)
+func TestExtractRedditVideoDashBasePriority(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/dashbase/DASH_1080.mp4":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := newRewriteClient(server, "v.redd.it")
+	extractor := NewExtractor(client, "test-agent")
+
+	// sourceURL has different base than DashURL
+	post := reddit.Post{
+		ID:        "prioritytest",
+		Subreddit: "videos",
+		IsVideo:   true,
+		URL:       "https://v.redd.it/video/invalidpath", // Source URL with different path
+		Media: &reddit.Media{
+			Video: &reddit.Video{
+				DashURL: server.URL + "/dashbase/DASH_1080.mp4",
+				HLSURL:  "https://v.redd.it/hls/DASH_720.mp4", // Not used directly
+			},
+		},
+	}
+
+	items, err := extractor.Extract(context.Background(), post)
+
+	require.NoError(t, err, "Extract should not error")
+	require.Len(t, items, 1, "should return exactly one downloadable")
+	// Should use base URL from DashURL
+	assert.Contains(t, items[0].URL, "dashbase", "should use base from DashURL")
+	assert.NotContains(t, items[0].URL, "invalidpath", "should not use base from source URL")
+	assert.NotContains(t, items[0].URL, ".m3u8", "should not use HLS directly")
+}
+
 // TestExtractRedditVideoHLSSkip tests that HLS falls through to DASH derived path
 func TestExtractRedditVideoHLSSkip(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2214,7 +2338,11 @@ func TestExtractRedditVideoDerivedBaseFailure(t *testing.T) {
 	// Should return error when no video qualities found
 	require.Error(t, err, "Extract should error when no qualities found")
 	assert.Nil(t, items, "items should be nil on error")
-	assert.Contains(t, err.Error(), "no Reddit video quality found", "error should indicate no quality found")
+	
+	// Verify exact error message format includes expected text
+	errorStr := err.Error()
+	assert.Contains(t, errorStr, "no Reddit video quality found", "error should indicate no quality found")
+	assert.Contains(t, errorStr, "(video may be deleted or transcoding)", "error should mention transcoding")
 }
 
 // TestExtractGfycatShutdownShortCircuit tests Gfycat URLs are short-circuited
