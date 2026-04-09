@@ -579,7 +579,7 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 //   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
 //     Must be non-nil. Use this for structured logging with contextual attributes.
 //
-//nolint:cyclop
+//nolint:cyclop,gocyclo
 func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
@@ -636,30 +636,34 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		}
 	}
 
-	items, err := dl.Extract(ctx, redditPosts)
-	if err != nil {
-		return fmt.Errorf("extracting media: %w", err)
+	items, extractErr := dl.Extract(ctx, redditPosts)
+	if extractErr != nil {
+		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
 	}
 
 	fmt.Printf("Extracted %d downloadable items\n", len(items))
 
-	hashes, err := dl.Download(ctx, items)
+	hashes, downloadErr := dl.Download(ctx, items)
 
 	firstSaveErr := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger)
 
-	if err != nil {
-		slogLogger.Warn("Warning: download completed with errors", "error", err)
-		return fmt.Errorf("downloading media: %w", err)
+	if downloadErr != nil {
+		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
 	}
 	if firstSaveErr != nil {
 		return fmt.Errorf("saving posts: %w", firstSaveErr)
 	}
 
+	// Only mark full sync as completed if no errors occurred
 	if isFullSync {
-		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			slogLogger.Error("Error marking full sync as completed", "error", err)
+		if extractErr != nil || downloadErr != nil {
+			slogLogger.Warn("Full sync completed with errors, keeping pending for retry")
 		} else {
-			slogLogger.Info("Full sync completed, switching to incremental mode")
+			if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+				slogLogger.Error("Error marking full sync as completed", "error", err)
+			} else {
+				slogLogger.Info("Full sync completed, switching to incremental mode")
+			}
 		}
 	}
 
