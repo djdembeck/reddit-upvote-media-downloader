@@ -289,28 +289,15 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
-// classifyExtractionError checks if an extraction error is fatal (context cancellation)
-// and returns the appropriate wrapped error.
-func classifyExtractionError(ctx context.Context, err error) (fatal bool, wrapped error) {
+// classifyStepError checks if an error is fatal (context cancellation)
+// and returns the appropriate wrapped error with the step name.
+func classifyStepError(ctx context.Context, step string, err error) (fatal bool, wrapped error) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true, &cycleError{cause: fmt.Errorf("extracting reddit posts: %w", err)}
+		return true, &cycleError{cause: fmt.Errorf("%s: %w", step, err)}
 	}
 	// Check for explicit context cancellation in case aggregate errors don't preserve wrapping
 	if ctx.Err() != nil {
-		return true, &cycleError{cause: fmt.Errorf("extracting reddit posts: %w", ctx.Err())}
-	}
-	return false, nil
-}
-
-// classifyDownloadError checks if a download error is fatal (context cancellation)
-// and returns the appropriate wrapped error.
-func classifyDownloadError(ctx context.Context, err error) (fatal bool, wrapped error) {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true, &cycleError{cause: fmt.Errorf("downloading items: %w", err)}
-	}
-	// Check for explicit context cancellation in case aggregate errors don't preserve wrapping
-	if ctx.Err() != nil {
-		return true, &cycleError{cause: fmt.Errorf("downloading items: %w", ctx.Err())}
+		return true, &cycleError{cause: fmt.Errorf("%s: %w", step, ctx.Err())}
 	}
 	return false, nil
 }
@@ -327,7 +314,7 @@ func handleExtractionAndDownload(
 ) ([]downloader.Downloadable, map[string]string, error) {
 	items, extractErr := dl.Extract(ctx, redditPosts)
 	if extractErr != nil {
-		if fatal, wrapped := classifyExtractionError(ctx, extractErr); fatal {
+		if fatal, wrapped := classifyStepError(ctx, "extracting reddit posts", extractErr); fatal {
 			return nil, nil, wrapped
 		}
 		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
@@ -337,7 +324,7 @@ func handleExtractionAndDownload(
 
 	hashes, downloadErr := dl.Download(ctx, items)
 	if downloadErr != nil {
-		if fatal, wrapped := classifyDownloadError(ctx, downloadErr); fatal {
+		if fatal, wrapped := classifyStepError(ctx, "downloading items", downloadErr); fatal {
 			return nil, nil, wrapped
 		}
 		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
