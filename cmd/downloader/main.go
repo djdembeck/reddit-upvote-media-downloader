@@ -292,6 +292,9 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 // classifyStepError checks if an error is fatal (context cancellation)
 // and returns the appropriate wrapped error with the step name.
 func classifyStepError(ctx context.Context, step string, err error) (fatal bool, wrapped error) {
+	if err == nil {
+		return false, nil
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return true, &cycleError{cause: fmt.Errorf("%s: %w", step, err)}
 	}
@@ -331,6 +334,7 @@ func handleExtractionAndDownload(
 	}
 
 	if err := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger); err != nil {
+		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(newPosts))
 		return nil, nil, &cycleError{cause: err}
 	}
 
