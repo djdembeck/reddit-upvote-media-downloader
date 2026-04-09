@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -271,6 +272,64 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
+// handleExtractionAndDownload handles extraction, download, and saving.
+// Returns items, hashes, and any cycle-level fatal error (e.g., context cancellation).
+func handleExtractionAndDownload(
+	ctx context.Context,
+	dl *downloader.Downloader,
+	db *storage.DB,
+	redditPosts []reddit.Post,
+	newPosts []storage.Post,
+	slogLogger *slog.Logger,
+) ([]downloader.Downloadable, map[string]string, error) {
+	items, extractErr := dl.Extract(ctx, redditPosts)
+	if extractErr != nil {
+		if errors.Is(extractErr, context.Canceled) || errors.Is(extractErr, context.DeadlineExceeded) {
+			return nil, nil, extractErr
+		}
+		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
+	}
+
+	fmt.Printf("Extracted %d downloadable items\n", len(items))
+
+	hashes, downloadErr := dl.Download(ctx, items)
+	if downloadErr != nil {
+		if errors.Is(downloadErr, context.Canceled) || errors.Is(downloadErr, context.DeadlineExceeded) {
+			return nil, nil, downloadErr
+		}
+		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
+	}
+
+	if err := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger); err != nil {
+		return nil, nil, err
+	}
+
+	return items, hashes, nil
+}
+
+// finalizeFullSyncIfNeeded marks full sync as completed if no cycle-level errors occurred.
+func finalizeFullSyncIfNeeded(
+	ctx context.Context,
+	db *storage.DB,
+	isFullSync bool,
+	cycleErr error,
+	slogLogger *slog.Logger,
+) {
+	if !isFullSync {
+		return
+	}
+
+	if cycleErr != nil {
+		slogLogger.Warn("Full sync completed with errors, keeping pending for retry", "error", cycleErr)
+		return
+	}
+
+	if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+		slogLogger.Error("Error marking full sync as completed", "error", err)
+	} else {
+		slogLogger.Info("Full sync completed, switching to incremental mode")
+	}
+}
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -579,7 +638,7 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 //   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
 //     Must be non-nil. Use this for structured logging with contextual attributes.
 //
-//nolint:cyclop,gocyclo
+//nolint:cyclop
 func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
 
@@ -625,7 +684,6 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 	}
 
 	redditPosts := make([]reddit.Post, len(newPosts))
-
 	for i, post := range newPosts {
 		redditPosts[i] = reddit.Post{
 			ID:        post.ID,
@@ -636,36 +694,13 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		}
 	}
 
-	items, extractErr := dl.Extract(ctx, redditPosts)
-	if extractErr != nil {
-		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
+	items, _, cycleErr := handleExtractionAndDownload(ctx, dl, db, redditPosts, newPosts, slogLogger)
+	if cycleErr != nil {
+		finalizeFullSyncIfNeeded(ctx, db, isFullSync, cycleErr, slogLogger)
+		return cycleErr
 	}
 
-	fmt.Printf("Extracted %d downloadable items\n", len(items))
-
-	hashes, downloadErr := dl.Download(ctx, items)
-
-	firstSaveErr := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger)
-
-	if downloadErr != nil {
-		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
-	}
-	if firstSaveErr != nil {
-		return fmt.Errorf("saving posts: %w", firstSaveErr)
-	}
-
-	// Only mark full sync as completed if no errors occurred
-	if isFullSync {
-		if extractErr != nil || downloadErr != nil {
-			slogLogger.Warn("Full sync completed with errors, keeping pending for retry")
-		} else {
-			if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-				slogLogger.Error("Error marking full sync as completed", "error", err)
-			} else {
-				slogLogger.Info("Full sync completed, switching to incremental mode")
-			}
-		}
-	}
+	finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger)
 
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
 
