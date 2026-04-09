@@ -273,7 +273,7 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 }
 
 // handleExtractionAndDownload handles extraction, download, and saving.
-// Returns items, hashes, and any cycle-level fatal error (e.g., context cancellation).
+// Returns items, hashes, and any error (fatal cycle errors or non-fatal extraction/download failures).
 func handleExtractionAndDownload(
 	ctx context.Context,
 	dl *downloader.Downloader,
@@ -285,7 +285,7 @@ func handleExtractionAndDownload(
 	items, extractErr := dl.Extract(ctx, redditPosts)
 	if extractErr != nil {
 		if errors.Is(extractErr, context.Canceled) || errors.Is(extractErr, context.DeadlineExceeded) {
-			return nil, nil, extractErr
+			return nil, nil, fmt.Errorf("extracting reddit posts: %w", extractErr)
 		}
 		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
 	}
@@ -295,7 +295,7 @@ func handleExtractionAndDownload(
 	hashes, downloadErr := dl.Download(ctx, items)
 	if downloadErr != nil {
 		if errors.Is(downloadErr, context.Canceled) || errors.Is(downloadErr, context.DeadlineExceeded) {
-			return nil, nil, downloadErr
+			return nil, nil, fmt.Errorf("downloading items: %w", downloadErr)
 		}
 		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
 	}
@@ -304,31 +304,42 @@ func handleExtractionAndDownload(
 		return nil, nil, err
 	}
 
+	// Return any non-fatal extraction/download errors so caller can decide on full sync completion
+	if extractErr != nil {
+		return items, hashes, extractErr
+	}
+	if downloadErr != nil {
+		return items, hashes, downloadErr
+	}
+
 	return items, hashes, nil
 }
 
 // finalizeFullSyncIfNeeded marks full sync as completed if no cycle-level errors occurred.
+// Returns cycleErr if non-nil, or db.SetMetadata error if SetMetadata fails, or nil on success/when !isFullSync.
 func finalizeFullSyncIfNeeded(
 	ctx context.Context,
 	db *storage.DB,
 	isFullSync bool,
 	cycleErr error,
 	slogLogger *slog.Logger,
-) {
+) error {
 	if !isFullSync {
-		return
+		return nil
 	}
 
 	if cycleErr != nil {
 		slogLogger.Warn("Full sync completed with errors, keeping pending for retry", "error", cycleErr)
-		return
+		return cycleErr
 	}
 
 	if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
 		slogLogger.Error("Error marking full sync as completed", "error", err)
-	} else {
-		slogLogger.Info("Full sync completed, switching to incremental mode")
+		return fmt.Errorf("marking full sync as completed: %w", err)
 	}
+
+	slogLogger.Info("Full sync completed, switching to incremental mode")
+	return nil
 }
 func main() {
 	if err := run(); err != nil {
@@ -696,11 +707,14 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	items, _, cycleErr := handleExtractionAndDownload(ctx, dl, db, redditPosts, newPosts, slogLogger)
 	if cycleErr != nil {
-		finalizeFullSyncIfNeeded(ctx, db, isFullSync, cycleErr, slogLogger)
+		// When there's a cycle error during full sync, keep full_sync_once as pending for retry
+		// Don't call finalizeFullSyncIfNeeded - it would return cycleErr without modifying DB
 		return cycleErr
 	}
 
-	finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger)
+	if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger); err != nil {
+		return err
+	}
 
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
 
