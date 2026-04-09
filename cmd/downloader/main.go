@@ -26,6 +26,8 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
 )
 
+const fullSyncCompleted = "completed"
+
 // parseSlogLevel converts a log level string to slog.Level.
 func parseSlogLevel(levelStr string) slog.Level {
 	switch strings.ToLower(levelStr) {
@@ -348,7 +350,7 @@ func finalizeFullSyncIfNeeded(
 		return cycleErr
 	}
 
-	if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+	if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
 		slogLogger.Error("Error marking full sync as completed", "error", err)
 		return fmt.Errorf("marking full sync as completed: %w", err)
 	}
@@ -699,7 +701,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 	if len(newPosts) == 0 {
 		fmt.Println("No new posts to download")
 		if isFullSync {
-			if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+			if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
 				fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
 			} else {
 				fmt.Println("Full sync completed, switching to incremental mode")
