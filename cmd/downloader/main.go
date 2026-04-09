@@ -56,6 +56,21 @@ func (m *memoryTokenStore) LoadToken() (*oauth2.Token, error) {
 	return m.token, nil
 }
 
+// cycleError wraps a cycle-level error to distinguish fatal vs non-fatal errors.
+// A cycleError is only returned for true cycle-level failures (e.g., output-dir creation,
+// download subsystem errors) and not for per-item extraction/download failures.
+type cycleError struct {
+	cause error
+}
+
+func (e *cycleError) Error() string {
+	return fmt.Sprintf("cycle error: %v", e.cause)
+}
+
+func (e *cycleError) Unwrap() error {
+	return e.cause
+}
+
 // buildTokenFromEnv builds an oauth2.Token from environment variables.
 func buildTokenFromEnv() *oauth2.Token {
 	accessToken := os.Getenv("REDDIT_ACCESS_TOKEN")
@@ -285,7 +300,7 @@ func handleExtractionAndDownload(
 	items, extractErr := dl.Extract(ctx, redditPosts)
 	if extractErr != nil {
 		if errors.Is(extractErr, context.Canceled) || errors.Is(extractErr, context.DeadlineExceeded) {
-			return nil, nil, fmt.Errorf("extracting reddit posts: %w", extractErr)
+			return nil, nil, &cycleError{cause: fmt.Errorf("extracting reddit posts: %w", extractErr)}
 		}
 		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
 	}
@@ -295,21 +310,21 @@ func handleExtractionAndDownload(
 	hashes, downloadErr := dl.Download(ctx, items)
 	if downloadErr != nil {
 		if errors.Is(downloadErr, context.Canceled) || errors.Is(downloadErr, context.DeadlineExceeded) {
-			return nil, nil, fmt.Errorf("downloading items: %w", downloadErr)
+			return nil, nil, &cycleError{cause: fmt.Errorf("downloading items: %w", downloadErr)}
 		}
 		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
 	}
 
 	if err := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger); err != nil {
-		return nil, nil, err
+		return nil, nil, &cycleError{cause: err}
 	}
 
 	// Return any non-fatal extraction/download errors so caller can decide on full sync completion
 	if extractErr != nil {
-		return items, hashes, extractErr
+		return items, hashes, fmt.Errorf("extract failed: %w", extractErr)
 	}
 	if downloadErr != nil {
-		return items, hashes, downloadErr
+		return items, hashes, fmt.Errorf("download failed: %w", downloadErr)
 	}
 
 	return items, hashes, nil
@@ -705,11 +720,15 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		}
 	}
 
-	items, _, cycleErr := handleExtractionAndDownload(ctx, dl, db, redditPosts, newPosts, slogLogger)
-	if cycleErr != nil {
-		// When there's a cycle error during full sync, keep full_sync_once as pending for retry
-		// Don't call finalizeFullSyncIfNeeded - it would return cycleErr without modifying DB
-		return cycleErr
+	items, _, handleErr := handleExtractionAndDownload(ctx, dl, db, redditPosts, newPosts, slogLogger)
+	if handleErr != nil {
+		var ce *cycleError
+		if errors.As(handleErr, &ce) {
+			// Fatal cycle-level error: keep full_sync_once pending for retry
+			return handleErr
+		}
+		// Non-fatal per-item error: log and continue to finalize
+		slogLogger.Warn("Cycle completed with non-fatal errors", "error", handleErr)
 	}
 
 	if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger); err != nil {
