@@ -323,7 +323,7 @@ func handleExtractionAndDownload(
 		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
 	}
 
-	fmt.Printf("Extracted %d downloadable items\n", len(items))
+	slogLogger.Info("Extracted downloadable items", "count", len(items))
 
 	hashes, downloadErr := dl.Download(ctx, items)
 	if downloadErr != nil {
@@ -333,7 +333,43 @@ func handleExtractionAndDownload(
 		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
 	}
 
-	if err := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger); err != nil {
+	// Filter newPosts to only include complete posts (all items downloaded successfully)
+	// Compute expected count per post from items
+	expectedByPost := make(map[string]int)
+	for _, item := range items {
+		expectedByPost[item.PostID]++
+	}
+
+	// Compute actual count per post from hashes (exclude _duplicate keys)
+	actualByPost := make(map[string]int)
+	for key := range hashes {
+		if strings.HasSuffix(key, "_duplicate") {
+			continue
+		}
+		// Key format: "{postID}" for single items or "{postID}_{index}" for gallery items
+		if idx := strings.LastIndex(key, "_"); idx != -1 {
+			postID := key[:idx]
+			actualByPost[postID]++
+		} else {
+			actualByPost[key]++
+		}
+	}
+
+	// Filter to only complete posts
+	var completePosts []storage.Post
+	for _, post := range newPosts {
+		expected := expectedByPost[post.ID]
+		actual := actualByPost[post.ID]
+		if expected > 0 && expected == actual {
+			completePosts = append(completePosts, post)
+		}
+	}
+
+	if len(completePosts) < len(newPosts) {
+		slogLogger.Info("Some posts incomplete, skipping save", "complete", len(completePosts), "total", len(newPosts))
+	}
+
+	if err := saveDownloadedPosts(ctx, db, completePosts, hashes, slogLogger); err != nil {
 		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(newPosts))
 		return nil, nil, &cycleError{cause: err}
 	}
