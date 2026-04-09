@@ -304,6 +304,10 @@ func handleExtractionAndDownload(
 		if errors.Is(extractErr, context.Canceled) || errors.Is(extractErr, context.DeadlineExceeded) {
 			return nil, nil, &cycleError{cause: fmt.Errorf("extracting reddit posts: %w", extractErr)}
 		}
+		// Check for explicit context cancellation in case aggregate errors don't preserve wrapping
+		if ctx.Err() != nil {
+			return nil, nil, &cycleError{cause: fmt.Errorf("extracting reddit posts: %w", ctx.Err())}
+		}
 		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
 	}
 
@@ -313,6 +317,10 @@ func handleExtractionAndDownload(
 	if downloadErr != nil {
 		if errors.Is(downloadErr, context.Canceled) || errors.Is(downloadErr, context.DeadlineExceeded) {
 			return nil, nil, &cycleError{cause: fmt.Errorf("downloading items: %w", downloadErr)}
+		}
+		// Check for explicit context cancellation in case aggregate errors don't preserve wrapping
+		if ctx.Err() != nil {
+			return nil, nil, &cycleError{cause: fmt.Errorf("downloading items: %w", ctx.Err())}
 		}
 		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
 	}
@@ -700,11 +708,8 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	if len(newPosts) == 0 {
 		fmt.Println("No new posts to download")
-		if isFullSync {
-			if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
-				return fmt.Errorf("marking full sync as completed: %w", err)
-			}
-			fmt.Println("Full sync completed, switching to incremental mode")
+		if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger); err != nil {
+			return err
 		}
 
 		return nil
