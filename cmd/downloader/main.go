@@ -358,22 +358,16 @@ func handleExtractionAndDownload(
 	return items, hashes, nil
 }
 
-// finalizeFullSyncIfNeeded marks full sync as completed if no cycle-level errors occurred.
-// Returns cycleErr if non-nil, or db.SetMetadata error if SetMetadata fails, or nil on success/when !isFullSync.
+// finalizeFullSyncIfNeeded marks full sync as completed when !isFullSync or if no cycle-level errors occurred.
+// Returns db.SetMetadata error if SetMetadata fails, or nil on success/when !isFullSync.
 func finalizeFullSyncIfNeeded(
 	ctx context.Context,
 	db *storage.DB,
 	isFullSync bool,
-	cycleErr error,
 	slogLogger *slog.Logger,
 ) error {
 	if !isFullSync {
 		return nil
-	}
-
-	if cycleErr != nil {
-		slogLogger.Warn("Full sync completed with errors, keeping pending for retry", "error", cycleErr)
-		return cycleErr
 	}
 
 	if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
@@ -726,7 +720,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	if len(newPosts) == 0 {
 		fmt.Println("No new posts to download")
-		if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger); err != nil {
+		if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, slogLogger); err != nil {
 			return err
 		}
 
@@ -755,7 +749,7 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		slogLogger.Warn("Cycle completed with non-fatal errors", "error", handleErr)
 	}
 
-	if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, nil, slogLogger); err != nil {
+	if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, slogLogger); err != nil {
 		return err
 	}
 
