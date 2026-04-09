@@ -702,10 +702,9 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		fmt.Println("No new posts to download")
 		if isFullSync {
 			if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
-				fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
-			} else {
-				fmt.Println("Full sync completed, switching to incremental mode")
+				return fmt.Errorf("marking full sync as completed: %w", err)
 			}
+			fmt.Println("Full sync completed, switching to incremental mode")
 		}
 
 		return nil
