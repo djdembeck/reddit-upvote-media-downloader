@@ -296,7 +296,7 @@ func saveIncompletePosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	for _, post := range posts {
 		// Set retry tracking fields
 		post.LastAttempt = now
-		post.RetryCount++ // Increment retry count
+		post.RetryCount++                      // Increment retry count
 		post.LastError = "incomplete_download" // Mark as incomplete for retry logic
 
 		if saveErr := db.SavePost(ctx, &post); saveErr != nil {
@@ -307,6 +307,32 @@ func saveIncompletePosts(ctx context.Context, db *storage.DB, posts []storage.Po
 		}
 	}
 	return firstSaveErr
+}
+
+// saveCyclePosts handles saving both complete and incomplete posts after a download cycle.
+// It returns a *cycleError on failure so the caller can decide whether to abort.
+func saveCyclePosts(
+	ctx context.Context,
+	db *storage.DB,
+	completePosts []storage.Post,
+	incompletePosts []storage.Post,
+	hashes map[string]string,
+	slogLogger *slog.Logger,
+) error {
+	if err := saveDownloadedPosts(ctx, db, completePosts, hashes, slogLogger); err != nil {
+		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(completePosts))
+		return &cycleError{cause: err}
+	}
+
+	// Also save incomplete posts so they don't reappear as "new" every cycle
+	if len(incompletePosts) > 0 {
+		if err := saveIncompletePosts(ctx, db, incompletePosts, slogLogger); err != nil {
+			slogLogger.Error("aborting cycle: failed to save incomplete posts", "error", err, "post_count", len(incompletePosts))
+			return &cycleError{cause: err}
+		}
+	}
+
+	return nil
 }
 
 // classifyStepError checks if an error is fatal (context cancellation)
@@ -404,17 +430,8 @@ func handleExtractionAndDownload(
 		slogLogger.Info("Some posts incomplete, will track for retry", "complete", len(completePosts), "incomplete", len(incompletePosts))
 	}
 
-	if err := saveDownloadedPosts(ctx, db, completePosts, hashes, slogLogger); err != nil {
-		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(completePosts))
-		return nil, nil, &cycleError{cause: err}
-	}
-
-	// Also save incomplete posts so they don't reappear as "new" every cycle
-	if len(incompletePosts) > 0 {
-		if err := saveIncompletePosts(ctx, db, incompletePosts, slogLogger); err != nil {
-			slogLogger.Error("aborting cycle: failed to save incomplete posts", "error", err, "post_count", len(incompletePosts))
-			return nil, nil, &cycleError{cause: err}
-		}
+	if err := saveCyclePosts(ctx, db, completePosts, incompletePosts, hashes, slogLogger); err != nil {
+		return nil, nil, err
 	}
 
 	// Return any non-fatal extraction/download errors so caller can decide on full sync completion
