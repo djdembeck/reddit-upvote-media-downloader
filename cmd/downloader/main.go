@@ -289,6 +289,26 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
+// saveIncompletePosts tracks posts that had extraction/download failures for retry.
+func saveIncompletePosts(ctx context.Context, db *storage.DB, posts []storage.Post, slogLogger *slog.Logger) error {
+	var firstSaveErr error
+	now := time.Now()
+	for _, post := range posts {
+		// Set retry tracking fields
+		post.LastAttempt = now
+		post.RetryCount++ // Increment retry count
+		post.LastError = "incomplete_download" // Mark as incomplete for retry logic
+
+		if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+			slogLogger.Error("Error saving incomplete post", "error", saveErr, "post_id", post.ID)
+			if firstSaveErr == nil {
+				firstSaveErr = fmt.Errorf("failed to save incomplete post %s: %w", post.ID, saveErr)
+			}
+		}
+	}
+	return firstSaveErr
+}
+
 // classifyStepError checks if an error is fatal (context cancellation)
 // and returns the appropriate wrapped error with the step name.
 func classifyStepError(ctx context.Context, step string, err error) (fatal bool, wrapped error) {
@@ -303,6 +323,50 @@ func classifyStepError(ctx context.Context, step string, err error) (fatal bool,
 		return true, &cycleError{cause: fmt.Errorf("%s: %w", step, ctx.Err())}
 	}
 	return false, nil
+}
+
+// filterCompletePosts separates complete and incomplete posts.
+// Returns (completePosts, incompletePosts) where:
+// - completePosts: posts where expected > 0 && expected == actual
+// - incompletePosts: posts where expected == 0 || expected != actual
+func filterCompletePosts(
+	items []downloader.Downloadable,
+	hashes map[string]string,
+	newPosts []storage.Post,
+) (completePosts []storage.Post, incompletePosts []storage.Post) {
+	// Compute expected count per post from items
+	expectedByPost := make(map[string]int)
+	for _, item := range items {
+		expectedByPost[item.PostID]++
+	}
+
+	// Compute actual count per post from hashes (exclude _duplicate keys)
+	actualByPost := make(map[string]int)
+	for key := range hashes {
+		if strings.HasSuffix(key, "_duplicate") {
+			continue
+		}
+		// Key format: "{postID}" for single items or "{postID}_{index}" for gallery items
+		if idx := strings.LastIndex(key, "_"); idx != -1 {
+			postID := key[:idx]
+			actualByPost[postID]++
+		} else {
+			actualByPost[key]++
+		}
+	}
+
+	// Separate complete and incomplete posts
+	for _, post := range newPosts {
+		expected := expectedByPost[post.ID]
+		actual := actualByPost[post.ID]
+		if expected > 0 && expected == actual {
+			completePosts = append(completePosts, post)
+		} else {
+			incompletePosts = append(incompletePosts, post)
+		}
+	}
+
+	return completePosts, incompletePosts
 }
 
 // handleExtractionAndDownload handles extraction, download, and saving.
@@ -333,45 +397,24 @@ func handleExtractionAndDownload(
 		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
 	}
 
-	// Filter newPosts to only include complete posts (all items downloaded successfully)
-	// Compute expected count per post from items
-	expectedByPost := make(map[string]int)
-	for _, item := range items {
-		expectedByPost[item.PostID]++
-	}
+	// Use helper to separate complete and incomplete posts
+	completePosts, incompletePosts := filterCompletePosts(items, hashes, newPosts)
 
-	// Compute actual count per post from hashes (exclude _duplicate keys)
-	actualByPost := make(map[string]int)
-	for key := range hashes {
-		if strings.HasSuffix(key, "_duplicate") {
-			continue
-		}
-		// Key format: "{postID}" for single items or "{postID}_{index}" for gallery items
-		if idx := strings.LastIndex(key, "_"); idx != -1 {
-			postID := key[:idx]
-			actualByPost[postID]++
-		} else {
-			actualByPost[key]++
-		}
-	}
-
-	// Filter to only complete posts
-	var completePosts []storage.Post
-	for _, post := range newPosts {
-		expected := expectedByPost[post.ID]
-		actual := actualByPost[post.ID]
-		if expected > 0 && expected == actual {
-			completePosts = append(completePosts, post)
-		}
-	}
-
-	if len(completePosts) < len(newPosts) {
-		slogLogger.Info("Some posts incomplete, skipping save", "complete", len(completePosts), "total", len(newPosts))
+	if len(incompletePosts) > 0 {
+		slogLogger.Info("Some posts incomplete, will track for retry", "complete", len(completePosts), "incomplete", len(incompletePosts))
 	}
 
 	if err := saveDownloadedPosts(ctx, db, completePosts, hashes, slogLogger); err != nil {
-		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(newPosts))
+		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(completePosts))
 		return nil, nil, &cycleError{cause: err}
+	}
+
+	// Also save incomplete posts so they don't reappear as "new" every cycle
+	if len(incompletePosts) > 0 {
+		if err := saveIncompletePosts(ctx, db, incompletePosts, slogLogger); err != nil {
+			slogLogger.Error("aborting cycle: failed to save incomplete posts", "error", err, "post_count", len(incompletePosts))
+			return nil, nil, &cycleError{cause: err}
+		}
 	}
 
 	// Return any non-fatal extraction/download errors so caller can decide on full sync completion
