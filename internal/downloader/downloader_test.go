@@ -1976,7 +1976,8 @@ func TestDownloaderRespectsConfiguredDelay(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write(validMP4Data()); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
+			t.Errorf("Failed to write response: %v", err)
+			return
 		}
 	}))
 	defer server.Close()
