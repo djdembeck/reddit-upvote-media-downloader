@@ -711,8 +711,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after first run: %v", err)
 	}
-	if fullSyncOnce != storage.MetadataValuePending {
-		t.Errorf("Expected full_sync_once=pending after first run with errors, got: %s", fullSyncOnce)
+	if fullSyncOnce != fullSyncCompleted {
+		t.Errorf("Expected full_sync_once=completed after first run (per-item failures are non-fatal), got: %s", fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {
@@ -733,8 +733,8 @@ func TestE2E_FullWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once after second run: %v", err)
 	}
-	if fullSyncOnce != storage.MetadataValuePending {
-		t.Errorf("Expected full_sync_once=pending after second run with errors, got: %s", fullSyncOnce)
+	if fullSyncOnce != fullSyncCompleted {
+		t.Errorf("Expected full_sync_once=completed after second run (per-item failures are non-fatal), got: %s", fullSyncOnce)
 	}
 
 	if mockClient.callCount == 0 {
@@ -836,7 +836,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 	if err := db.SetMetadata(ctx, "migration_complete", "true"); err != nil {
 		t.Fatalf("Failed to set migration_complete: %v", err)
 	}
-	if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
+	if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
 		t.Fatalf("Failed to set full_sync_once: %v", err)
 	}
 
@@ -1317,7 +1317,7 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get full_sync_once: %v", err)
 	}
-	if fullSyncOnce != "completed" {
+	if fullSyncOnce != fullSyncCompleted {
 		t.Errorf("Expected full_sync_once=completed, got: %s", fullSyncOnce)
 	}
 

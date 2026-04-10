@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,6 +25,8 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
 )
+
+const fullSyncCompleted = "completed"
 
 // parseSlogLevel converts a log level string to slog.Level.
 func parseSlogLevel(levelStr string) slog.Level {
@@ -53,6 +56,21 @@ func (m *memoryTokenStore) SaveToken(token *oauth2.Token) error {
 
 func (m *memoryTokenStore) LoadToken() (*oauth2.Token, error) {
 	return m.token, nil
+}
+
+// cycleError wraps a cycle-level error to distinguish fatal vs non-fatal errors.
+// A cycleError is only returned for true cycle-level failures (e.g., output-dir creation,
+// download subsystem errors) and not for per-item extraction/download failures.
+type cycleError struct {
+	cause error
+}
+
+func (e *cycleError) Error() string {
+	return fmt.Sprintf("cycle error: %v", e.cause)
+}
+
+func (e *cycleError) Unwrap() error {
+	return e.cause
 }
 
 // buildTokenFromEnv builds an oauth2.Token from environment variables.
@@ -271,6 +289,182 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
+// saveIncompletePosts tracks posts that had extraction/download failures for retry.
+func saveIncompletePosts(ctx context.Context, db *storage.DB, posts []storage.Post, slogLogger *slog.Logger) error {
+	var firstSaveErr error
+	now := time.Now()
+	for _, post := range posts {
+		// Set retry tracking fields
+		post.LastAttempt = now
+		post.RetryCount++                      // Increment retry count
+		post.LastError = "incomplete_download" // Mark as incomplete for retry logic
+
+		if saveErr := db.SavePost(ctx, &post); saveErr != nil {
+			slogLogger.Error("Error saving incomplete post", "error", saveErr, "post_id", post.ID)
+			if firstSaveErr == nil {
+				firstSaveErr = fmt.Errorf("failed to save incomplete post %s: %w", post.ID, saveErr)
+			}
+		}
+	}
+	return firstSaveErr
+}
+
+// saveCyclePosts handles saving both complete and incomplete posts after a download cycle.
+// It returns a *cycleError on failure so the caller can decide whether to abort.
+func saveCyclePosts(
+	ctx context.Context,
+	db *storage.DB,
+	completePosts []storage.Post,
+	incompletePosts []storage.Post,
+	hashes map[string]string,
+	slogLogger *slog.Logger,
+) error {
+	if err := saveDownloadedPosts(ctx, db, completePosts, hashes, slogLogger); err != nil {
+		slogLogger.Error("aborting cycle: failed to save downloaded posts", "error", err, "post_count", len(completePosts))
+		return &cycleError{cause: err}
+	}
+
+	// Also save incomplete posts so they don't reappear as "new" every cycle
+	if len(incompletePosts) > 0 {
+		if err := saveIncompletePosts(ctx, db, incompletePosts, slogLogger); err != nil {
+			slogLogger.Error("aborting cycle: failed to save incomplete posts", "error", err, "post_count", len(incompletePosts))
+			return &cycleError{cause: err}
+		}
+	}
+
+	return nil
+}
+
+// classifyStepError checks if an error is fatal (context cancellation)
+// and returns the appropriate wrapped error with the step name.
+func classifyStepError(ctx context.Context, step string, err error) (fatal bool, wrapped error) {
+	if err == nil {
+		return false, nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true, &cycleError{cause: fmt.Errorf("%s: %w", step, err)}
+	}
+	// Check for explicit context cancellation in case aggregate errors don't preserve wrapping
+	if ctx.Err() != nil {
+		return true, &cycleError{cause: fmt.Errorf("%s: %w", step, ctx.Err())}
+	}
+	return false, nil
+}
+
+// filterCompletePosts separates complete and incomplete posts.
+// Returns (completePosts, incompletePosts) where:
+// - completePosts: posts where expected > 0 && expected == actual
+// - incompletePosts: posts where expected == 0 || expected != actual
+func filterCompletePosts(
+	items []downloader.Downloadable,
+	hashes map[string]string,
+	newPosts []storage.Post,
+) (completePosts []storage.Post, incompletePosts []storage.Post) {
+	// Compute expected count per post from items
+	expectedByPost := make(map[string]int)
+	for _, item := range items {
+		expectedByPost[item.PostID]++
+	}
+
+	// Compute actual count per post from hashes (exclude _duplicate keys)
+	actualByPost := make(map[string]int)
+	for key := range hashes {
+		if strings.HasSuffix(key, "_duplicate") {
+			continue
+		}
+		// Key format: "{postID}" for single items or "{postID}_{index}" for gallery items
+		if idx := strings.LastIndex(key, "_"); idx != -1 {
+			postID := key[:idx]
+			actualByPost[postID]++
+		} else {
+			actualByPost[key]++
+		}
+	}
+
+	// Separate complete and incomplete posts
+	for _, post := range newPosts {
+		expected := expectedByPost[post.ID]
+		actual := actualByPost[post.ID]
+		if expected > 0 && expected == actual {
+			completePosts = append(completePosts, post)
+		} else {
+			incompletePosts = append(incompletePosts, post)
+		}
+	}
+
+	return completePosts, incompletePosts
+}
+
+// handleExtractionAndDownload handles extraction, download, and saving.
+// Returns items, hashes, and any error (fatal cycle errors or non-fatal extraction/download failures).
+func handleExtractionAndDownload(
+	ctx context.Context,
+	dl *downloader.Downloader,
+	db *storage.DB,
+	redditPosts []reddit.Post,
+	newPosts []storage.Post,
+	slogLogger *slog.Logger,
+) ([]downloader.Downloadable, map[string]string, error) {
+	items, extractErr := dl.Extract(ctx, redditPosts)
+	if extractErr != nil {
+		if fatal, wrapped := classifyStepError(ctx, "extracting reddit posts", extractErr); fatal {
+			return nil, nil, wrapped
+		}
+		slogLogger.Warn("Extraction completed with some failures", "error", extractErr)
+	}
+
+	slogLogger.Info("Extracted downloadable items", "count", len(items))
+
+	hashes, downloadErr := dl.Download(ctx, items)
+	if downloadErr != nil {
+		if fatal, wrapped := classifyStepError(ctx, "downloading items", downloadErr); fatal {
+			return nil, nil, wrapped
+		}
+		slogLogger.Warn("Download completed with some failures", "error", downloadErr)
+	}
+
+	// Use helper to separate complete and incomplete posts
+	completePosts, incompletePosts := filterCompletePosts(items, hashes, newPosts)
+
+	if len(incompletePosts) > 0 {
+		slogLogger.Info("Some posts incomplete, will track for retry", "complete", len(completePosts), "incomplete", len(incompletePosts))
+	}
+
+	if err := saveCyclePosts(ctx, db, completePosts, incompletePosts, hashes, slogLogger); err != nil {
+		return nil, nil, err
+	}
+
+	// Return any non-fatal extraction/download errors so caller can decide on full sync completion
+	if extractErr != nil {
+		return items, hashes, fmt.Errorf("extract failed: %w", extractErr)
+	}
+	if downloadErr != nil {
+		return items, hashes, fmt.Errorf("download failed: %w", downloadErr)
+	}
+
+	return items, hashes, nil
+}
+
+// finalizeFullSyncIfNeeded marks full sync as completed when !isFullSync or if no cycle-level errors occurred.
+// Returns db.SetMetadata error if SetMetadata fails, or nil on success/when !isFullSync.
+func finalizeFullSyncIfNeeded(
+	ctx context.Context,
+	db *storage.DB,
+	isFullSync bool,
+	slogLogger *slog.Logger,
+) error {
+	if !isFullSync {
+		return nil
+	}
+
+	if err := db.SetMetadata(ctx, "full_sync_once", fullSyncCompleted); err != nil {
+		slogLogger.Error("Error marking full sync as completed", "error", err)
+		return fmt.Errorf("marking full sync as completed: %w", err)
+	}
+
+	slogLogger.Info("Full sync completed, switching to incremental mode")
+	return nil
+}
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -613,19 +807,14 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 
 	if len(newPosts) == 0 {
 		fmt.Println("No new posts to download")
-		if isFullSync {
-			if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-				fmt.Fprintf(os.Stderr, "Error marking full sync as completed: %v\n", err)
-			} else {
-				fmt.Println("Full sync completed, switching to incremental mode")
-			}
+		if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, slogLogger); err != nil {
+			return err
 		}
 
 		return nil
 	}
 
 	redditPosts := make([]reddit.Post, len(newPosts))
-
 	for i, post := range newPosts {
 		redditPosts[i] = reddit.Post{
 			ID:        post.ID,
@@ -636,31 +825,19 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 		}
 	}
 
-	items, err := dl.Extract(ctx, redditPosts)
-	if err != nil {
-		return fmt.Errorf("extracting media: %w", err)
-	}
-
-	fmt.Printf("Extracted %d downloadable items\n", len(items))
-
-	hashes, err := dl.Download(ctx, items)
-
-	firstSaveErr := saveDownloadedPosts(ctx, db, newPosts, hashes, slogLogger)
-
-	if err != nil {
-		slogLogger.Warn("Warning: download completed with errors", "error", err)
-		return fmt.Errorf("downloading media: %w", err)
-	}
-	if firstSaveErr != nil {
-		return fmt.Errorf("saving posts: %w", firstSaveErr)
-	}
-
-	if isFullSync {
-		if err := db.SetMetadata(ctx, "full_sync_once", "completed"); err != nil {
-			slogLogger.Error("Error marking full sync as completed", "error", err)
-		} else {
-			slogLogger.Info("Full sync completed, switching to incremental mode")
+	items, _, handleErr := handleExtractionAndDownload(ctx, dl, db, redditPosts, newPosts, slogLogger)
+	if handleErr != nil {
+		var ce *cycleError
+		if errors.As(handleErr, &ce) {
+			// Fatal cycle-level error: keep full_sync_once pending for retry
+			return handleErr
 		}
+		// Non-fatal per-item error: log and continue to finalize
+		slogLogger.Warn("Cycle completed with non-fatal errors", "error", handleErr)
+	}
+
+	if err := finalizeFullSyncIfNeeded(ctx, db, isFullSync, slogLogger); err != nil {
+		return err
 	}
 
 	slogLogger.Info("Cycle complete", "downloaded_items", len(items))
