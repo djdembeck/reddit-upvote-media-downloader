@@ -181,7 +181,7 @@ func (r *Rollback) performFileRollback(ctx context.Context, op Record) error {
 	}
 
 	if err := copyFile(op.DestPath, op.SourcePath, r.Owner); err != nil {
-		return fmt.Errorf("copy file: %v", err)
+		return fmt.Errorf("copy file: %w", err)
 	}
 
 	srcInfo, err := os.Stat(op.DestPath)

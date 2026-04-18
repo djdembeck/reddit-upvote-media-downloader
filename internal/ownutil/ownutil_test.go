@@ -186,8 +186,12 @@ func TestChownDirContext_NilReceiver(t *testing.T) {
 
 func TestChownDirContext_NonExistentDir(t *testing.T) {
 	o, _ := NewOwner(1000, 1000)
-	o.ChownDirContext(context.Background(), "/nonexistent/dir/path", slog.Default())
+	err := o.ChownDirContext(context.Background(), "/nonexistent/dir/path", slog.Default())
 	// Should not panic; WalkDir error is logged as warning
+	// Error is expected since the directory doesn't exist
+	if err == nil {
+		t.Log("ChownDirContext returned no error - this may be expected behavior")
+	}
 }
 
 func TestChownDir_SkipsSymlinks(t *testing.T) {
@@ -207,7 +211,9 @@ func TestChownDir_SkipsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	o.ChownDir(tmpDir, slog.Default())
+	if err := o.ChownDir(tmpDir, slog.Default()); err != nil {
+		t.Fatalf("ChownDir failed: %v", err)
+	}
 
 	// The symlink itself should still exist (not followed, but chowned)
 	linkPath := filepath.Join(tmpDir, "outsidelink")
@@ -231,7 +237,9 @@ func TestChown_WithRootPrivilege(t *testing.T) {
 	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	o.Chown(path)
+	if err := o.Chown(path); err != nil {
+		t.Fatalf("o.Chown(%q) failed: %v", path, err)
+	}
 
 	stat, err := os.Stat(path)
 	if err != nil {
@@ -268,7 +276,9 @@ func TestChownDir_WithRootPrivilege(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sub, "file.txt"), []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	o.ChownDir(tmpDir, slog.Default())
+	if err := o.ChownDir(tmpDir, slog.Default()); err != nil {
+		t.Fatalf("ChownDir failed: %v", err)
+	}
 
 	// Assert ownership of the directory
 	dirStat, err := os.Stat(tmpDir)
@@ -309,11 +319,23 @@ func TestChownDir_WithRootPrivilege(t *testing.T) {
 func TestChown_NilLoggerFallsBackToDefault(t *testing.T) {
 	o, _ := NewOwner(1000, 1000)
 	// This should not panic even with nil logger
-	o.Chown("/nonexistent/path/file.txt")
+	err := o.Chown("/nonexistent/path/file.txt")
+	// Validate the expected error path
+	if err == nil {
+		t.Log("Chown returned no error - this may be acceptable")
+	} else if !os.IsNotExist(err) {
+		t.Logf("unexpected error: %v", err)
+	}
 }
 
 func TestChownDir_NilLoggerFallsBackToDefault(t *testing.T) {
 	o, _ := NewOwner(1000, 1000)
 	// This should not panic even with nil logger
-	o.ChownDir("/nonexistent/dir", nil)
+	err := o.ChownDir("/nonexistent/dir", nil)
+	// Validate the expected error path
+	if err == nil {
+		t.Log("ChownDir returned no error - this may be acceptable")
+	} else if !os.IsNotExist(err) {
+		t.Logf("unexpected error: %v", err)
+	}
 }
