@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -146,7 +147,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	// Execute
-	migrator := setupMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
+	migrator := setupMigrator(sourceDir, destDir, parser.PostMap, dryRun, db, nil)
 	if err := migrator.LoadExistingLog(ctx, logFile); err != nil {
 		return fmt.Errorf("load existing log: %w", err)
 	}
@@ -202,7 +203,7 @@ func initMigrationDB(ctx context.Context, dryRun bool) (*storage.DB, string, err
 	if dbPath != "" && !dryRun {
 		fmt.Printf("Initializing database: %s\n", dbPath)
 
-		db, err := storage.NewDB(ctx, dbPath)
+		db, err := storage.NewDB(ctx, dbPath, nil)
 		if err != nil {
 			return nil, "", fmt.Errorf("open database: %w", err)
 		}
@@ -213,8 +214,8 @@ func initMigrationDB(ctx context.Context, dryRun bool) (*storage.DB, string, err
 	return nil, dbPath, nil
 }
 
-func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostInfo, dryRun bool, db *storage.DB) *migration.Migrator {
-	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db)
+func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner) *migration.Migrator {
+	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db, owner)
 }
 
 //nolint:cyclop
@@ -234,7 +235,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 
 		var err error
 
-		db, err = storage.NewDB(ctx, dbPath)
+		db, err = storage.NewDB(ctx, dbPath, nil)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 
@@ -250,7 +251,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		}()
 	}
 
-	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot)
+	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot, nil)
 
 	rollbackLog, err := rollbacker.Execute(ctx)
 	if err != nil {
@@ -260,7 +261,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	}
 
 	rollbackPath := logPath + ".rollback_" + time.Now().Format("20060102_150405") + ".json"
-	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath); err != nil {
+	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving rollback log: %v\n", err)
 		return
 	}

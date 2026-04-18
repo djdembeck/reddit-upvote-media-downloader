@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -30,6 +31,7 @@ type Rollback struct {
 	LogPath    string
 	SourceRoot string
 	DestRoot   string
+	Owner      *ownutil.Owner
 }
 
 // RollbackLog contains rollback operation results.
@@ -58,12 +60,13 @@ type RollbackRecord struct {
 // NewRollback creates a new Rollback instance for reversing a previous migration.
 // It loads the migration log from logPath and prepares for rollback operations.
 // The sourceRoot and destRoot parameters should match the original migration paths.
-func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string) *Rollback {
+func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string, owner *ownutil.Owner) *Rollback {
 	return &Rollback{
 		LogPath:    logPath,
 		DB:         db,
 		SourceRoot: sourceRoot,
 		DestRoot:   destRoot,
+		Owner:      owner,
 	}
 }
 
@@ -161,6 +164,7 @@ func (r *Rollback) performFileRollback(op Record) error {
 	if err := os.MkdirAll(sourceDir, 0750); err != nil {
 		return fmt.Errorf("create dir: %v", err)
 	}
+	r.Owner.Chown(sourceDir, nil)
 
 	// Re-validate paths after MkdirAll to prevent TOCTOU symlink attacks
 	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {
@@ -177,7 +181,7 @@ func (r *Rollback) performFileRollback(op Record) error {
 		return fmt.Errorf("stat source: %v", err)
 	}
 
-	if err := copyFile(op.DestPath, op.SourcePath); err != nil {
+	if err := copyFile(op.DestPath, op.SourcePath, r.Owner); err != nil {
 		return fmt.Errorf("copy file: %v", err)
 	}
 
@@ -341,12 +345,13 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 }
 
 // SaveRollbackLog saves the rollback log to a JSON file for audit purposes.
-func SaveRollbackLog(log *RollbackLog, path string) error {
+func SaveRollbackLog(log *RollbackLog, path string, owner *ownutil.Owner) error {
 	//nolint:gosec // G304: path is validated by caller before this function
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create rollback log file: %w", err)
 	}
+	owner.Chown(path, nil)
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
 			slog.Error("failed to close rollback log file", "path", path, "error", cerr)

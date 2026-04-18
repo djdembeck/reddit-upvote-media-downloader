@@ -45,6 +45,8 @@ type RedditConfig struct {
 type StorageConfig struct {
 	OutputDir string
 	DBPath    string
+	PUID      int
+	PGID      int
 }
 
 // DownloadConfig holds downloader settings.
@@ -169,6 +171,8 @@ func Load() (*Config, error) {
 		Storage: StorageConfig{
 			OutputDir: getEnv("OUTPUT_DIR", "./data/output"),
 			DBPath:    getEnv("DB_PATH", "./data/posts.db"),
+			PUID:      getEnvInt("PUID", 0),
+			PGID:      getEnvInt("PGID", 0),
 		},
 		Download: DownloadConfig{
 			Concurrency:   getEnvInt("CONCURRENCY", 10),

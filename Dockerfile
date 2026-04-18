@@ -38,6 +38,8 @@ ENV FETCH_LIMIT=100
 ENV DOWNLOAD_DELAY_MS=200ms
 ENV LOG_LEVEL=info
 ENV MIGRATE_ON_START=true
+ENV PUID=0
+ENV PGID=0
 
 # Run the downloader
 CMD ["./reddit-downloader"]

@@ -15,6 +15,7 @@ import (
 
 	"github.com/zeebo/blake3"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -38,6 +39,7 @@ type Migrator struct {
 	SourceDir  string
 	DestDir    string
 	DryRun     bool
+	Owner      *ownutil.Owner
 }
 
 // FileHashInfo tracks file hash information for duplicate detection.
@@ -50,13 +52,14 @@ type FileHashInfo struct {
 }
 
 // NewMigrator creates a new Migrator instance.
-func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB) *Migrator {
+func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner) *Migrator {
 	m := &Migrator{
 		SourceDir: sourceDir,
 		DestDir:   destDir,
 		PostMap:   postMap,
 		DryRun:    dryRun,
 		DB:        db,
+		Owner:     owner,
 		Log: &Log{
 			Version:    "1.0",
 			Timestamp:  time.Now(),
@@ -383,8 +386,9 @@ func (m *Migrator) moveFile(src, dst string) error {
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
+	m.Owner.Chown(dir, nil)
 
-	if err := copyFile(src, dst); err != nil {
+	if err := copyFile(src, dst, m.Owner); err != nil {
 		return wrapWithCleanup(err, dst, "copy file")
 	}
 
@@ -413,7 +417,7 @@ func (m *Migrator) moveFile(src, dst string) error {
 	return nil
 }
 
-func copyFile(src, dst string) (err error) {
+func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 	//nolint:gosec // G304: intentional file reading from user-provided migration paths
 	sourceFile, err := os.Open(src)
 	if err != nil {
@@ -430,6 +434,7 @@ func copyFile(src, dst string) (err error) {
 	if err != nil {
 		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
+	owner.Chown(dst, nil)
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close dest %s: %w", dst, cerr)
@@ -458,6 +463,7 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err != nil {
 		return fmt.Errorf("create log file %s: %w", logPath, err)
 	}
+	m.Owner.Chown(logPath, nil)
 	defer func() {
 		if cerr := file.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close log file %s: %w", logPath, cerr)

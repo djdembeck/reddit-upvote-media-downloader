@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
@@ -59,6 +60,7 @@ type Config struct {
 	DownloadDelay time.Duration
 	OutputDir     string
 	UserAgent     string
+	Owner        *ownutil.Owner
 	Concurrency   int
 	Retries       int
 }
@@ -218,6 +220,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	if err := os.MkdirAll(d.config.OutputDir, 0750); err != nil {
 		return hashes, fmt.Errorf("create output directory: %w", err)
 	}
+	d.config.Owner.ChownDir(d.config.OutputDir, d.logger)
 
 	group := &errgroup.Group{}
 	group.SetLimit(d.config.Concurrency)
@@ -322,6 +325,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 	if err := os.MkdirAll(outputDir, 0750); err != nil {
 		return "", false, fmt.Errorf("create subreddit directory: %w", err)
 	}
+	d.config.Owner.Chown(outputDir, d.logger)
 
 	// Check if the expected file already exists
 	hash, isLocalReuse, _, err := d.checkAndHandleExistingFile(ctx, outputDir, item.PostID, filename)
@@ -638,6 +642,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	}
 
 	success = true
+	d.config.Owner.Chown(filePath, d.logger)
 	return nil
 }
 

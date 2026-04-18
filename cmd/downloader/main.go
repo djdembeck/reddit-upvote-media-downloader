@@ -21,6 +21,7 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/downloader"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
@@ -174,12 +175,13 @@ func setupLogger(cfg *config.Config) *slog.Logger {
 }
 
 // setupDownloader creates and configures the downloader.
-func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger) *downloader.Downloader {
+func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger, owner *ownutil.Owner) *downloader.Downloader {
 	downloaderConfig := downloader.Config{
 		OutputDir:     cfg.Storage.OutputDir,
 		Concurrency:   cfg.Download.Concurrency,
 		DownloadDelay: cfg.Download.DownloadDelay,
 		Logger:        logger,
+		Owner:         owner,
 	}
 	return downloader.NewDownloader(downloaderConfig, db)
 }
@@ -491,6 +493,8 @@ func run() error {
 	// Setup logging
 	fmt.Printf("Log level: %s\n", cfg.Log.Level)
 
+	owner := ownutil.NewOwner(cfg.Storage.PUID, cfg.Storage.PGID)
+
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -509,12 +513,14 @@ func run() error {
 	if err := os.MkdirAll(cfg.Storage.OutputDir, 0750); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
+	owner.ChownDir(cfg.Storage.OutputDir, nil)
 	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750); err != nil {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
+	owner.Chown(filepath.Dir(cfg.Storage.DBPath), nil)
 
 	// Open database
-	db, err := storage.NewDB(ctx, cfg.Storage.DBPath)
+	db, err := storage.NewDB(ctx, cfg.Storage.DBPath, owner)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -526,7 +532,7 @@ func run() error {
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
-		if err := runAutoMigration(ctx, db, cfg); err != nil {
+		if err := runAutoMigration(ctx, db, cfg, owner); err != nil {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
@@ -560,7 +566,7 @@ func run() error {
 	slog.SetDefault(slogLogger)
 
 	// Setup downloader
-	dl := setupDownloader(cfg, db, slogLogger)
+	dl := setupDownloader(cfg, db, slogLogger, owner)
 
 	// Main loop
 	for {
@@ -584,7 +590,7 @@ func run() error {
 }
 
 //nolint:cyclop
-func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) error {
+func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config, owner *ownutil.Owner) error {
 	outputDir := cfg.Storage.OutputDir
 
 	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
@@ -616,7 +622,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 					"set MIGRATE_SOURCE_DIR environment variable",
 			)
 		}
-		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db); err != nil {
+		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db, owner); err != nil {
 			return fmt.Errorf("file reorganization failed: %w", err)
 		}
 	}
@@ -648,7 +654,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config) e
 }
 
 //nolint:cyclop,gocyclo
-func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB) error {
+func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB, owner *ownutil.Owner) error {
 	fmt.Println("===================")
 	fmt.Println("File Reorganization")
 	fmt.Println("===================")
@@ -704,10 +710,11 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	if err := os.MkdirAll(destDir, 0750); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
+	owner.ChownDir(destDir, nil)
 
 	logPath := filepath.Join(destDir, ".migration_log.json")
 
-	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db)
+	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db, owner)
 	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
 		return fmt.Errorf("loading existing log: %w", err)
 	}

@@ -21,7 +21,7 @@ func setupTestDB(t *testing.T) (*DB, string) {
 	// Create a temporary directory for the test database
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := NewDB(ctx, dbPath)
+	db, err := NewDB(ctx, dbPath, nil)
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestClose(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "test.db")
 	ctx := context.Background()
 
-	db, err := NewDB(ctx, dbPath)
+	db, err := NewDB(ctx, dbPath, nil)
 	require.NoError(t, err, "Failed to create database")
 
 	require.NoError(t, db.Close(), "Failed to close database")
@@ -578,7 +578,7 @@ func TestHashColumnMigration(t *testing.T) {
 	dbPath := filepath.Join(tempDir, "test.db")
 	ctx := context.Background()
 
-	db, err := NewDB(ctx, dbPath)
+	db, err := NewDB(ctx, dbPath, nil)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
