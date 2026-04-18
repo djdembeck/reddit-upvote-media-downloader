@@ -164,7 +164,7 @@ func (r *Rollback) performFileRollback(op Record) error {
 	if err := os.MkdirAll(sourceDir, 0750); err != nil {
 		return fmt.Errorf("create dir: %v", err)
 	}
-	r.Owner.Chown(sourceDir, nil)
+	r.Owner.Chown(sourceDir, slog.Default())
 
 	// Re-validate paths after MkdirAll to prevent TOCTOU symlink attacks
 	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {
@@ -351,7 +351,7 @@ func SaveRollbackLog(log *RollbackLog, path string, owner *ownutil.Owner) error 
 	if err != nil {
 		return fmt.Errorf("create rollback log file: %w", err)
 	}
-	owner.Chown(path, nil)
+	owner.Chown(path, slog.Default())
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
 			slog.Error("failed to close rollback log file", "path", path, "error", cerr)

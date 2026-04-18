@@ -217,10 +217,9 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	if len(items) == 0 {
 		return hashes, nil
 	}
-	if err := os.MkdirAll(d.config.OutputDir, 0750); err != nil {
+	if err := d.config.Owner.ChownMkdirAll(d.config.OutputDir, 0750, d.logger); err != nil {
 		return hashes, fmt.Errorf("create output directory: %w", err)
 	}
-	d.config.Owner.ChownDir(d.config.OutputDir, d.logger)
 
 	group := &errgroup.Group{}
 	group.SetLimit(d.config.Concurrency)
@@ -322,10 +321,9 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	subreddit := sanitizeSubreddit(item.Subreddit)
 	outputDir := filepath.Join(d.config.OutputDir, subreddit)
-	if err := os.MkdirAll(outputDir, 0750); err != nil {
+	if err := d.config.Owner.ChownMkdirAll(outputDir, 0750, d.logger); err != nil {
 		return "", false, fmt.Errorf("create subreddit directory: %w", err)
 	}
-	d.config.Owner.Chown(outputDir, d.logger)
 
 	// Check if the expected file already exists
 	hash, isLocalReuse, _, err := d.checkAndHandleExistingFile(ctx, outputDir, item.PostID, filename)

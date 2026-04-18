@@ -493,7 +493,14 @@ func run() error {
 	// Setup logging
 	fmt.Printf("Log level: %s\n", cfg.Log.Level)
 
-	owner := ownutil.NewOwner(cfg.Storage.PUID, cfg.Storage.PGID)
+	owner, err := ownutil.NewOwner(cfg.Storage.PUID, cfg.Storage.PGID)
+	if err != nil {
+		return fmt.Errorf("invalid PUID/PGID: %w", err)
+	}
+
+	if owner.IsNoOp() {
+		fmt.Println("Note: PUID/PGID not set — files will be owned by the container user")
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -510,14 +517,12 @@ func run() error {
 	}()
 
 	// Create output directories
-	if err := os.MkdirAll(cfg.Storage.OutputDir, 0750); err != nil {
+	if err := owner.ChownMkdirAll(cfg.Storage.OutputDir, 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
-	owner.ChownDir(cfg.Storage.OutputDir, nil)
-	if err := os.MkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750); err != nil {
+	if err := owner.ChownMkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
-	owner.Chown(filepath.Dir(cfg.Storage.DBPath), nil)
 
 	// Open database
 	db, err := storage.NewDB(ctx, cfg.Storage.DBPath, owner)
@@ -707,10 +712,9 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		return fmt.Errorf("context canceled: %w", err)
 	}
 
-	if err := os.MkdirAll(destDir, 0750); err != nil {
+	if err := owner.ChownMkdirAll(destDir, 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
-	owner.ChownDir(destDir, nil)
 
 	logPath := filepath.Join(destDir, ".migration_log.json")
 

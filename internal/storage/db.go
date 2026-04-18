@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -14,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // sqlite3 driver
+	_ "github.com/mattn/go-sqlite3" // Required for SQLite driver registration
 
-	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"// Required for SQLite driver registration
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 )
 
 // ErrPostNotFound is returned when a post is not found in the database.
@@ -127,7 +128,9 @@ func (db *DB) runMigrations(ctx context.Context) error {
 //
 // Returns a pointer to the initialized DB and any error encountered.
 func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error) {
-	conn, err := openAndInitializeDB(ctx, dbPath, owner)
+	logger := slog.Default()
+
+	conn, err := openAndInitializeDB(ctx, dbPath, owner, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -144,17 +147,16 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 		return nil, fmt.Errorf("failed to ensure hash column: %w; close error: %v", err, cerr)
 	}
 
-	owner.Chown(dbPath, nil)
+	owner.Chown(dbPath, logger)
 
 	return db, nil
 }
 
-func openAndInitializeDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*sql.DB, error) {
+func openAndInitializeDB(ctx context.Context, dbPath string, owner *ownutil.Owner, logger *slog.Logger) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := owner.ChownMkdirAll(dir, 0750, logger); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
-	owner.Chown(dir, nil)
 
 	conn, err := sql.Open("sqlite3", dbPath)
 	if err != nil {

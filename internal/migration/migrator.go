@@ -383,10 +383,10 @@ func wrapWithCleanup(err error, dst, contextFmt string, args ...any) error {
 
 func (m *Migrator) moveFile(src, dst string) error {
 	dir := filepath.Dir(dst)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	logger := slog.Default()
+	if err := m.Owner.ChownMkdirAll(dir, 0750, logger); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
-	m.Owner.Chown(dir, nil)
 
 	if err := copyFile(src, dst, m.Owner); err != nil {
 		return wrapWithCleanup(err, dst, "copy file")
@@ -434,7 +434,7 @@ func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 	if err != nil {
 		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
-	owner.Chown(dst, nil)
+	owner.Chown(dst, slog.Default())
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close dest %s: %w", dst, cerr)
@@ -463,7 +463,7 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err != nil {
 		return fmt.Errorf("create log file %s: %w", logPath, err)
 	}
-	m.Owner.Chown(logPath, nil)
+	m.Owner.Chown(logPath, slog.Default())
 	defer func() {
 		if cerr := file.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close log file %s: %w", logPath, cerr)

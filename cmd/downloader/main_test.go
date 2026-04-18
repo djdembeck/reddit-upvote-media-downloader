@@ -17,6 +17,7 @@ import (
 
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/downloader"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -26,7 +27,7 @@ func setupIntegrationTest(t *testing.T) (*storage.DB, string, func()) {
 
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	db, err := storage.NewDB(ctx, dbPath, nil)
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 	require.NoError(t, err, "Failed to create test database")
 
 	cleanup := func() {
@@ -613,7 +614,7 @@ func TestE2E_FullWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(ctx, dbPath, nil)
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -827,7 +828,7 @@ func TestE2E_NoRedditCallsForExisting(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(ctx, dbPath, nil)
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -939,7 +940,7 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(ctx, dbPath, nil)
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -962,7 +963,7 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 			ReorganizeEnabled: false,
 		},
 	}
-	err = runAutoMigration(ctx, db, cfg, nil)
+	err = runAutoMigration(ctx, db, cfg, &ownutil.Owner{})
 	if err != nil {
 		t.Fatalf("Auto-migration failed: %v", err)
 	}
@@ -1021,7 +1022,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create HTML file: %v", err)
 				}
 
-				db, err := storage.NewDB(ctx, dbPath, nil)
+				db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 				if err != nil {
 					t.Fatalf("Failed to create database: %v", err)
 				}
@@ -1063,7 +1064,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 					t.Fatalf("Failed to create index.html: %v", err)
 				}
 
-				db, err := storage.NewDB(ctx, dbPath, nil)
+				db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 				if err != nil {
 					t.Fatalf("Failed to create database: %v", err)
 				}
@@ -1080,7 +1081,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 				destDir := filepath.Join(tempDir, "output")
 				dbPath := filepath.Join(tempDir, "posts.db")
 
-				db, err := storage.NewDB(ctx, dbPath, nil)
+				db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 				if err != nil {
 					t.Fatalf("Failed to create database: %v", err)
 				}
@@ -1100,7 +1101,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 			sourceDir, destDir, htmlDir, db, cleanup := tc.setupFunc(tempDir)
 			defer cleanup()
 
-			err := runFileReorganization(ctx, sourceDir, destDir, htmlDir, db, nil)
+			err := runFileReorganization(ctx, sourceDir, destDir, htmlDir, db, &ownutil.Owner{})
 
 			if tc.expectError {
 				if err == nil {
@@ -1148,7 +1149,7 @@ func TestE2E_ReCheckMissingFiles(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(ctx, dbPath, nil)
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
@@ -1254,7 +1255,7 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 		t.Fatalf("Failed to create output dir: %v", err)
 	}
 
-	db, err := storage.NewDB(ctx, dbPath, nil)
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
