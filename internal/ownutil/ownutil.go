@@ -58,6 +58,9 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 	if o.IsNoOp() {
 		return nil
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	var firstErr error
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -111,8 +114,14 @@ func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger)
 // ChownMkdirAllContext creates a directory tree and recursively changes ownership,
 // respecting context cancellation.
 func (o *Owner) ChownMkdirAllContext(ctx context.Context, dir string, perm os.FileMode, logger *slog.Logger) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	if err := o.ChownDirContext(ctx, dir, logger); err != nil {
 		return fmt.Errorf("chown directory %s: %w", dir, err)

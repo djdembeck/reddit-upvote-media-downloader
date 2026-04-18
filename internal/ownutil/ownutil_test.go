@@ -161,7 +161,7 @@ func TestChownDirContext_Cancellation(t *testing.T) {
 		t.Skip("skipping chown test: requires root")
 	}
 
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	tmpDir := t.TempDir()
 
 	// Create a directory structure
@@ -240,7 +240,7 @@ func TestChown_WithRootPrivilege(t *testing.T) {
 		t.Skip("skipping chown test: requires root")
 	}
 
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "testfile")
 	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
@@ -276,7 +276,7 @@ func TestChownDir_WithRootPrivilege(t *testing.T) {
 		t.Skip("skipping chown test: requires root")
 	}
 
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	tmpDir := t.TempDir()
 	sub := filepath.Join(tmpDir, "subdir")
 	if err := os.MkdirAll(sub, 0750); err != nil {
