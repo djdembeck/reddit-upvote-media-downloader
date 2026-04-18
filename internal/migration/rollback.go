@@ -148,7 +148,7 @@ func (r *Rollback) validateRollbackPaths(op Record) error {
 // performFileRollback performs the actual file rollback operations.
 //
 //nolint:cyclop,gocyclo
-func (r *Rollback) performFileRollback(op Record) error {
+func (r *Rollback) performFileRollback(ctx context.Context, op Record) error {
 	// Check file exists and is not a symlink
 	if info, err := os.Lstat(op.DestPath); err != nil {
 		if os.IsNotExist(err) {
@@ -161,7 +161,7 @@ func (r *Rollback) performFileRollback(op Record) error {
 
 	// Ensure source dir exists
 	sourceDir := filepath.Dir(op.SourcePath)
-	if err := r.Owner.ChownMkdirAll(sourceDir, 0750, slog.Default()); err != nil {
+	if err := r.Owner.ChownMkdirAllContext(ctx, sourceDir, 0750, slog.Default()); err != nil {
 		return fmt.Errorf("create and chown source dir: %w", err)
 	}
 
@@ -247,7 +247,7 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op Record) RollbackRec
 	}
 
 	// Perform file rollback
-	if err := r.performFileRollback(op); err != nil {
+	if err := r.performFileRollback(ctx, op); err != nil {
 		record.Status = StatusError
 		record.Error = err.Error()
 		return record

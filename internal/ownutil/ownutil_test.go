@@ -2,6 +2,7 @@ package ownutil
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -168,13 +169,19 @@ func TestChownDirContext_Cancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	o.ChownDirContext(ctx, tmpDir, slog.Default())
-	// Should not panic; some files may or may not be chowned depending on timing
+	err := o.ChownDirContext(ctx, tmpDir, slog.Default())
+	if err == nil {
+		t.Log("context was canceled before any chown operation; this is acceptable")
+	} else if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled error, got: %v", err)
+	}
 }
 
 func TestChownDirContext_NilReceiver(t *testing.T) {
 	var o *Owner
-	o.ChownDirContext(context.Background(), "/some/path", slog.Default())
+	if err := o.ChownDirContext(context.Background(), "/some/path", slog.Default()); err != nil {
+		t.Fatalf("ChownDirContext with nil receiver returned error: %v", err)
+	}
 }
 
 func TestChownDirContext_NonExistentDir(t *testing.T) {
