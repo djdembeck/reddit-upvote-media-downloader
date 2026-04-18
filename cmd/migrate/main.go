@@ -18,9 +18,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
@@ -222,21 +222,18 @@ func initMigrationDB(ctx context.Context, dryRun bool, owner *ownutil.Owner) (*s
 }
 
 func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner) *migration.Migrator {
-	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db, owner)
+	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db, owner, slog.Default())
 }
 
 func newOwnerFromEnv() (*ownutil.Owner, error) {
-	puidStr := os.Getenv("PUID")
-	pgidStr := os.Getenv("PGID")
-
-	puid, puidErr := strconv.Atoi(puidStr)
-	if puidErr != nil && puidStr != "" {
-		return nil, fmt.Errorf("invalid PUID value %q: %w", puidStr, puidErr)
+	puid, puidErr := config.GetEnvInt("PUID", 0)
+	if puidErr != nil {
+		return nil, fmt.Errorf("invalid PUID: %w", puidErr)
 	}
 
-	pgid, pgidErr := strconv.Atoi(pgidStr)
-	if pgidErr != nil && pgidStr != "" {
-		return nil, fmt.Errorf("invalid PGID value %q: %w", pgidStr, pgidErr)
+	pgid, pgidErr := config.GetEnvInt("PGID", 0)
+	if pgidErr != nil {
+		return nil, fmt.Errorf("invalid PGID: %w", pgidErr)
 	}
 
 	owner, err := ownutil.NewOwner(puid, pgid)
@@ -286,7 +283,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		}()
 	}
 
-	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot, owner)
+	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot, owner, slog.Default())
 
 	rollbackLog, err := rollbacker.Execute(ctx)
 	if err != nil {

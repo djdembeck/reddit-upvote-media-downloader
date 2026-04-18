@@ -204,10 +204,10 @@ func Load() (*Config, error) {
 	cfg.Storage.PUID = puid
 	cfg.Storage.PGID = pgid
 	if puidErr != nil {
-		return nil, fmt.Errorf("invalid PUID value: %w", puidErr)
+		return nil, fmt.Errorf("invalid PUID: %w", puidErr)
 	}
 	if pgidErr != nil {
-		return nil, fmt.Errorf("invalid PGID value: %w", pgidErr)
+		return nil, fmt.Errorf("invalid PGID: %w", pgidErr)
 	}
 
 	// Apply CLI flag overrides (highest priority)
@@ -275,6 +275,13 @@ func (c *Config) Validate() error {
 	// Validate backoff settings
 	if err := validateBackoffSettings(c); err != nil {
 		errs = append(errs, err)
+	}
+
+	if c.Storage.PUID < 0 {
+		errs = append(errs, fmt.Errorf("PUID must be non-negative, got %d", c.Storage.PUID))
+	}
+	if c.Storage.PGID < 0 {
+		errs = append(errs, fmt.Errorf("PGID must be non-negative, got %d", c.Storage.PGID))
 	}
 
 	// Validate retry threshold
@@ -403,14 +410,16 @@ func getEnvInt(key string, defaultValue int) (int, error) {
 		if intVal, err := strconv.Atoi(value); err == nil {
 			return intVal, nil
 		}
-		return 0, fmt.Errorf("invalid %s value: %s", key, value)
+		return 0, fmt.Errorf("non-integer value %q", value)
 	}
 	return defaultValue, nil
 }
 
-//nolint:errcheck // error intentionally ignored — fallback to default
 func getEnvIntOrDefault(key string, defaultValue int) int {
-	val, _ := getEnvInt(key, defaultValue)
+	val, err := getEnvInt(key, defaultValue)
+	if err != nil {
+		return defaultValue
+	}
 	return val
 }
 

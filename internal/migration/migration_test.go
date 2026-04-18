@@ -193,7 +193,7 @@ func TestMigratorDryRun(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, true, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, true, nil, &ownutil.Owner{}, nil)
 	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestMigratorActualMove(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestMigratorOrphaned(t *testing.T) {
 
 	postMap := map[string]PostInfo{}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestMigratorUserRouting(t *testing.T) {
 		"1r0z7xp": {PostID: "1r0z7xp", Subreddit: "u_example_user", Username: "example_user", IsUserPost: true},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestRollback(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil, originalDir, destDir, &ownutil.Owner{})
+	rb := NewRollback(logPath, nil, originalDir, destDir, &ownutil.Owner{}, nil)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -399,7 +399,7 @@ func TestRollbackMissingFile(t *testing.T) {
 		t.Fatalf("Failed to write log file: %v", err)
 	}
 
-	rb := NewRollback(logPath, nil, log.SourceDir, log.DestDir, &ownutil.Owner{})
+	rb := NewRollback(logPath, nil, log.SourceDir, log.DestDir, &ownutil.Owner{}, nil)
 	rollbackLog, err := rb.Execute(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -490,7 +490,7 @@ func TestRollbackPathValidation(t *testing.T) {
 			}
 			defer func() { _ = os.Remove(logPath) }()
 
-			rb := NewRollback(logPath, nil, trustedSource, trustedDest, &ownutil.Owner{})
+			rb := NewRollback(logPath, nil, trustedSource, trustedDest, &ownutil.Owner{}, nil)
 			rollbackLog, err := rb.Execute(context.Background())
 			if err != nil {
 				t.Fatal(err)
@@ -577,7 +577,7 @@ func TestDuplicateHandling(t *testing.T) {
 				file2 = newFile2
 			}
 
-			migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+			migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 			require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 			ext := ".jpg"
@@ -618,11 +618,11 @@ func TestIdempotentReRun(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	require.NoError(t, migrator1.Execute(context.Background()))
 	require.NoError(t, migrator1.SaveLog(context.Background(), logPath), "Failed to save log")
 
-	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	require.NoError(t, migrator2.LoadExistingLog(context.Background(), logPath), "Failed to load existing log")
 	require.NoError(t, migrator2.Execute(context.Background()))
 
@@ -634,7 +634,7 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	sourceDir, destDir, _, file2, postMap := setupDuplicateScenario(t, content)
 	logPath := filepath.Join(filepath.Dir(sourceDir), "migration_log.json")
 
-	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator1 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	require.NoError(t, migrator1.Execute(context.Background()))
 	require.NoError(t, migrator1.SaveLog(context.Background(), logPath), "Failed to save log")
 
@@ -645,7 +645,7 @@ func TestIdempotentReRunWithDuplicateSource(t *testing.T) {
 	_, err = os.Stat(file2)
 	require.NoError(t, err, "Duplicate source file should remain")
 
-	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator2 := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	require.NoError(t, migrator2.LoadExistingLog(context.Background(), logPath), "Failed to load existing log")
 	require.NoError(t, migrator2.Execute(context.Background()))
 
@@ -681,7 +681,7 @@ func TestMigration_SortsByModTime(t *testing.T) {
 		"mmmmmm": {PostID: "mmmmmm", Subreddit: "pics", Username: "user3", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 	require.Equal(t, 3, migrator.Log.MovedCount, "Expected 3 moved files")
@@ -722,7 +722,7 @@ func TestMigration_HashLogging(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 	require.Len(t, migrator.Log.Operations, 1, "Expected 1 operation")
@@ -951,7 +951,7 @@ func TestMigratorUnknownFiles(t *testing.T) {
 		"abc123": {PostID: "abc123", Subreddit: "pics", Username: "user", IsUserPost: false},
 	}
 
-	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{})
+	migrator := NewMigrator(sourceDir, destDir, postMap, false, nil, &ownutil.Owner{}, nil)
 	if err := migrator.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1172,7 +1172,7 @@ func TestMigrationSuite(t *testing.T) {
 				tt.prePopulateDB(t, db, sourceDir)
 			}
 
-			migrator := NewMigrator(sourceDir, destDir, tt.postMap, false, db, &ownutil.Owner{})
+			migrator := NewMigrator(sourceDir, destDir, tt.postMap, false, db, &ownutil.Owner{}, nil)
 			require.NoError(t, migrator.Execute(context.Background()), "migrator.Execute failed")
 
 			assert.Equal(t, tt.wantMoved, migrator.Log.MovedCount, "Moved count mismatch")
@@ -1214,7 +1214,7 @@ func TestMigrationSuite(t *testing.T) {
 			if tt.runRollback {
 				require.NoError(t, migrator.SaveLog(context.Background(), logPath), "Failed to save log")
 
-				rb := NewRollback(logPath, db, sourceDir, destDir, &ownutil.Owner{})
+				rb := NewRollback(logPath, db, sourceDir, destDir, &ownutil.Owner{}, nil)
 				rollbackLog, err := rb.Execute(context.Background())
 				require.NoError(t, err, "Rollback failed")
 

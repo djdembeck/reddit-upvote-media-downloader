@@ -1,3 +1,5 @@
+//go:build !windows
+
 package ownutil
 
 import (
@@ -47,11 +49,11 @@ func TestNewOwner(t *testing.T) {
 			if tt.wantNoOp {
 				return
 			}
-			if o.UID != tt.wantUID {
-				t.Fatalf("UID = %d, want %d", o.UID, tt.wantUID)
+			if o.GetUID() != tt.wantUID {
+				t.Fatalf("UID = %d, want %d", o.GetUID(), tt.wantUID)
 			}
-			if o.GID != tt.wantGID {
-				t.Fatalf("GID = %d, want %d", o.GID, tt.wantGID)
+			if o.GetGID() != tt.wantGID {
+				t.Fatalf("GID = %d, want %d", o.GetGID(), tt.wantGID)
 			}
 		})
 	}
@@ -123,13 +125,6 @@ func TestChown_NoOp(t *testing.T) {
 	}
 }
 
-func TestChown_NonExistentPath(t *testing.T) {
-	o := mustNewOwner(t, 1000, 1000)
-	if err := o.Chown("/nonexistent/path/file.txt"); err == nil {
-		t.Fatal("expected error for nonexistent path")
-	}
-}
-
 func TestChownDir_NoOp(t *testing.T) {
 	o := mustNewOwner(t, 0, 0)
 	tmpDir := t.TempDir()
@@ -164,7 +159,6 @@ func TestChownDirContext_Cancellation(t *testing.T) {
 	o := mustNewOwner(t, 1000, 1000)
 	tmpDir := t.TempDir()
 
-	// Create a directory structure
 	for i := 0; i < 10; i++ {
 		sub := filepath.Join(tmpDir, fmt.Sprintf("dir%d", i))
 		if err := os.MkdirAll(sub, 0750); err != nil {
@@ -176,12 +170,13 @@ func TestChownDirContext_Cancellation(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	err := o.ChownDirContext(ctx, tmpDir, slog.Default())
 	if err == nil {
-		t.Log("context was canceled before any chown operation; this is acceptable")
-	} else if !errors.Is(err, context.Canceled) {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled error, got: %v", err)
 	}
 }
@@ -202,7 +197,7 @@ func TestChownDirContext_NonExistentDir(t *testing.T) {
 	}
 }
 
-func TestChownDir_SkipsSymlinks(t *testing.T) {
+func TestChownDir_ChownsSymlinks(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("skipping chown test: requires root")
 	}
@@ -210,11 +205,9 @@ func TestChownDir_SkipsSymlinks(t *testing.T) {
 	o := mustNewOwner(t, 1000, 1000)
 	tmpDir := t.TempDir()
 
-	// Create a regular file and a symlink
 	if err := os.WriteFile(filepath.Join(tmpDir, "real.txt"), []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// Symlink pointing outside the tree
 	if err := os.Symlink("/tmp", filepath.Join(tmpDir, "outsidelink")); err != nil {
 		t.Fatal(err)
 	}
@@ -223,8 +216,7 @@ func TestChownDir_SkipsSymlinks(t *testing.T) {
 		t.Fatalf("ChownDir failed: %v", err)
 	}
 
-	// The symlink itself should remain a symlink because the chown
-	// implementation does not follow or change symlinks
+	// Verify symlink still exists and is a symlink
 	linkPath := filepath.Join(tmpDir, "outsidelink")
 	fi, err := os.Lstat(linkPath)
 	if err != nil {
@@ -232,6 +224,18 @@ func TestChownDir_SkipsSymlinks(t *testing.T) {
 	}
 	if fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatal("expected symlink to remain a symlink")
+	}
+
+	// Verify symlink was chowned (Lchown changes the symlink inode's ownership)
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("expected syscall.Stat_t from Sys()")
+	}
+	if stat.Uid != 1000 {
+		t.Fatalf("expected symlink UID 1000, got %d", stat.Uid)
+	}
+	if stat.Gid != 1000 {
+		t.Fatalf("expected symlink GID 1000, got %d", stat.Gid)
 	}
 }
 

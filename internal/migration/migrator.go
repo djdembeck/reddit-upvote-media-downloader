@@ -40,6 +40,7 @@ type Migrator struct {
 	DestDir    string
 	DryRun     bool
 	Owner      *ownutil.Owner
+	logger     *slog.Logger
 }
 
 // FileHashInfo tracks file hash information for duplicate detection.
@@ -52,7 +53,10 @@ type FileHashInfo struct {
 }
 
 // NewMigrator creates a new Migrator instance.
-func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner) *Migrator {
+func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner, logger *slog.Logger) *Migrator {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	m := &Migrator{
 		SourceDir: sourceDir,
 		DestDir:   destDir,
@@ -60,6 +64,7 @@ func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun 
 		DryRun:    dryRun,
 		DB:        db,
 		Owner:     owner,
+		logger:    logger,
 		Log: &Log{
 			Version:    "1.0",
 			Timestamp:  time.Now(),
@@ -383,8 +388,7 @@ func wrapWithCleanup(err error, dst, contextFmt string, args ...any) error {
 
 func (m *Migrator) moveFile(ctx context.Context, src, dst string) error {
 	dir := filepath.Dir(dst)
-	logger := slog.Default()
-	if err := m.Owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
+	if err := m.Owner.ChownMkdirAllContext(ctx, dir, 0750, m.logger); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
@@ -434,9 +438,6 @@ func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 	if err != nil {
 		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
-	if chownErr := owner.Chown(dst); chownErr != nil {
-		slog.Warn("failed to chown file", "path", dst, "error", chownErr)
-	}
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close dest %s: %w", dst, cerr)
@@ -449,6 +450,10 @@ func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 
 	if err := destFile.Sync(); err != nil {
 		return fmt.Errorf("sync dest %s: %w", dst, err)
+	}
+
+	if chownErr := owner.Chown(dst); chownErr != nil {
+		slog.Warn("failed to chown file", "path", dst, "error", chownErr)
 	}
 
 	return nil
@@ -465,9 +470,6 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err != nil {
 		return fmt.Errorf("create log file %s: %w", logPath, err)
 	}
-	if chownErr := m.Owner.Chown(logPath); chownErr != nil {
-		slog.Warn("failed to chown log file", "path", logPath, "error", chownErr)
-	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close log file %s: %w", logPath, cerr)
@@ -478,6 +480,10 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(m.Log); err != nil {
 		return fmt.Errorf("encode log to %s: %w", logPath, err)
+	}
+
+	if chownErr := m.Owner.Chown(logPath); chownErr != nil {
+		m.logger.Warn("failed to chown log file", "path", logPath, "error", chownErr)
 	}
 
 	return nil

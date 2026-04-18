@@ -963,7 +963,7 @@ func TestE2E_MigrationSkipsOnExistingData(t *testing.T) {
 			ReorganizeEnabled: false,
 		},
 	}
-	err = runAutoMigration(ctx, db, cfg, &ownutil.Owner{})
+	err = runAutoMigration(ctx, db, cfg, &ownutil.Owner{}, slog.Default())
 	if err != nil {
 		t.Fatalf("Auto-migration failed: %v", err)
 	}
@@ -1101,7 +1101,7 @@ func TestRunFileReorganization_Table(t *testing.T) {
 			sourceDir, destDir, htmlDir, db, cleanup := tc.setupFunc(tempDir)
 			defer cleanup()
 
-			err := runFileReorganization(ctx, sourceDir, destDir, htmlDir, db, &ownutil.Owner{})
+			err := runFileReorganization(ctx, sourceDir, destDir, htmlDir, db, &ownutil.Owner{}, slog.Default())
 
 			if tc.expectError {
 				if err == nil {

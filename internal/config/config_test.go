@@ -373,6 +373,29 @@ func TestGetEnvInt(t *testing.T) {
 	}
 }
 
+func TestGetEnvInt_InvalidValue(t *testing.T) {
+	_ = os.Setenv("TEST_INVALID_INT", "not_a_number")
+	defer func() { _ = os.Unsetenv("TEST_INVALID_INT") }()
+
+	result, err := GetEnvInt("TEST_INVALID_INT", 99)
+	if err == nil {
+		t.Fatal("GetEnvInt should return error for non-numeric value")
+	}
+	if result != 0 {
+		t.Errorf("Expected 0 for invalid value, got %d", result)
+	}
+}
+
+func TestGetEnvIntOrDefault_FallbackOnInvalidValue(t *testing.T) {
+	_ = os.Setenv("TEST_INT_OR_DEFAULT", "abc")
+	defer func() { _ = os.Unsetenv("TEST_INT_OR_DEFAULT") }()
+
+	result := getEnvIntOrDefault("TEST_INT_OR_DEFAULT", 42)
+	if result != 42 {
+		t.Errorf("getEnvIntOrDefault should return default on parse error, got %d", result)
+	}
+}
+
 func TestGetEnvBool(t *testing.T) {
 	tests := []struct {
 		envValue string

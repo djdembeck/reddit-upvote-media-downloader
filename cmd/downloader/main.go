@@ -493,13 +493,19 @@ func run() error {
 	// Setup logging
 	fmt.Printf("Log level: %s\n", cfg.Log.Level)
 
+	slogLogger := setupLogger(cfg)
+	slog.SetDefault(slogLogger)
+
 	owner, err := ownutil.NewOwner(cfg.Storage.PUID, cfg.Storage.PGID)
 	if err != nil {
 		return fmt.Errorf("invalid PUID/PGID: %w", err)
 	}
 
 	if owner.IsNoOp() {
-		fmt.Println("Note: PUID/PGID not set — files will be owned by the container user")
+		slogLogger.Info("PUID/PGID not set — files will be owned by the container user")
+	} else if owner.GetUID() == 0 || owner.GetGID() == 0 {
+		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field",
+			"PUID", owner.GetUID(), "PGID", owner.GetGID())
 	}
 
 	// Create context with cancellation
@@ -517,12 +523,12 @@ func run() error {
 	}()
 
 	// Create output directories
-	if err := owner.ChownMkdirAllContext(ctx, cfg.Storage.OutputDir, 0750, slog.Default()); err != nil {
+	if err := owner.ChownMkdirAllContext(ctx, cfg.Storage.OutputDir, 0750, slogLogger); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 	// Only chown DB directory if it has a real parent (not "." for bare filenames like "posts.db")
 	if dbDir := filepath.Dir(cfg.Storage.DBPath); dbDir != "." && dbDir != "" {
-		if err := owner.ChownMkdirAllContext(ctx, dbDir, 0750, slog.Default()); err != nil {
+		if err := owner.ChownMkdirAllContext(ctx, dbDir, 0750, slogLogger); err != nil {
 			return fmt.Errorf("creating data directory: %w", err)
 		}
 	}
@@ -540,7 +546,7 @@ func run() error {
 
 	// Auto-migrate on first run
 	if cfg.Migrate.OnStart {
-		if err := runAutoMigration(ctx, db, cfg, owner); err != nil {
+		if err := runAutoMigration(ctx, db, cfg, owner, slogLogger); err != nil {
 			return fmt.Errorf("migration failed: %w", err)
 		}
 	}
@@ -570,8 +576,7 @@ func run() error {
 	}()
 
 	// Setup logger
-	slogLogger := setupLogger(cfg)
-	slog.SetDefault(slogLogger)
+	slogLogger = setupLogger(cfg)
 
 	// Setup downloader
 	dl := setupDownloader(cfg, db, slogLogger, owner)
@@ -598,7 +603,7 @@ func run() error {
 }
 
 //nolint:cyclop
-func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config, owner *ownutil.Owner) error {
+func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config, owner *ownutil.Owner, slogLogger *slog.Logger) error {
 	outputDir := cfg.Storage.OutputDir
 
 	migrationComplete, err := db.GetMetadata(ctx, "migration_complete")
@@ -630,7 +635,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config, o
 					"set MIGRATE_SOURCE_DIR environment variable",
 			)
 		}
-		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db, owner); err != nil {
+		if err := runFileReorganization(ctx, cfg.Migrate.SourceDir, outputDir, cfg.Migrate.HTMLDir, db, owner, slogLogger); err != nil {
 			return fmt.Errorf("file reorganization failed: %w", err)
 		}
 	}
@@ -662,7 +667,7 @@ func runAutoMigration(ctx context.Context, db *storage.DB, cfg *config.Config, o
 }
 
 //nolint:cyclop,gocyclo
-func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB, owner *ownutil.Owner) error {
+func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir string, db *storage.DB, owner *ownutil.Owner, slogLogger *slog.Logger) error {
 	fmt.Println("===================")
 	fmt.Println("File Reorganization")
 	fmt.Println("===================")
@@ -715,13 +720,13 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		return fmt.Errorf("context canceled: %w", err)
 	}
 
-	if err := owner.ChownMkdirAllContext(ctx, destDir, 0750, slog.Default()); err != nil {
+	if err := owner.ChownMkdirAllContext(ctx, destDir, 0750, slogLogger); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
 
 	logPath := filepath.Join(destDir, ".migration_log.json")
 
-	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db, owner)
+	migrator := migration.NewMigrator(sourceDir, destDir, parser.PostMap, false, db, owner, slogLogger)
 	if err := migrator.LoadExistingLog(ctx, logPath); err != nil {
 		return fmt.Errorf("loading existing log: %w", err)
 	}

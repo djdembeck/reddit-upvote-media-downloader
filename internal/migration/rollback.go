@@ -32,6 +32,7 @@ type Rollback struct {
 	SourceRoot string
 	DestRoot   string
 	Owner      *ownutil.Owner
+	logger     *slog.Logger
 }
 
 // RollbackLog contains rollback operation results.
@@ -60,13 +61,17 @@ type RollbackRecord struct {
 // NewRollback creates a new Rollback instance for reversing a previous migration.
 // It loads the migration log from logPath and prepares for rollback operations.
 // The sourceRoot and destRoot parameters should match the original migration paths.
-func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string, owner *ownutil.Owner) *Rollback {
+func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string, owner *ownutil.Owner, logger *slog.Logger) *Rollback {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Rollback{
 		LogPath:    logPath,
 		DB:         db,
 		SourceRoot: sourceRoot,
 		DestRoot:   destRoot,
 		Owner:      owner,
+		logger:     logger,
 	}
 }
 
@@ -77,7 +82,7 @@ func (r *Rollback) loadLog() (*Log, error) {
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			slog.Error("failed to close rollback log file", "path", r.LogPath, "error", cerr)
+			r.logger.Error("failed to close rollback log file", "path", r.LogPath, "error", cerr)
 		}
 	}()
 
@@ -161,7 +166,7 @@ func (r *Rollback) performFileRollback(ctx context.Context, op Record) error {
 
 	// Ensure source dir exists
 	sourceDir := filepath.Dir(op.SourcePath)
-	if err := r.Owner.ChownMkdirAllContext(ctx, sourceDir, 0750, slog.Default()); err != nil {
+	if err := r.Owner.ChownMkdirAllContext(ctx, sourceDir, 0750, r.logger); err != nil {
 		return fmt.Errorf("create and chown source dir: %w", err)
 	}
 
@@ -208,7 +213,7 @@ func (r *Rollback) performFileRollback(ctx context.Context, op Record) error {
 	destDir := filepath.Dir(op.DestPath)
 	if entries, err := os.ReadDir(destDir); err == nil && len(entries) == 0 {
 		if removeErr := os.Remove(destDir); removeErr != nil {
-			slog.Warn("failed to remove empty destination directory",
+			r.logger.Warn("failed to remove empty destination directory",
 				"dir", destDir, "error", removeErr)
 		}
 	}
@@ -350,9 +355,6 @@ func SaveRollbackLog(log *RollbackLog, path string, owner *ownutil.Owner) error 
 	if err != nil {
 		return fmt.Errorf("create rollback log file: %w", err)
 	}
-	if err := owner.Chown(path); err != nil {
-		slog.Warn("failed to chown rollback log file", "path", path, "error", err)
-	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
 			slog.Error("failed to close rollback log file", "path", path, "error", cerr)
@@ -363,6 +365,10 @@ func SaveRollbackLog(log *RollbackLog, path string, owner *ownutil.Owner) error 
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(log); err != nil {
 		return fmt.Errorf("encode rollback log: %w", err)
+	}
+
+	if err := owner.Chown(path); err != nil {
+		slog.Warn("failed to chown rollback log file", "path", path, "error", err)
 	}
 	return nil
 }

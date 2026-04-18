@@ -148,7 +148,16 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 	}
 
 	if err := owner.Chown(dbPath); err != nil {
-		return nil, fmt.Errorf("failed to chown database file: %w", err)
+		logger.Warn("failed to chown database file", "path", dbPath, "error", err)
+	}
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		auxPath := dbPath + suffix
+		if _, statErr := os.Stat(auxPath); statErr == nil {
+			if chownErr := owner.Chown(auxPath); chownErr != nil {
+				logger.Warn("failed to chown database auxiliary file", "path", auxPath, "error", chownErr)
+			}
+		}
 	}
 
 	return db, nil

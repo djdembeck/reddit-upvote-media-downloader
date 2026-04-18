@@ -38,8 +38,8 @@ ENV FETCH_LIMIT=100
 ENV DOWNLOAD_DELAY_MS=200ms
 ENV LOG_LEVEL=info
 ENV MIGRATE_ON_START=true
-# File ownership (change to match your host user/group, e.g. 1000:1000)
-# Files will be owned by root if left at 0
+# File ownership — change to match your host user/group (e.g. 1000:1000)
+# Files will be owned by root if left at 0 (not recommended for Docker volumes)
 ENV PUID=0
 ENV PGID=0
 
