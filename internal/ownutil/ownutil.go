@@ -63,34 +63,28 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 	}
 	var firstErr error
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
-			firstErr = walkErr
-			return walkErr
-		}
-		if isSymlink(d) {
-			return nil
-		}
-		if err := o.Chown(path); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			return err
-		}
-		if ctx.Err() != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("context error: %w", ctx.Err())
-			}
-			return fmt.Errorf("context error: %w", ctx.Err())
-		}
-		return nil
+		firstErr = o.processChownWalk(path, d, walkErr, logger)
+		return firstErr
 	})
-	if err != nil {
-		if firstErr == nil {
-			firstErr = err
-		}
+	if err != nil && firstErr == nil {
+		firstErr = err
 	}
 	return firstErr
+}
+
+// processChownWalk handles the walk callback logic separately to reduce cyclomatic complexity.
+func (o *Owner) processChownWalk(path string, d os.DirEntry, walkErr error, logger *slog.Logger) error {
+	if walkErr != nil {
+		warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
+		return walkErr
+	}
+	if isSymlink(d) {
+		return nil
+	}
+	if err := o.Chown(path); err != nil {
+		return err
+	}
+	return nil
 }
 
 // isSymlink returns true if the DirEntry is a symlink.

@@ -373,8 +373,7 @@ func (db *DB) populatePostFromNullFields(post *Post, title, subreddit, author, u
 
 // IsDownloaded checks if a post has been downloaded.
 func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?)`
-
+	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?)` //nolint:gosec
 	var exists bool
 	err := db.conn.QueryRowContext(ctx, query, id).Scan(&exists)
 	if err != nil {
