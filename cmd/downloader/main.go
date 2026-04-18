@@ -517,10 +517,10 @@ func run() error {
 	}()
 
 	// Create output directories
-	if err := owner.ChownMkdirAll(cfg.Storage.OutputDir, 0750, slog.Default()); err != nil {
+	if err := owner.ChownMkdirAllContext(ctx, cfg.Storage.OutputDir, 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
-	if err := owner.ChownMkdirAll(filepath.Dir(cfg.Storage.DBPath), 0750, slog.Default()); err != nil {
+	if err := owner.ChownMkdirAllContext(ctx, filepath.Dir(cfg.Storage.DBPath), 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
 
@@ -712,7 +712,7 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 		return fmt.Errorf("context canceled: %w", err)
 	}
 
-	if err := owner.ChownMkdirAll(destDir, 0750, slog.Default()); err != nil {
+	if err := owner.ChownMkdirAllContext(ctx, destDir, 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating destination directory: %w", err)
 	}
 

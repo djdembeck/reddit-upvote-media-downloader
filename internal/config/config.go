@@ -272,17 +272,6 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold))
 	}
 
-	{
-		puid := c.Storage.PUID
-		pgid := c.Storage.PGID
-		if puid < 0 {
-			errs = append(errs, fmt.Errorf("PUID must be non-negative, got %d", puid))
-		}
-		if pgid < 0 {
-			errs = append(errs, fmt.Errorf("PGID must be non-negative, got %d", pgid))
-		}
-	}
-
 	// Validate migration configuration
 	if c.Migrate.ReorganizeEnabled {
 		src := strings.TrimSpace(c.Migrate.SourceDir)

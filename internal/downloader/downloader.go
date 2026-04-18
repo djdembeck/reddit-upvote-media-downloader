@@ -60,7 +60,7 @@ type Config struct {
 	DownloadDelay time.Duration
 	OutputDir     string
 	UserAgent     string
-	Owner        *ownutil.Owner
+	Owner         *ownutil.Owner
 	Concurrency   int
 	Retries       int
 }
@@ -217,7 +217,7 @@ func (d *Downloader) Download(ctx context.Context, items []Downloadable) (map[st
 	if len(items) == 0 {
 		return hashes, nil
 	}
-	if err := d.config.Owner.ChownMkdirAll(d.config.OutputDir, 0750, d.logger); err != nil {
+	if err := d.config.Owner.ChownMkdirAllContext(ctx, d.config.OutputDir, 0750, d.logger); err != nil {
 		return hashes, fmt.Errorf("create output directory: %w", err)
 	}
 
@@ -321,7 +321,7 @@ func (d *Downloader) downloadItem(ctx context.Context, item Downloadable) (strin
 
 	subreddit := sanitizeSubreddit(item.Subreddit)
 	outputDir := filepath.Join(d.config.OutputDir, subreddit)
-	if err := d.config.Owner.ChownMkdirAll(outputDir, 0750, d.logger); err != nil {
+	if err := d.config.Owner.ChownMkdirAllContext(ctx, outputDir, 0750, d.logger); err != nil {
 		return "", false, fmt.Errorf("create subreddit directory: %w", err)
 	}
 

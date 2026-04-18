@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -120,8 +121,10 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
+	owner := newOwnerFromEnv()
+
 	// Initialize DB if DB_PATH is set and not in dry-run mode
-	db, _, err := initMigrationDB(ctx, dryRun)
+	db, _, err := initMigrationDB(ctx, dryRun, owner)
 	if err != nil {
 		return err
 	}
@@ -133,10 +136,8 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 		}()
 	}
 
-	owner := newOwnerFromEnv()
-
 	if !dryRun {
-		if err := os.MkdirAll(destDir, 0750); err != nil {
+		if err := owner.ChownMkdirAllContext(ctx, destDir, 0750, slog.Default()); err != nil {
 			return fmt.Errorf("create destination directory: %w", err)
 		}
 	}
@@ -200,15 +201,13 @@ func parseHTMLSources(ctx context.Context, parser *migration.HTMLParser, htmlDir
 	return nil
 }
 
-func initMigrationDB(ctx context.Context, dryRun bool) (*storage.DB, string, error) {
+func initMigrationDB(ctx context.Context, dryRun bool, owner *ownutil.Owner) (*storage.DB, string, error) {
 	dbPath := os.Getenv("DB_PATH")
 
 	if dbPath != "" && !dryRun {
 		fmt.Printf("Initializing database: %s\n", dbPath)
 
-	owner := newOwnerFromEnv()
-
-	db, err := storage.NewDB(ctx, dbPath, owner)
+		db, err := storage.NewDB(ctx, dbPath, owner)
 		if err != nil {
 			return nil, "", fmt.Errorf("open database: %w", err)
 		}
@@ -224,12 +223,23 @@ func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostI
 }
 
 func newOwnerFromEnv() *ownutil.Owner {
-	puid, _ := strconv.Atoi(os.Getenv("PUID"))
-	pgid, _ := strconv.Atoi(os.Getenv("PGID"))
+	puidStr := os.Getenv("PUID")
+	pgidStr := os.Getenv("PGID")
+
+	puid, puidErr := strconv.Atoi(puidStr)
+	pgid, pgidErr := strconv.Atoi(pgidStr)
+
+	if puidErr != nil && puidStr != "" {
+		fmt.Fprintf(os.Stderr, "Warning: invalid PUID value %q: %v; defaulting to 0\n", puidStr, puidErr)
+	}
+	if pgidErr != nil && pgidStr != "" {
+		fmt.Fprintf(os.Stderr, "Warning: invalid PGID value %q: %v; defaulting to 0\n", pgidStr, pgidErr)
+	}
+
 	owner, err := ownutil.NewOwner(puid, pgid)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: invalid PUID/PGID: %v; using defaults\n", err)
-		owner, _ = ownutil.NewOwner(0, 0)
+		owner = &ownutil.Owner{UID: 0, GID: 0}
 	}
 	return owner
 }
@@ -242,6 +252,8 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
 
+	owner := newOwnerFromEnv()
+
 	var db *storage.DB
 
 	dbPath := os.Getenv("DB_PATH")
@@ -251,9 +263,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 
 		var err error
 
-	owner := newOwnerFromEnv()
-
-	db, err = storage.NewDB(ctx, dbPath, owner)
+		db, err = storage.NewDB(ctx, dbPath, owner)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 
@@ -268,8 +278,6 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 			}
 		}()
 	}
-
-	owner := newOwnerFromEnv()
 
 	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot, owner)
 

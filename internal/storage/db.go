@@ -154,7 +154,7 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 
 func openAndInitializeDB(ctx context.Context, dbPath string, owner *ownutil.Owner, logger *slog.Logger) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if err := owner.ChownMkdirAll(dir, 0750, logger); err != nil {
+	if err := owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 

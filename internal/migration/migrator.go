@@ -321,7 +321,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	}
 
 	// Move file
-	if err := m.moveFile(sourcePath, destPath); err != nil {
+	if err := m.moveFile(ctx, sourcePath, destPath); err != nil {
 		m.recordError(filename, postID, "move_file", err)
 		return fmt.Errorf("move file %s to %s: %w", sourcePath, destPath, err)
 	}
@@ -381,10 +381,10 @@ func wrapWithCleanup(err error, dst, contextFmt string, args ...any) error {
 	return wrappedErr
 }
 
-func (m *Migrator) moveFile(src, dst string) error {
+func (m *Migrator) moveFile(ctx context.Context, src, dst string) error {
 	dir := filepath.Dir(dst)
 	logger := slog.Default()
-	if err := m.Owner.ChownMkdirAll(dir, 0750, logger); err != nil {
+	if err := m.Owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
