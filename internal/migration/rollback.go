@@ -350,7 +350,9 @@ func SaveRollbackLog(log *RollbackLog, path string, owner *ownutil.Owner) error 
 	if err != nil {
 		return fmt.Errorf("create rollback log file: %w", err)
 	}
-	owner.Chown(path, slog.Default())
+	if err := owner.Chown(path); err != nil {
+		slog.Warn("failed to chown rollback log file", "path", path, "error", err)
+	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
 			slog.Error("failed to close rollback log file", "path", path, "error", cerr)

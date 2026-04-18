@@ -147,7 +147,7 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 		return nil, fmt.Errorf("failed to ensure hash column: %w; close error: %v", err, cerr)
 	}
 
-	if err := owner.Chown(dbPath, logger); err != nil {
+	if err := owner.Chown(dbPath); err != nil {
 		slog.Warn("failed to chown database file", "path", dbPath, "error", err)
 	}
 

@@ -640,7 +640,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	}
 
 	success = true
-	if err := d.config.Owner.Chown(filePath, d.logger); err != nil {
+	if err := d.config.Owner.Chown(filePath); err != nil {
 		d.logger.Warn("failed to chown downloaded file", "path", filePath, "error", err)
 	}
 	return nil

@@ -408,6 +408,7 @@ func getEnvInt(key string, defaultValue int) (int, error) {
 	return defaultValue, nil
 }
 
+//nolint:errcheck // error intentionally ignored — fallback to default
 func getEnvIntOrDefault(key string, defaultValue int) int {
 	val, _ := getEnvInt(key, defaultValue)
 	return val

@@ -65,14 +65,16 @@ func TestIsNoOp_NilReceiver(t *testing.T) {
 
 func TestChown_NilReceiver(t *testing.T) {
 	var o *Owner
-	if err := o.Chown("/some/path", slog.Default()); err != nil {
+	if err := o.Chown("/some/path"); err != nil {
 		t.Fatalf("Chown with nil receiver failed: %v", err)
 	}
 }
 
 func TestChownDir_NilReceiver(t *testing.T) {
 	var o *Owner
-	o.ChownDir("/some/path", slog.Default())
+	if err := o.ChownDir("/some/path", slog.Default()); err != nil {
+		t.Fatalf("ChownDir with nil receiver returned error: %v", err)
+	}
 }
 
 func TestChownMkdirAll_NilReceiver(t *testing.T) {
@@ -106,12 +108,14 @@ func TestChown_NoOp(t *testing.T) {
 	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	o.Chown(path, nil)
+	if err := o.Chown(path); err != nil {
+		t.Fatalf("o.Chown(%q) returned error: %v", path, err)
+	}
 }
 
 func TestChown_NonExistentPath(t *testing.T) {
 	o, _ := NewOwner(1000, 1000)
-	if err := o.Chown("/nonexistent/path/file.txt", slog.Default()); err == nil {
+	if err := o.Chown("/nonexistent/path/file.txt"); err == nil {
 		t.Fatal("expected error for nonexistent path")
 	}
 }
@@ -125,7 +129,9 @@ func TestChownDir_NoOp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpDir, "subdir", "file.txt"), []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	o.ChownDir(tmpDir, nil)
+	if err := o.ChownDir(tmpDir, nil); err != nil {
+		t.Fatalf("o.ChownDir(%q) returned error: %v", tmpDir, err)
+	}
 }
 
 func TestChownMkdirAll_NoOp(t *testing.T) {
@@ -218,7 +224,7 @@ func TestChown_WithRootPrivilege(t *testing.T) {
 	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	o.Chown(path, slog.Default())
+	o.Chown(path)
 
 	stat, err := os.Stat(path)
 	if err != nil {
@@ -296,7 +302,7 @@ func TestChownDir_WithRootPrivilege(t *testing.T) {
 func TestChown_NilLoggerFallsBackToDefault(t *testing.T) {
 	o, _ := NewOwner(1000, 1000)
 	// This should not panic even with nil logger
-	o.Chown("/nonexistent/path/file.txt", nil)
+	o.Chown("/nonexistent/path/file.txt")
 }
 
 func TestChownDir_NilLoggerFallsBackToDefault(t *testing.T) {

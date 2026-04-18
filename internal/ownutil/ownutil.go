@@ -35,7 +35,7 @@ func (o *Owner) IsNoOp() bool {
 
 // Chown changes ownership of the file at path to the Owner's UID/GID using os.Lchown.
 // Returns an error if the operation fails.
-func (o *Owner) Chown(path string, logger *slog.Logger) error {
+func (o *Owner) Chown(path string) error {
 	if o.IsNoOp() {
 		return nil
 	}
@@ -64,10 +64,10 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 			warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
 			return nil
 		}
-		if d != nil && d.Type()&os.ModeSymlink != 0 {
+		if isSymlink(d) {
 			return nil
 		}
-		if err := o.Chown(path, logger); err != nil {
+		if err := o.Chown(path); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -87,6 +87,11 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 		}
 	}
 	return firstErr
+}
+
+// isSymlink returns true if the DirEntry is a symlink.
+func isSymlink(d os.DirEntry) bool {
+	return d != nil && d.Type()&os.ModeSymlink != 0
 }
 
 // ChownMkdirAll creates a directory tree (like os.MkdirAll) and then recursively
