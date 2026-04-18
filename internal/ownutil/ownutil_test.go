@@ -325,9 +325,8 @@ func TestChownDir_WithRootPrivilege(t *testing.T) {
 	}
 }
 
-func TestChown_NilLoggerFallsBackToDefault(t *testing.T) {
+func TestChown_NonExistentPath_ReturnsNotExist(t *testing.T) {
 	o := mustNewOwner(t, 1000, 1000)
-	// This should not panic even with nil logger
 	err := o.Chown("/nonexistent/path/file.txt")
 	// Validate the expected error path - fail test if behavior regresses
 	if err == nil {

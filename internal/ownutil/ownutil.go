@@ -59,7 +59,7 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 		return nil
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return fmt.Errorf("context error: %w", ctx.Err())
 	}
 	var firstErr error
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
@@ -79,9 +79,9 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 		}
 		if ctx.Err() != nil {
 			if firstErr == nil {
-				firstErr = ctx.Err()
+				firstErr = fmt.Errorf("context error: %w", ctx.Err())
 			}
-			return ctx.Err()
+			return fmt.Errorf("context error: %w", ctx.Err())
 		}
 		return nil
 	})
@@ -115,13 +115,13 @@ func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger)
 // respecting context cancellation.
 func (o *Owner) ChownMkdirAllContext(ctx context.Context, dir string, perm os.FileMode, logger *slog.Logger) error {
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return fmt.Errorf("context error: %w", ctx.Err())
 	}
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return fmt.Errorf("context error: %w", ctx.Err())
 	}
 	if err := o.ChownDirContext(ctx, dir, logger); err != nil {
 		return fmt.Errorf("chown directory %s: %w", dir, err)
