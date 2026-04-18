@@ -148,7 +148,7 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 	}
 
 	if err := owner.Chown(dbPath); err != nil {
-		slog.Warn("failed to chown database file", "path", dbPath, "error", err)
+		return nil, fmt.Errorf("failed to chown database file: %w", err)
 	}
 
 	return db, nil
@@ -156,7 +156,7 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 
 func openAndInitializeDB(ctx context.Context, dbPath string, owner *ownutil.Owner, logger *slog.Logger) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if dir != "." && dir != "" {
+	if dir != "." && dir != "" && dir != "/" {
 		if err := owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
 			return nil, fmt.Errorf("failed to create database directory: %w", err)
 		}

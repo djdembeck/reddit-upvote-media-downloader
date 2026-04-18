@@ -63,7 +63,7 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 	}
 	var firstErr error
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
-		firstErr = o.processChownWalk(path, d, walkErr, logger)
+		firstErr = o.processChownWalk(ctx, path, d, walkErr, logger)
 		return firstErr
 	})
 	if err != nil && firstErr == nil {
@@ -73,7 +73,12 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 }
 
 // processChownWalk handles the walk callback logic separately to reduce cyclomatic complexity.
-func (o *Owner) processChownWalk(path string, d os.DirEntry, walkErr error, logger *slog.Logger) error {
+func (o *Owner) processChownWalk(ctx context.Context, path string, d os.DirEntry, walkErr error, logger *slog.Logger) error {
+	// Check for context cancellation before any mutation
+	if ctx.Err() != nil {
+		return fmt.Errorf("context error: %w", ctx.Err())
+	}
+
 	if walkErr != nil {
 		warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
 		return walkErr
