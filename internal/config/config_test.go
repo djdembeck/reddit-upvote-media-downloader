@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -386,13 +387,22 @@ func TestGetEnvInt_InvalidValue(t *testing.T) {
 	}
 }
 
-func TestGetEnvIntOrDefault_FallbackOnInvalidValue(t *testing.T) {
+func TestGetEnvIntOrDefault_FailFastOnInvalidSetValue(t *testing.T) {
 	_ = os.Setenv("TEST_INT_OR_DEFAULT", "abc")
 	defer func() { _ = os.Unsetenv("TEST_INT_OR_DEFAULT") }()
 
-	result := getEnvIntOrDefault("TEST_INT_OR_DEFAULT", 42)
-	if result != 42 {
-		t.Errorf("getEnvIntOrDefault should return default on parse error, got %d", result)
+	deferredErr := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panicked: %v", r)
+			}
+		}()
+		_ = getEnvIntOrDefault("TEST_INT_OR_DEFAULT", 42)
+		return nil
+	}()
+
+	if deferredErr == nil {
+		t.Error("getEnvIntOrDefault should panic when env var is set but invalid")
 	}
 }
 

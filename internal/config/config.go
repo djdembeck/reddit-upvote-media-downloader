@@ -430,11 +430,14 @@ func getEnvInt(key string, defaultValue int) (int, error) {
 }
 
 func getEnvIntOrDefault(key string, defaultValue int) int {
-	val, err := getEnvInt(key, defaultValue)
-	if err != nil {
-		return defaultValue
+	if _, ok := os.LookupEnv(key); ok {
+		val, err := getEnvInt(key, defaultValue)
+		if err != nil {
+			panic(fmt.Errorf("invalid environment variable %s: %w", key, err))
+		}
+		return val
 	}
-	return val
+	return defaultValue
 }
 
 func getEnvBool(key string, defaultValue bool) bool {

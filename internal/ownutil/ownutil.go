@@ -49,6 +49,12 @@ func (o *Owner) chownGID() int {
 }
 
 // NewOwner creates Owner from uid and gid.
+//
+// The non-negative UID/GID checks here are intentionally duplicated as
+// defense-in-depth because [config.validateStorageSettings] already validates
+// these values earlier in the configuration loading process. This redundancy
+// ensures that even if the config validation is bypassed, the Owner creation
+// will catch invalid values.
 func NewOwner(uid, gid int) (*Owner, error) {
 	if uid < 0 {
 		return nil, fmt.Errorf("PUID must be non-negative, got %d", uid)

@@ -212,12 +212,22 @@ func TestChownDir_ChownsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	linkPath := filepath.Join(tmpDir, "outsidelink")
+	fiBefore, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statBefore, ok := fiBefore.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("expected syscall.Stat_t from Sys()")
+	}
+	originalUID := statBefore.Uid
+	originalGID := statBefore.Gid
+
 	if err := o.ChownDir(tmpDir, slog.Default()); err != nil {
 		t.Fatalf("ChownDir failed: %v", err)
 	}
 
-	// Verify symlink still exists and is a symlink
-	linkPath := filepath.Join(tmpDir, "outsidelink")
 	fi, err := os.Lstat(linkPath)
 	if err != nil {
 		t.Fatalf("symlink should still exist: %v", err)
@@ -226,16 +236,15 @@ func TestChownDir_ChownsSymlinks(t *testing.T) {
 		t.Fatal("expected symlink to remain a symlink")
 	}
 
-	// Verify symlink was chowned (Lchown changes the symlink inode's ownership)
 	stat, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok {
 		t.Fatal("expected syscall.Stat_t from Sys()")
 	}
-	if stat.Uid != 1000 {
-		t.Fatalf("expected symlink UID 1000, got %d", stat.Uid)
+	if stat.Uid != originalUID {
+		t.Fatalf("expected symlink UID to remain %d, got %d", originalUID, stat.Uid)
 	}
-	if stat.Gid != 1000 {
-		t.Fatalf("expected symlink GID 1000, got %d", stat.Gid)
+	if stat.Gid != originalGID {
+		t.Fatalf("expected symlink GID to remain %d, got %d", originalGID, stat.Gid)
 	}
 }
 

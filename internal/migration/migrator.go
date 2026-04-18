@@ -453,7 +453,7 @@ func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 	}
 
 	if chownErr := owner.Chown(dst); chownErr != nil {
-		slog.Warn("failed to chown file", "path", dst, "error", chownErr)
+		return fmt.Errorf("chown %s: %w", dst, chownErr)
 	}
 
 	return nil
