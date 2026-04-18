@@ -121,7 +121,10 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
-	owner := newOwnerFromEnv()
+	owner, err := newOwnerFromEnv()
+	if err != nil {
+		return err
+	}
 
 	// Initialize DB if DB_PATH is set and not in dry-run mode
 	db, _, err := initMigrationDB(ctx, dryRun, owner)
@@ -222,26 +225,26 @@ func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostI
 	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db, owner)
 }
 
-func newOwnerFromEnv() *ownutil.Owner {
+func newOwnerFromEnv() (*ownutil.Owner, error) {
 	puidStr := os.Getenv("PUID")
 	pgidStr := os.Getenv("PGID")
 
 	puid, puidErr := strconv.Atoi(puidStr)
-	pgid, pgidErr := strconv.Atoi(pgidStr)
-
 	if puidErr != nil && puidStr != "" {
-		fmt.Fprintf(os.Stderr, "Warning: invalid PUID value %q: %v; defaulting to 0\n", puidStr, puidErr)
+		return nil, fmt.Errorf("invalid PUID value %q: %w", puidStr, puidErr)
 	}
+
+	pgid, pgidErr := strconv.Atoi(pgidStr)
 	if pgidErr != nil && pgidStr != "" {
-		fmt.Fprintf(os.Stderr, "Warning: invalid PGID value %q: %v; defaulting to 0\n", pgidStr, pgidErr)
+		return nil, fmt.Errorf("invalid PGID value %q: %w", pgidStr, pgidErr)
 	}
 
 	owner, err := ownutil.NewOwner(puid, pgid)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: invalid PUID/PGID: %v; using defaults\n", err)
-		owner = &ownutil.Owner{UID: 0, GID: 0}
+		return nil, fmt.Errorf("invalid PUID/PGID: %w", err)
 	}
-	return owner
+
+	return owner, nil
 }
 
 //nolint:cyclop
@@ -252,7 +255,11 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
 
-	owner := newOwnerFromEnv()
+	owner, err := newOwnerFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
 
 	var db *storage.DB
 

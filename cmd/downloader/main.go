@@ -520,8 +520,11 @@ func run() error {
 	if err := owner.ChownMkdirAllContext(ctx, cfg.Storage.OutputDir, 0750, slog.Default()); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
-	if err := owner.ChownMkdirAllContext(ctx, filepath.Dir(cfg.Storage.DBPath), 0750, slog.Default()); err != nil {
-		return fmt.Errorf("creating data directory: %w", err)
+	// Only chown DB directory if it has a real parent (not "." for bare filenames like "posts.db")
+	if dbDir := filepath.Dir(cfg.Storage.DBPath); dbDir != "." && dbDir != "" {
+		if err := owner.ChownMkdirAllContext(ctx, dbDir, 0750, slog.Default()); err != nil {
+			return fmt.Errorf("creating data directory: %w", err)
+		}
 	}
 
 	// Open database

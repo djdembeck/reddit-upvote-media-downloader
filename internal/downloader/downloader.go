@@ -640,7 +640,9 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, filePath, expectedEx
 	}
 
 	success = true
-	d.config.Owner.Chown(filePath, d.logger)
+	if err := d.config.Owner.Chown(filePath, d.logger); err != nil {
+		d.logger.Warn("failed to chown downloaded file", "path", filePath, "error", err)
+	}
 	return nil
 }
 
@@ -679,6 +681,9 @@ func applyDefaults(config Config) Config {
 	}
 	if config.UserAgent == "" {
 		config.UserAgent = defaultUserAgent
+	}
+	if config.Owner == nil {
+		config.Owner = &ownutil.Owner{}
 	}
 	return config
 }

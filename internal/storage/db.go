@@ -147,15 +147,19 @@ func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error
 		return nil, fmt.Errorf("failed to ensure hash column: %w; close error: %v", err, cerr)
 	}
 
-	owner.Chown(dbPath, logger)
+	if err := owner.Chown(dbPath, logger); err != nil {
+		slog.Warn("failed to chown database file", "path", dbPath, "error", err)
+	}
 
 	return db, nil
 }
 
 func openAndInitializeDB(ctx context.Context, dbPath string, owner *ownutil.Owner, logger *slog.Logger) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if err := owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
-		return nil, fmt.Errorf("failed to create database directory: %w", err)
+	if dir != "." && dir != "" {
+		if err := owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
+			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		}
 	}
 
 	conn, err := sql.Open("sqlite3", dbPath)

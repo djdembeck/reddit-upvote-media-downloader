@@ -171,13 +171,12 @@ func Load() (*Config, error) {
 		Storage: StorageConfig{
 			OutputDir: getEnv("OUTPUT_DIR", "./data/output"),
 			DBPath:    getEnv("DB_PATH", "./data/posts.db"),
-			PUID:      getEnvInt("PUID", 0),
-			PGID:      getEnvInt("PGID", 0),
 		},
+
 		Download: DownloadConfig{
-			Concurrency:   getEnvInt("CONCURRENCY", 10),
-			FetchLimit:    getEnvInt("FETCH_LIMIT", 100),
-			MaxRetries:    getEnvInt("MAX_RETRIES", 3),
+			Concurrency:   getEnvIntOrDefault("CONCURRENCY", 10),
+			FetchLimit:    getEnvIntOrDefault("FETCH_LIMIT", 100),
+			MaxRetries:    getEnvIntOrDefault("MAX_RETRIES", 3),
 			DownloadDelay: getEnvDuration("DOWNLOAD_DELAY_MS", 200*time.Millisecond),
 		},
 		Log: LogConfig{
@@ -196,8 +195,19 @@ func Load() (*Config, error) {
 		},
 		SmartPolling: SmartPollingConfig{
 			ReCheck:        getEnvBool("RE_CHECK", false),
-			RetryThreshold: getEnvInt("RETRY_THRESHOLD", 3),
+			RetryThreshold: getEnvIntOrDefault("RETRY_THRESHOLD", 3),
 		},
+	}
+
+	puid, puidErr := getEnvInt("PUID", 0)
+	pgid, pgidErr := getEnvInt("PGID", 0)
+	cfg.Storage.PUID = puid
+	cfg.Storage.PGID = pgid
+	if puidErr != nil {
+		return nil, fmt.Errorf("invalid PUID value: %w", puidErr)
+	}
+	if pgidErr != nil {
+		return nil, fmt.Errorf("invalid PGID value: %w", pgidErr)
 	}
 
 	// Apply CLI flag overrides (highest priority)
@@ -370,7 +380,7 @@ func GetEnv(key, defaultValue string) string {
 }
 
 // GetEnvInt returns an integer environment variable or a default.
-func GetEnvInt(key string, defaultValue int) int {
+func GetEnvInt(key string, defaultValue int) (int, error) {
 	return getEnvInt(key, defaultValue)
 }
 
@@ -388,13 +398,19 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func getEnvInt(key string, defaultValue int) int {
+func getEnvInt(key string, defaultValue int) (int, error) {
 	if value := os.Getenv(key); value != "" {
 		if intVal, err := strconv.Atoi(value); err == nil {
-			return intVal
+			return intVal, nil
 		}
+		return 0, fmt.Errorf("invalid %s value: %s", key, value)
 	}
-	return defaultValue
+	return defaultValue, nil
+}
+
+func getEnvIntOrDefault(key string, defaultValue int) int {
+	val, _ := getEnvInt(key, defaultValue)
+	return val
 }
 
 func getEnvBool(key string, defaultValue bool) bool {

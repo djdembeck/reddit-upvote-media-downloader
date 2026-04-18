@@ -2,7 +2,6 @@ package ownutil
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,30 +34,31 @@ func (o *Owner) IsNoOp() bool {
 }
 
 // Chown changes ownership of the file at path to the Owner's UID/GID using os.Lchown.
-// Errors are logged as warnings and not propagated, since file ownership is non-fatal
-// in Docker deployments.
-func (o *Owner) Chown(path string, logger *slog.Logger) {
+// Returns an error if the operation fails.
+func (o *Owner) Chown(path string, logger *slog.Logger) error {
 	if o.IsNoOp() {
-		return
+		return nil
 	}
 	if err := os.Lchown(path, o.UID, o.GID); err != nil {
-		warnLog(logger, "failed to chown file", "path", path, "uid", o.UID, "gid", o.GID, "error", err)
+		return fmt.Errorf("chown %s: %w", path, err)
 	}
+	return nil
 }
 
 // ChownDir recursively changes ownership of all files and directories under dir.
 // It uses context.Background() internally; use ChownDirContext for cancellation support.
-func (o *Owner) ChownDir(dir string, logger *slog.Logger) {
-	o.ChownDirContext(context.Background(), dir, logger)
+func (o *Owner) ChownDir(dir string, logger *slog.Logger) error {
+	return o.ChownDirContext(context.Background(), dir, logger)
 }
 
 // ChownDirContext recursively changes ownership under dir, respecting context cancellation.
 // Symlinks within the directory tree are skipped to prevent following links outside
-// the target tree.
-func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Logger) {
+// the target tree. Returns the first error encountered during the walk.
+func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Logger) error {
 	if o.IsNoOp() {
-		return
+		return nil
 	}
+	var firstErr error
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
@@ -67,12 +67,26 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 		if d != nil && d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		o.Chown(path, logger)
-		return ctx.Err()
+		if err := o.Chown(path, logger); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			return err
+		}
+		if ctx.Err() != nil {
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
+			return ctx.Err()
+		}
+		return nil
 	})
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		warnLog(logger, "walkdir failed during chown", "dir", dir, "error", err)
+	if err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }
 
 // ChownMkdirAll creates a directory tree (like os.MkdirAll) and then recursively
@@ -82,7 +96,9 @@ func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger)
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
-	o.ChownDir(dir, logger)
+	if err := o.ChownDir(dir, logger); err != nil {
+		return fmt.Errorf("chown directory %s: %w", dir, err)
+	}
 	return nil
 }
 
@@ -92,7 +108,9 @@ func (o *Owner) ChownMkdirAllContext(ctx context.Context, dir string, perm os.Fi
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
-	o.ChownDirContext(ctx, dir, logger)
+	if err := o.ChownDirContext(ctx, dir, logger); err != nil {
+		return fmt.Errorf("chown directory %s: %w", dir, err)
+	}
 	return nil
 }
 

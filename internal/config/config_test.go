@@ -356,12 +356,18 @@ func TestGetEnvInt(t *testing.T) {
 	_ = os.Setenv("TEST_INT_VAR", "42")
 	defer func() { _ = os.Unsetenv("TEST_INT_VAR") }()
 
-	result := GetEnvInt("TEST_INT_VAR", 10)
+	result, err := GetEnvInt("TEST_INT_VAR", 10)
+	if err != nil {
+		t.Fatalf("GetEnvInt returned error: %v", err)
+	}
 	if result != 42 {
 		t.Errorf("Expected 42, got %d", result)
 	}
 
-	result = GetEnvInt("NONEXISTENT_INT_VAR", 10)
+	result, err = GetEnvInt("NONEXISTENT_INT_VAR", 10)
+	if err != nil {
+		t.Fatalf("GetEnvInt returned error for nonexistent var: %v", err)
+	}
 	if result != 10 {
 		t.Errorf("Expected 10, got %d", result)
 	}

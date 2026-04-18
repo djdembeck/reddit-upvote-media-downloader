@@ -434,7 +434,9 @@ func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 	if err != nil {
 		return fmt.Errorf("create dest %s: %w", dst, err)
 	}
-	owner.Chown(dst, slog.Default())
+	if chownErr := owner.Chown(dst, slog.Default()); chownErr != nil {
+		slog.Warn("failed to chown file", "path", dst, "error", chownErr)
+	}
 	defer func() {
 		if cerr := destFile.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close dest %s: %w", dst, cerr)
@@ -463,7 +465,9 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	if err != nil {
 		return fmt.Errorf("create log file %s: %w", logPath, err)
 	}
-	m.Owner.Chown(logPath, slog.Default())
+	if chownErr := m.Owner.Chown(logPath, slog.Default()); chownErr != nil {
+		slog.Warn("failed to chown log file", "path", logPath, "error", chownErr)
+	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close log file %s: %w", logPath, cerr)

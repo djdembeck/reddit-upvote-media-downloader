@@ -161,10 +161,9 @@ func (r *Rollback) performFileRollback(op Record) error {
 
 	// Ensure source dir exists
 	sourceDir := filepath.Dir(op.SourcePath)
-	if err := os.MkdirAll(sourceDir, 0750); err != nil {
-		return fmt.Errorf("create dir: %v", err)
+	if err := r.Owner.ChownMkdirAll(sourceDir, 0750, slog.Default()); err != nil {
+		return fmt.Errorf("create and chown source dir: %w", err)
 	}
-	r.Owner.Chown(sourceDir, slog.Default())
 
 	// Re-validate paths after MkdirAll to prevent TOCTOU symlink attacks
 	if err := r.validatePathAgainstRoot(op.SourcePath, r.SourceRoot); err != nil {

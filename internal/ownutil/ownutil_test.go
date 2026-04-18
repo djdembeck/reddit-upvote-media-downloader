@@ -10,63 +10,49 @@ import (
 	"testing"
 )
 
-func TestNewOwner_ZeroValues(t *testing.T) {
-	o, err := NewOwner(0, 0)
-	if err != nil {
-		t.Fatalf("NewOwner(0,0) returned error: %v", err)
+func TestNewOwner(t *testing.T) {
+	tests := []struct {
+		name     string
+		uid      int
+		gid      int
+		wantErr  bool
+		wantNoOp bool
+		wantUID  int
+		wantGID  int
+	}{
+		{"Zero values", 0, 0, false, true, 0, 0},
+		{"Non-zero values", 1000, 1000, false, false, 1000, 1000},
+		{"Partial PUID", 1000, 0, false, false, 1000, 0},
+		{"Partial PGID", 0, 1000, false, false, 0, 1000},
+		{"Negative PUID", -1, 0, true, false, 0, 0},
+		{"Negative PGID", 0, -1, true, false, 0, 0},
 	}
-	if o == nil {
-		t.Fatal("NewOwner(0,0) returned nil, expected valid *Owner")
-	}
-	if !o.IsNoOp() {
-		t.Fatal("NewOwner(0,0).IsNoOp() should be true")
-	}
-}
 
-func TestNewOwner_NonZeroValues(t *testing.T) {
-	o, err := NewOwner(1000, 1000)
-	if err != nil {
-		t.Fatalf("NewOwner(1000,1000) returned error: %v", err)
-	}
-	if o.IsNoOp() {
-		t.Fatal("NewOwner(1000,1000).IsNoOp() should be false")
-	}
-	if o.UID != 1000 || o.GID != 1000 {
-		t.Fatalf("expected UID=1000 GID=1000, got UID=%d GID=%d", o.UID, o.GID)
-	}
-}
-
-func TestNewOwner_PartialPUID(t *testing.T) {
-	o, err := NewOwner(1000, 0)
-	if err != nil {
-		t.Fatalf("NewOwner(1000,0) returned error: %v", err)
-	}
-	if o.IsNoOp() {
-		t.Fatal("NewOwner(1000,0).IsNoOp() should be false")
-	}
-}
-
-func TestNewOwner_PartialPGID(t *testing.T) {
-	o, err := NewOwner(0, 1000)
-	if err != nil {
-		t.Fatalf("NewOwner(0,1000) returned error: %v", err)
-	}
-	if o.IsNoOp() {
-		t.Fatal("NewOwner(0,1000).IsNoOp() should be false")
-	}
-}
-
-func TestNewOwner_NegativePUID(t *testing.T) {
-	_, err := NewOwner(-1, 0)
-	if err == nil {
-		t.Fatal("NewOwner(-1,0) should return error")
-	}
-}
-
-func TestNewOwner_NegativePGID(t *testing.T) {
-	_, err := NewOwner(0, -1)
-	if err == nil {
-		t.Fatal("NewOwner(0,-1) should return error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o, err := NewOwner(tt.uid, tt.gid)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NewOwner(%d,%d) error = %v, wantErr %v", tt.uid, tt.gid, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if o == nil {
+				t.Fatal("NewOwner returned nil, expected valid *Owner")
+			}
+			if o.IsNoOp() != tt.wantNoOp {
+				t.Fatalf("IsNoOp() = %v, want %v", o.IsNoOp(), tt.wantNoOp)
+			}
+			if tt.wantNoOp {
+				return
+			}
+			if o.UID != tt.wantUID {
+				t.Fatalf("UID = %d, want %d", o.UID, tt.wantUID)
+			}
+			if o.GID != tt.wantGID {
+				t.Fatalf("GID = %d, want %d", o.GID, tt.wantGID)
+			}
+		})
 	}
 }
 
@@ -79,7 +65,9 @@ func TestIsNoOp_NilReceiver(t *testing.T) {
 
 func TestChown_NilReceiver(t *testing.T) {
 	var o *Owner
-	o.Chown("/some/path", slog.Default())
+	if err := o.Chown("/some/path", slog.Default()); err != nil {
+		t.Fatalf("Chown with nil receiver failed: %v", err)
+	}
 }
 
 func TestChownDir_NilReceiver(t *testing.T) {
@@ -123,7 +111,9 @@ func TestChown_NoOp(t *testing.T) {
 
 func TestChown_NonExistentPath(t *testing.T) {
 	o, _ := NewOwner(1000, 1000)
-	o.Chown("/nonexistent/path/file.txt", slog.Default())
+	if err := o.Chown("/nonexistent/path/file.txt", slog.Default()); err == nil {
+		t.Fatal("expected error for nonexistent path")
+	}
 }
 
 func TestChownDir_NoOp(t *testing.T) {
