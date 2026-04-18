@@ -102,8 +102,17 @@ func TestChownMkdirAllContext_NilReceiver(t *testing.T) {
 	}
 }
 
+// mustNewOwner is a test helper that creates an Owner and fails the test if creation fails.
+func mustNewOwner(t *testing.T, uid, gid int) *Owner {
+	o, err := NewOwner(uid, gid)
+	if err != nil {
+		t.Fatalf("NewOwner(%d, %d) failed: %v", uid, gid, err)
+	}
+	return o
+}
+
 func TestChown_NoOp(t *testing.T) {
-	o, _ := NewOwner(0, 0)
+	o := mustNewOwner(t, 0, 0)
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "testfile")
 	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
@@ -115,14 +124,14 @@ func TestChown_NoOp(t *testing.T) {
 }
 
 func TestChown_NonExistentPath(t *testing.T) {
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	if err := o.Chown("/nonexistent/path/file.txt"); err == nil {
 		t.Fatal("expected error for nonexistent path")
 	}
 }
 
 func TestChownDir_NoOp(t *testing.T) {
-	o, _ := NewOwner(0, 0)
+	o := mustNewOwner(t, 0, 0)
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0750); err != nil {
 		t.Fatal(err)
@@ -136,7 +145,7 @@ func TestChownDir_NoOp(t *testing.T) {
 }
 
 func TestChownMkdirAll_NoOp(t *testing.T) {
-	o, _ := NewOwner(0, 0)
+	o := mustNewOwner(t, 0, 0)
 	tmpDir := t.TempDir()
 	target := filepath.Join(tmpDir, "a", "b", "c")
 	if err := o.ChownMkdirAll(target, 0750, nil); err != nil {
@@ -185,12 +194,11 @@ func TestChownDirContext_NilReceiver(t *testing.T) {
 }
 
 func TestChownDirContext_NonExistentDir(t *testing.T) {
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	err := o.ChownDirContext(context.Background(), "/nonexistent/dir/path", slog.Default())
-	// Should not panic; WalkDir error is logged as warning
-	// Error is expected since the directory doesn't exist
+	// WalkDir should return an error for non-existent directory
 	if err == nil {
-		t.Log("ChownDirContext returned no error - this may be expected behavior")
+		t.Fatal("ChownDirContext should return error for non-existent directory")
 	}
 }
 
@@ -199,7 +207,7 @@ func TestChownDir_SkipsSymlinks(t *testing.T) {
 		t.Skip("skipping chown test: requires root")
 	}
 
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	tmpDir := t.TempDir()
 
 	// Create a regular file and a symlink
@@ -215,7 +223,8 @@ func TestChownDir_SkipsSymlinks(t *testing.T) {
 		t.Fatalf("ChownDir failed: %v", err)
 	}
 
-	// The symlink itself should still exist (not followed, but chowned)
+	// The symlink itself should remain a symlink because the chown
+	// implementation does not follow or change symlinks
 	linkPath := filepath.Join(tmpDir, "outsidelink")
 	fi, err := os.Lstat(linkPath)
 	if err != nil {
@@ -317,25 +326,27 @@ func TestChownDir_WithRootPrivilege(t *testing.T) {
 }
 
 func TestChown_NilLoggerFallsBackToDefault(t *testing.T) {
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	// This should not panic even with nil logger
 	err := o.Chown("/nonexistent/path/file.txt")
-	// Validate the expected error path
+	// Validate the expected error path - fail test if behavior regresses
 	if err == nil {
-		t.Log("Chown returned no error - this may be acceptable")
-	} else if !os.IsNotExist(err) {
-		t.Logf("unexpected error: %v", err)
+		t.Fatal("Chown should return an error for non-existent path")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Chown error should be os.ErrNotExist, got: %v", err)
 	}
 }
 
 func TestChownDir_NilLoggerFallsBackToDefault(t *testing.T) {
-	o, _ := NewOwner(1000, 1000)
+	o := mustNewOwner(t, 1000, 1000)
 	// This should not panic even with nil logger
 	err := o.ChownDir("/nonexistent/dir", nil)
-	// Validate the expected error path
+	// Validate the expected error path - fail test if behavior regresses
 	if err == nil {
-		t.Log("ChownDir returned no error - this may be acceptable")
-	} else if !os.IsNotExist(err) {
-		t.Logf("unexpected error: %v", err)
+		t.Fatal("ChownDir should return an error for non-existent directory")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ChownDir error should be os.ErrNotExist, got: %v", err)
 	}
 }

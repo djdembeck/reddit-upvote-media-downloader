@@ -62,7 +62,8 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
-			return nil
+			firstErr = walkErr
+			return walkErr
 		}
 		if isSymlink(d) {
 			return nil
