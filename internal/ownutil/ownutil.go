@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 )
 
+// Owner holds UID and GID.
 type Owner struct {
 	uid int
 	gid int
@@ -47,6 +48,7 @@ func (o *Owner) chownGID() int {
 	return o.gid
 }
 
+// NewOwner creates Owner from uid and gid.
 func NewOwner(uid, gid int) (*Owner, error) {
 	if uid < 0 {
 		return nil, fmt.Errorf("PUID must be non-negative, got %d", uid)
@@ -57,10 +59,12 @@ func NewOwner(uid, gid int) (*Owner, error) {
 	return &Owner{uid: uid, gid: gid}, nil
 }
 
+// IsNoOp returns true if o is nil or has zero uid/gid.
 func (o *Owner) IsNoOp() bool {
 	return o == nil || (o.uid == 0 && o.gid == 0)
 }
 
+// Chown changes ownership of path.
 func (o *Owner) Chown(path string) error {
 	if o.IsNoOp() {
 		return nil
@@ -71,11 +75,12 @@ func (o *Owner) Chown(path string) error {
 	return nil
 }
 
-// ChownDirContext recursively changes ownership under dir, respecting context cancellation.
+// ChownDir recursively changes ownership under dir, respecting ctx.
 func (o *Owner) ChownDir(dir string, logger *slog.Logger) error {
 	return o.ChownDirContext(context.Background(), dir, logger)
 }
 
+// ChownDirContext recursively changes ownership under dir, with ctx.
 func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Logger) error {
 	if o.IsNoOp() {
 		return nil
@@ -94,7 +99,8 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 	return firstErr
 }
 
-func (o *Owner) processChownWalk(ctx context.Context, path string, d os.DirEntry, walkErr error, logger *slog.Logger) error {
+// processChownWalk processes each filepath.WalkDir entry.
+func (o *Owner) processChownWalk(ctx context.Context, path string, _ os.DirEntry, walkErr error, logger *slog.Logger) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("context error: %w", ctx.Err())
 	}
@@ -108,6 +114,7 @@ func (o *Owner) processChownWalk(ctx context.Context, path string, d os.DirEntry
 	return nil
 }
 
+// ChownMkdirAll runs MkdirAll then changes ownership.
 func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger) error {
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
@@ -118,6 +125,7 @@ func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger)
 	return nil
 }
 
+// ChownMkdirAllContext runs MkdirAll then changes ownership with context.
 func (o *Owner) ChownMkdirAllContext(ctx context.Context, dir string, perm os.FileMode, logger *slog.Logger) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("context error: %w", ctx.Err())

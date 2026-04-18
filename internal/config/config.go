@@ -277,24 +277,14 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	if c.Storage.PUID < 0 {
-		errs = append(errs, fmt.Errorf("PUID must be non-negative, got %d", c.Storage.PUID))
-	}
-	if c.Storage.PGID < 0 {
-		errs = append(errs, fmt.Errorf("PGID must be non-negative, got %d", c.Storage.PGID))
-	}
-
-	// Validate retry threshold
-	if c.SmartPolling.RetryThreshold < 0 {
-		errs = append(errs, fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold))
+	// Validate storage settings
+	if err := validateStorageSettings(c); err != nil {
+		errs = append(errs, err)
 	}
 
 	// Validate migration configuration
-	if c.Migrate.ReorganizeEnabled {
-		src := strings.TrimSpace(c.Migrate.SourceDir)
-		if src == "" {
-			errs = append(errs, fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled"))
-		}
+	if err := validateMigrationSettings(c); err != nil {
+		errs = append(errs, err)
 	}
 
 	if len(errs) > 0 {
@@ -304,7 +294,31 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateRedditCredentials validates Reddit API credentials.
+// validateStorageSettings validates storage configuration.
+func validateStorageSettings(c *Config) error {
+	if c.Storage.PUID < 0 {
+		return fmt.Errorf("PUID must be non-negative, got %d", c.Storage.PUID)
+	}
+	if c.Storage.PGID < 0 {
+		return fmt.Errorf("PGID must be non-negative, got %d", c.Storage.PGID)
+	}
+	if c.SmartPolling.RetryThreshold < 0 {
+		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
+	}
+	return nil
+}
+
+// validateMigrationSettings validates migration configuration.
+func validateMigrationSettings(c *Config) error {
+	if c.Migrate.ReorganizeEnabled {
+		src := strings.TrimSpace(c.Migrate.SourceDir)
+		if src == "" {
+			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
+		}
+	}
+	return nil
+}
+
 func validateRedditCredentials(c *Config) error {
 	var missing []string
 

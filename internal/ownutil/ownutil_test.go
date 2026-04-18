@@ -174,7 +174,7 @@ func TestChownDirContext_Cancellation(t *testing.T) {
 
 	err := o.ChownDirContext(ctx, tmpDir, slog.Default())
 	if err == nil {
-		t.Fatal("expected error from cancelled context")
+		t.Fatal("expected error from canceled context")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled error, got: %v", err)
