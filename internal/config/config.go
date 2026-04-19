@@ -150,7 +150,7 @@ func flagWasSet(name string) bool {
 // Load loads configuration from environment variables, .env file, and CLI flags
 // Priority: CLI flags > Environment vars > .env file > defaults
 //
-//nolint:cyclop
+//nolint:cyclop,gocyclo
 func Load() (*Config, error) {
 	//nolint:errcheck // Loading .env is optional; continue if it fails
 	_ = godotenv.Load()
@@ -174,9 +174,6 @@ func Load() (*Config, error) {
 		},
 
 		Download: DownloadConfig{
-			Concurrency:   getEnvIntOrDefault("CONCURRENCY", 10),
-			FetchLimit:    getEnvIntOrDefault("FETCH_LIMIT", 100),
-			MaxRetries:    getEnvIntOrDefault("MAX_RETRIES", 3),
 			DownloadDelay: getEnvDuration("DOWNLOAD_DELAY_MS", 200*time.Millisecond),
 		},
 		Log: LogConfig{
@@ -194,10 +191,19 @@ func Load() (*Config, error) {
 			Max:  getEnvDuration("BACKOFF_MAX", 60*time.Second),
 		},
 		SmartPolling: SmartPollingConfig{
-			ReCheck:        getEnvBool("RE_CHECK", false),
-			RetryThreshold: getEnvIntOrDefault("RETRY_THRESHOLD", 3),
+			ReCheck: getEnvBool("RE_CHECK", false),
 		},
 	}
+
+	concurrency, concurrencyErr := getEnvIntOrDefault("CONCURRENCY", 10)
+	fetchLimit, fetchLimitErr := getEnvIntOrDefault("FETCH_LIMIT", 100)
+	maxRetries, maxRetriesErr := getEnvIntOrDefault("MAX_RETRIES", 3)
+	retryThreshold, retryThresholdErr := getEnvIntOrDefault("RETRY_THRESHOLD", 3)
+
+	cfg.Download.Concurrency = concurrency
+	cfg.Download.FetchLimit = fetchLimit
+	cfg.Download.MaxRetries = maxRetries
+	cfg.SmartPolling.RetryThreshold = retryThreshold
 
 	puid, puidErr := getEnvInt("PUID", 0)
 	pgid, pgidErr := getEnvInt("PGID", 0)
@@ -208,6 +214,18 @@ func Load() (*Config, error) {
 	}
 	if pgidErr != nil {
 		return nil, fmt.Errorf("invalid PGID: %w", pgidErr)
+	}
+	if concurrencyErr != nil {
+		return nil, fmt.Errorf("invalid CONCURRENCY: %w", concurrencyErr)
+	}
+	if fetchLimitErr != nil {
+		return nil, fmt.Errorf("invalid FETCH_LIMIT: %w", fetchLimitErr)
+	}
+	if maxRetriesErr != nil {
+		return nil, fmt.Errorf("invalid MAX_RETRIES: %w", maxRetriesErr)
+	}
+	if retryThresholdErr != nil {
+		return nil, fmt.Errorf("invalid RETRY_THRESHOLD: %w", retryThresholdErr)
 	}
 
 	// Apply CLI flag overrides (highest priority)
@@ -439,15 +457,15 @@ func getEnvInt(key string, defaultValue int) (int, error) {
 	return defaultValue, nil
 }
 
-func getEnvIntOrDefault(key string, defaultValue int) int {
+func getEnvIntOrDefault(key string, defaultValue int) (int, error) {
 	if _, ok := os.LookupEnv(key); ok {
 		val, err := getEnvInt(key, defaultValue)
 		if err != nil {
-			panic(fmt.Errorf("invalid environment variable %s: %w", key, err))
+			return 0, fmt.Errorf("invalid environment variable %s: %w", key, err)
 		}
-		return val
+		return val, nil
 	}
-	return defaultValue
+	return defaultValue, nil
 }
 
 func getEnvBool(key string, defaultValue bool) bool {
