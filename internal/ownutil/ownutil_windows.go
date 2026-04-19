@@ -90,20 +90,38 @@ func (o *Owner) processChownWalk(ctx context.Context, path string, d os.DirEntry
 }
 
 func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger) error {
+	if o.IsNoOp() {
+		if err := os.MkdirAll(dir, perm); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+		return nil
+	}
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
-	return nil
+	return errors.New("chown is not supported on Windows")
 }
 
 func (o *Owner) ChownMkdirAllContext(ctx context.Context, dir string, perm os.FileMode, logger *slog.Logger) error {
+	if o.IsNoOp() {
+		if ctx.Err() != nil {
+			return fmt.Errorf("context error: %w", ctx.Err())
+		}
+		if err := os.MkdirAll(dir, perm); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+		return nil
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("context error: %w", ctx.Err())
 	}
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
-	return nil
+	if ctx.Err() != nil {
+		return fmt.Errorf("context error: %w", ctx.Err())
+	}
+	return errors.New("chown is not supported on Windows")
 }
 
 func warnLog(logger *slog.Logger, msg string, args ...any) {
