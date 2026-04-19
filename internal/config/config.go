@@ -277,6 +277,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
+	// Validate smart polling settings
+	if err := validateSmartPollingSettings(c); err != nil {
+		errs = append(errs, err)
+	}
+
 	// Validate storage settings
 	if err := validateStorageSettings(c); err != nil {
 		errs = append(errs, err)
@@ -294,6 +299,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// validateSmartPollingSettings validates SmartPolling configuration.
+func validateSmartPollingSettings(c *Config) error {
+	if c.SmartPolling.RetryThreshold < 0 {
+		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
+	}
+	return nil
+}
+
 // validateStorageSettings validates storage configuration.
 func validateStorageSettings(c *Config) error {
 	if c.Storage.PUID < 0 {
@@ -301,9 +314,6 @@ func validateStorageSettings(c *Config) error {
 	}
 	if c.Storage.PGID < 0 {
 		return fmt.Errorf("PGID must be non-negative, got %d", c.Storage.PGID)
-	}
-	if c.SmartPolling.RetryThreshold < 0 {
-		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
 	}
 	return nil
 }

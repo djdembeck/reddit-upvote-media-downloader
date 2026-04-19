@@ -106,13 +106,16 @@ func (o *Owner) ChownDirContext(ctx context.Context, dir string, logger *slog.Lo
 }
 
 // processChownWalk processes each filepath.WalkDir entry.
-func (o *Owner) processChownWalk(ctx context.Context, path string, _ os.DirEntry, walkErr error, logger *slog.Logger) error {
+func (o *Owner) processChownWalk(ctx context.Context, path string, d os.DirEntry, walkErr error, logger *slog.Logger) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("context error: %w", ctx.Err())
 	}
 	if walkErr != nil {
 		warnLog(logger, "walkdir error during chown", "path", path, "error", walkErr)
 		return walkErr
+	}
+	if d.Type()&os.ModeSymlink != 0 {
+		return nil
 	}
 	if err := o.Chown(path); err != nil {
 		return err
@@ -121,6 +124,11 @@ func (o *Owner) processChownWalk(ctx context.Context, path string, _ os.DirEntry
 }
 
 // ChownMkdirAll runs MkdirAll then changes ownership.
+//
+// WARNING: This function does not validate or sanitize the dir path. Callers
+// must ensure dir is a validated absolute path within a safe base directory.
+// Reject empty strings, relative paths, and paths outside allowed roots before
+// calling this function. Ownership changes are performed via Owner.ChownDir.
 func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger) error {
 	if err := os.MkdirAll(dir, perm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
@@ -132,6 +140,11 @@ func (o *Owner) ChownMkdirAll(dir string, perm os.FileMode, logger *slog.Logger)
 }
 
 // ChownMkdirAllContext runs MkdirAll then changes ownership with context.
+//
+// WARNING: This function does not validate or sanitize the dir path. Callers
+// must ensure dir is a validated absolute path within a safe base directory.
+// Reject empty strings, relative paths, and paths outside allowed roots before
+// calling this function. Ownership changes are performed via Owner.ChownDirContext.
 func (o *Owner) ChownMkdirAllContext(ctx context.Context, dir string, perm os.FileMode, logger *slog.Logger) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("context error: %w", ctx.Err())
