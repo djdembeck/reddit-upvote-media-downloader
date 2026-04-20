@@ -15,11 +15,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/config"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/migration"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -118,8 +121,13 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 
 	fmt.Printf("Found %d posts\n\n", len(parser.PostMap))
 
+	owner, err := newOwnerFromEnv()
+	if err != nil {
+		return err
+	}
+
 	// Initialize DB if DB_PATH is set and not in dry-run mode
-	db, _, err := initMigrationDB(ctx, dryRun)
+	db, _, err := initMigrationDB(ctx, dryRun, owner)
 	if err != nil {
 		return err
 	}
@@ -132,7 +140,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	if !dryRun {
-		if err := os.MkdirAll(destDir, 0750); err != nil {
+		if err := owner.ChownMkdirAllContext(ctx, destDir, 0750, slog.Default()); err != nil {
 			return fmt.Errorf("create destination directory: %w", err)
 		}
 	}
@@ -146,7 +154,7 @@ func runMigration(sourceDir, destDir, indexPath, htmlDir, logFile string, dryRun
 	}
 
 	// Execute
-	migrator := setupMigrator(sourceDir, destDir, parser.PostMap, dryRun, db)
+	migrator := setupMigrator(sourceDir, destDir, parser.PostMap, dryRun, db, owner)
 	if err := migrator.LoadExistingLog(ctx, logFile); err != nil {
 		return fmt.Errorf("load existing log: %w", err)
 	}
@@ -196,13 +204,13 @@ func parseHTMLSources(ctx context.Context, parser *migration.HTMLParser, htmlDir
 	return nil
 }
 
-func initMigrationDB(ctx context.Context, dryRun bool) (*storage.DB, string, error) {
+func initMigrationDB(ctx context.Context, dryRun bool, owner *ownutil.Owner) (*storage.DB, string, error) {
 	dbPath := os.Getenv("DB_PATH")
 
 	if dbPath != "" && !dryRun {
 		fmt.Printf("Initializing database: %s\n", dbPath)
 
-		db, err := storage.NewDB(ctx, dbPath)
+		db, err := storage.NewDB(ctx, dbPath, owner)
 		if err != nil {
 			return nil, "", fmt.Errorf("open database: %w", err)
 		}
@@ -213,8 +221,27 @@ func initMigrationDB(ctx context.Context, dryRun bool) (*storage.DB, string, err
 	return nil, dbPath, nil
 }
 
-func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostInfo, dryRun bool, db *storage.DB) *migration.Migrator {
-	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db)
+func setupMigrator(sourceDir, destDir string, postMap map[string]migration.PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner) *migration.Migrator {
+	return migration.NewMigrator(sourceDir, destDir, postMap, dryRun, db, owner, slog.Default())
+}
+
+func newOwnerFromEnv() (*ownutil.Owner, error) {
+	puid, puidErr := config.GetEnvInt("PUID", 0)
+	if puidErr != nil {
+		return nil, fmt.Errorf("invalid PUID: %w", puidErr)
+	}
+
+	pgid, pgidErr := config.GetEnvInt("PGID", 0)
+	if pgidErr != nil {
+		return nil, fmt.Errorf("invalid PGID: %w", pgidErr)
+	}
+
+	owner, err := ownutil.NewOwner(puid, pgid)
+	if err != nil {
+		return nil, fmt.Errorf("invalid PUID/PGID: %w", err)
+	}
+
+	return owner, nil
 }
 
 //nolint:cyclop
@@ -225,6 +252,12 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	fmt.Println("========")
 	fmt.Printf("Log: %s\n\n", logPath)
 
+	owner, err := newOwnerFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+
 	var db *storage.DB
 
 	dbPath := os.Getenv("DB_PATH")
@@ -234,7 +267,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 
 		var err error
 
-		db, err = storage.NewDB(ctx, dbPath)
+		db, err = storage.NewDB(ctx, dbPath, owner)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 
@@ -250,7 +283,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 		}()
 	}
 
-	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot)
+	rollbacker := migration.NewRollback(logPath, db, sourceRoot, destRoot, owner, slog.Default())
 
 	rollbackLog, err := rollbacker.Execute(ctx)
 	if err != nil {
@@ -260,7 +293,7 @@ func runRollback(logPath, sourceRoot, destRoot string) {
 	}
 
 	rollbackPath := logPath + ".rollback_" + time.Now().Format("20060102_150405") + ".json"
-	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath); err != nil {
+	if err := migration.SaveRollbackLog(rollbackLog, rollbackPath, owner); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving rollback log: %v\n", err)
 		return
 	}

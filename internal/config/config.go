@@ -45,6 +45,8 @@ type RedditConfig struct {
 type StorageConfig struct {
 	OutputDir string
 	DBPath    string
+	PUID      int
+	PGID      int
 }
 
 // DownloadConfig holds downloader settings.
@@ -148,7 +150,7 @@ func flagWasSet(name string) bool {
 // Load loads configuration from environment variables, .env file, and CLI flags
 // Priority: CLI flags > Environment vars > .env file > defaults
 //
-//nolint:cyclop
+//nolint:cyclop,gocyclo
 func Load() (*Config, error) {
 	//nolint:errcheck // Loading .env is optional; continue if it fails
 	_ = godotenv.Load()
@@ -170,10 +172,8 @@ func Load() (*Config, error) {
 			OutputDir: getEnv("OUTPUT_DIR", "./data/output"),
 			DBPath:    getEnv("DB_PATH", "./data/posts.db"),
 		},
+
 		Download: DownloadConfig{
-			Concurrency:   getEnvInt("CONCURRENCY", 10),
-			FetchLimit:    getEnvInt("FETCH_LIMIT", 100),
-			MaxRetries:    getEnvInt("MAX_RETRIES", 3),
 			DownloadDelay: getEnvDuration("DOWNLOAD_DELAY_MS", 200*time.Millisecond),
 		},
 		Log: LogConfig{
@@ -191,9 +191,41 @@ func Load() (*Config, error) {
 			Max:  getEnvDuration("BACKOFF_MAX", 60*time.Second),
 		},
 		SmartPolling: SmartPollingConfig{
-			ReCheck:        getEnvBool("RE_CHECK", false),
-			RetryThreshold: getEnvInt("RETRY_THRESHOLD", 3),
+			ReCheck: getEnvBool("RE_CHECK", false),
 		},
+	}
+
+	concurrency, concurrencyErr := getEnvIntOrDefault("CONCURRENCY", 10)
+	fetchLimit, fetchLimitErr := getEnvIntOrDefault("FETCH_LIMIT", 100)
+	maxRetries, maxRetriesErr := getEnvIntOrDefault("MAX_RETRIES", 3)
+	retryThreshold, retryThresholdErr := getEnvIntOrDefault("RETRY_THRESHOLD", 3)
+
+	cfg.Download.Concurrency = concurrency
+	cfg.Download.FetchLimit = fetchLimit
+	cfg.Download.MaxRetries = maxRetries
+	cfg.SmartPolling.RetryThreshold = retryThreshold
+
+	puid, puidErr := getEnvInt("PUID", 0)
+	pgid, pgidErr := getEnvInt("PGID", 0)
+	cfg.Storage.PUID = puid
+	cfg.Storage.PGID = pgid
+	if puidErr != nil {
+		return nil, fmt.Errorf("invalid PUID: %w", puidErr)
+	}
+	if pgidErr != nil {
+		return nil, fmt.Errorf("invalid PGID: %w", pgidErr)
+	}
+	if concurrencyErr != nil {
+		return nil, fmt.Errorf("invalid CONCURRENCY: %w", concurrencyErr)
+	}
+	if fetchLimitErr != nil {
+		return nil, fmt.Errorf("invalid FETCH_LIMIT: %w", fetchLimitErr)
+	}
+	if maxRetriesErr != nil {
+		return nil, fmt.Errorf("invalid MAX_RETRIES: %w", maxRetriesErr)
+	}
+	if retryThresholdErr != nil {
+		return nil, fmt.Errorf("invalid RETRY_THRESHOLD: %w", retryThresholdErr)
 	}
 
 	// Apply CLI flag overrides (highest priority)
@@ -263,17 +295,19 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 
-	// Validate retry threshold
-	if c.SmartPolling.RetryThreshold < 0 {
-		errs = append(errs, fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold))
+	// Validate smart polling settings
+	if err := validateSmartPollingSettings(c); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Validate storage settings
+	if err := validateStorageSettings(c); err != nil {
+		errs = append(errs, err)
 	}
 
 	// Validate migration configuration
-	if c.Migrate.ReorganizeEnabled {
-		src := strings.TrimSpace(c.Migrate.SourceDir)
-		if src == "" {
-			errs = append(errs, fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled"))
-		}
+	if err := validateMigrationSettings(c); err != nil {
+		errs = append(errs, err)
 	}
 
 	if len(errs) > 0 {
@@ -283,7 +317,36 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validateRedditCredentials validates Reddit API credentials.
+// validateSmartPollingSettings validates SmartPolling configuration.
+func validateSmartPollingSettings(c *Config) error {
+	if c.SmartPolling.RetryThreshold < 0 {
+		return fmt.Errorf("RETRY_THRESHOLD must be greater than or equal to 0, got %d", c.SmartPolling.RetryThreshold)
+	}
+	return nil
+}
+
+// validateStorageSettings validates storage configuration.
+func validateStorageSettings(c *Config) error {
+	if c.Storage.PUID < 0 {
+		return fmt.Errorf("PUID must be non-negative, got %d", c.Storage.PUID)
+	}
+	if c.Storage.PGID < 0 {
+		return fmt.Errorf("PGID must be non-negative, got %d", c.Storage.PGID)
+	}
+	return nil
+}
+
+// validateMigrationSettings validates migration configuration.
+func validateMigrationSettings(c *Config) error {
+	if c.Migrate.ReorganizeEnabled {
+		src := strings.TrimSpace(c.Migrate.SourceDir)
+		if src == "" {
+			return fmt.Errorf("MIGRATE_SOURCE_DIR is required when MIGRATE_REORGANIZE is enabled")
+		}
+	}
+	return nil
+}
+
 func validateRedditCredentials(c *Config) error {
 	var missing []string
 
@@ -366,7 +429,7 @@ func GetEnv(key, defaultValue string) string {
 }
 
 // GetEnvInt returns an integer environment variable or a default.
-func GetEnvInt(key string, defaultValue int) int {
+func GetEnvInt(key string, defaultValue int) (int, error) {
 	return getEnvInt(key, defaultValue)
 }
 
@@ -384,13 +447,25 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func getEnvInt(key string, defaultValue int) int {
+func getEnvInt(key string, defaultValue int) (int, error) {
 	if value := os.Getenv(key); value != "" {
 		if intVal, err := strconv.Atoi(value); err == nil {
-			return intVal
+			return intVal, nil
 		}
+		return 0, fmt.Errorf("non-integer value %q", value)
 	}
-	return defaultValue
+	return defaultValue, nil
+}
+
+func getEnvIntOrDefault(key string, defaultValue int) (int, error) {
+	if _, ok := os.LookupEnv(key); ok {
+		val, err := getEnvInt(key, defaultValue)
+		if err != nil {
+			return 0, fmt.Errorf("invalid environment variable %s: %w", key, err)
+		}
+		return val, nil
+	}
+	return defaultValue, nil
 }
 
 func getEnvBool(key string, defaultValue bool) bool {

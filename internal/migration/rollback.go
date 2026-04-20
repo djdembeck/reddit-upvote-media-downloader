@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -30,6 +31,8 @@ type Rollback struct {
 	LogPath    string
 	SourceRoot string
 	DestRoot   string
+	Owner      *ownutil.Owner
+	logger     *slog.Logger
 }
 
 // RollbackLog contains rollback operation results.
@@ -58,12 +61,17 @@ type RollbackRecord struct {
 // NewRollback creates a new Rollback instance for reversing a previous migration.
 // It loads the migration log from logPath and prepares for rollback operations.
 // The sourceRoot and destRoot parameters should match the original migration paths.
-func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string) *Rollback {
+func NewRollback(logPath string, db *storage.DB, sourceRoot, destRoot string, owner *ownutil.Owner, logger *slog.Logger) *Rollback {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Rollback{
 		LogPath:    logPath,
 		DB:         db,
 		SourceRoot: sourceRoot,
 		DestRoot:   destRoot,
+		Owner:      owner,
+		logger:     logger,
 	}
 }
 
@@ -74,7 +82,7 @@ func (r *Rollback) loadLog() (*Log, error) {
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			slog.Error("failed to close rollback log file", "path", r.LogPath, "error", cerr)
+			r.logger.Error("failed to close rollback log file", "path", r.LogPath, "error", cerr)
 		}
 	}()
 
@@ -145,7 +153,7 @@ func (r *Rollback) validateRollbackPaths(op Record) error {
 // performFileRollback performs the actual file rollback operations.
 //
 //nolint:cyclop,gocyclo
-func (r *Rollback) performFileRollback(op Record) error {
+func (r *Rollback) performFileRollback(ctx context.Context, op Record) error {
 	// Check file exists and is not a symlink
 	if info, err := os.Lstat(op.DestPath); err != nil {
 		if os.IsNotExist(err) {
@@ -158,8 +166,8 @@ func (r *Rollback) performFileRollback(op Record) error {
 
 	// Ensure source dir exists
 	sourceDir := filepath.Dir(op.SourcePath)
-	if err := os.MkdirAll(sourceDir, 0750); err != nil {
-		return fmt.Errorf("create dir: %v", err)
+	if err := r.Owner.ChownMkdirAllContext(ctx, sourceDir, 0750, r.logger); err != nil {
+		return fmt.Errorf("create and chown source dir: %w", err)
 	}
 
 	// Re-validate paths after MkdirAll to prevent TOCTOU symlink attacks
@@ -177,8 +185,8 @@ func (r *Rollback) performFileRollback(op Record) error {
 		return fmt.Errorf("stat source: %v", err)
 	}
 
-	if err := copyFile(op.DestPath, op.SourcePath); err != nil {
-		return fmt.Errorf("copy file: %v", err)
+	if err := copyFile(op.DestPath, op.SourcePath, r.Owner); err != nil {
+		return fmt.Errorf("copy file: %w", err)
 	}
 
 	srcInfo, err := os.Stat(op.DestPath)
@@ -205,7 +213,7 @@ func (r *Rollback) performFileRollback(op Record) error {
 	destDir := filepath.Dir(op.DestPath)
 	if entries, err := os.ReadDir(destDir); err == nil && len(entries) == 0 {
 		if removeErr := os.Remove(destDir); removeErr != nil {
-			slog.Warn("failed to remove empty destination directory",
+			r.logger.Warn("failed to remove empty destination directory",
 				"dir", destDir, "error", removeErr)
 		}
 	}
@@ -244,7 +252,7 @@ func (r *Rollback) rollbackOperation(ctx context.Context, op Record) RollbackRec
 	}
 
 	// Perform file rollback
-	if err := r.performFileRollback(op); err != nil {
+	if err := r.performFileRollback(ctx, op); err != nil {
 		record.Status = StatusError
 		record.Error = err.Error()
 		return record
@@ -341,7 +349,7 @@ func (r *Rollback) validatePathAgainstRoot(pathStr, root string) error {
 }
 
 // SaveRollbackLog saves the rollback log to a JSON file for audit purposes.
-func SaveRollbackLog(log *RollbackLog, path string) error {
+func SaveRollbackLog(log *RollbackLog, path string, owner *ownutil.Owner) error {
 	//nolint:gosec // G304: path is validated by caller before this function
 	file, err := os.Create(path)
 	if err != nil {
@@ -357,6 +365,10 @@ func SaveRollbackLog(log *RollbackLog, path string) error {
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(log); err != nil {
 		return fmt.Errorf("encode rollback log: %w", err)
+	}
+
+	if err := owner.Chown(path); err != nil {
+		slog.Warn("failed to chown rollback log file", "path", path, "error", err)
 	}
 	return nil
 }

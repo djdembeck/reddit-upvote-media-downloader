@@ -15,6 +15,7 @@ import (
 
 	"github.com/zeebo/blake3"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
 
@@ -38,6 +39,8 @@ type Migrator struct {
 	SourceDir  string
 	DestDir    string
 	DryRun     bool
+	Owner      *ownutil.Owner
+	logger     *slog.Logger
 }
 
 // FileHashInfo tracks file hash information for duplicate detection.
@@ -50,13 +53,18 @@ type FileHashInfo struct {
 }
 
 // NewMigrator creates a new Migrator instance.
-func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB) *Migrator {
+func NewMigrator(sourceDir, destDir string, postMap map[string]PostInfo, dryRun bool, db *storage.DB, owner *ownutil.Owner, logger *slog.Logger) *Migrator {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	m := &Migrator{
 		SourceDir: sourceDir,
 		DestDir:   destDir,
 		PostMap:   postMap,
 		DryRun:    dryRun,
 		DB:        db,
+		Owner:     owner,
+		logger:    logger,
 		Log: &Log{
 			Version:    "1.0",
 			Timestamp:  time.Now(),
@@ -318,7 +326,7 @@ func (m *Migrator) processFile(ctx context.Context, filename string) error {
 	}
 
 	// Move file
-	if err := m.moveFile(sourcePath, destPath); err != nil {
+	if err := m.moveFile(ctx, sourcePath, destPath); err != nil {
 		m.recordError(filename, postID, "move_file", err)
 		return fmt.Errorf("move file %s to %s: %w", sourcePath, destPath, err)
 	}
@@ -378,13 +386,13 @@ func wrapWithCleanup(err error, dst, contextFmt string, args ...any) error {
 	return wrappedErr
 }
 
-func (m *Migrator) moveFile(src, dst string) error {
+func (m *Migrator) moveFile(ctx context.Context, src, dst string) error {
 	dir := filepath.Dir(dst)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := m.Owner.ChownMkdirAllContext(ctx, dir, 0750, m.logger); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
-	if err := copyFile(src, dst); err != nil {
+	if err := copyFile(src, dst, m.Owner); err != nil {
 		return wrapWithCleanup(err, dst, "copy file")
 	}
 
@@ -413,7 +421,7 @@ func (m *Migrator) moveFile(src, dst string) error {
 	return nil
 }
 
-func copyFile(src, dst string) (err error) {
+func copyFile(src, dst string, owner *ownutil.Owner) (err error) {
 	//nolint:gosec // G304: intentional file reading from user-provided migration paths
 	sourceFile, err := os.Open(src)
 	if err != nil {
@@ -444,6 +452,10 @@ func copyFile(src, dst string) (err error) {
 		return fmt.Errorf("sync dest %s: %w", dst, err)
 	}
 
+	if chownErr := owner.Chown(dst); chownErr != nil {
+		return fmt.Errorf("chown %s: %w", dst, chownErr)
+	}
+
 	return nil
 }
 
@@ -468,6 +480,10 @@ func (m *Migrator) SaveLog(ctx context.Context, logPath string) (err error) {
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(m.Log); err != nil {
 		return fmt.Errorf("encode log to %s: %w", logPath, err)
+	}
+
+	if chownErr := m.Owner.Chown(logPath); chownErr != nil {
+		m.logger.Warn("failed to chown log file", "path", logPath, "error", chownErr)
 	}
 
 	return nil

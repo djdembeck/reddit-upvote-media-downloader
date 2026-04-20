@@ -20,6 +20,8 @@ services:
       - MIGRATE_REORGANIZE=${MIGRATE_REORGANIZE:-false}
       - MIGRATE_SOURCE_DIR=${MIGRATE_SOURCE_DIR:-}
       - MIGRATE_HTML_DIR=${MIGRATE_HTML_DIR:-}
+      - PUID=${PUID:-0}
+      - PGID=${PGID:-0}
     volumes:
       - ./data:/data
       - ./.env:/.env:ro

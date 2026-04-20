@@ -356,14 +356,47 @@ func TestGetEnvInt(t *testing.T) {
 	_ = os.Setenv("TEST_INT_VAR", "42")
 	defer func() { _ = os.Unsetenv("TEST_INT_VAR") }()
 
-	result := GetEnvInt("TEST_INT_VAR", 10)
+	result, err := GetEnvInt("TEST_INT_VAR", 10)
+	if err != nil {
+		t.Fatalf("GetEnvInt returned error: %v", err)
+	}
 	if result != 42 {
 		t.Errorf("Expected 42, got %d", result)
 	}
 
-	result = GetEnvInt("NONEXISTENT_INT_VAR", 10)
+	result, err = GetEnvInt("NONEXISTENT_INT_VAR", 10)
+	if err != nil {
+		t.Fatalf("GetEnvInt returned error for nonexistent var: %v", err)
+	}
 	if result != 10 {
 		t.Errorf("Expected 10, got %d", result)
+	}
+}
+
+func TestGetEnvInt_InvalidValue(t *testing.T) {
+	_ = os.Setenv("TEST_INVALID_INT", "not_a_number")
+	defer func() { _ = os.Unsetenv("TEST_INVALID_INT") }()
+
+	result, err := GetEnvInt("TEST_INVALID_INT", 99)
+	if err == nil {
+		t.Fatal("GetEnvInt should return error for non-numeric value")
+	}
+	if result != 0 {
+		t.Errorf("Expected 0 for invalid value, got %d", result)
+	}
+}
+
+func TestGetEnvIntOrDefault_ErrorOnInvalidSetValue(t *testing.T) {
+	_ = os.Setenv("TEST_INT_OR_DEFAULT", "abc")
+	defer func() { _ = os.Unsetenv("TEST_INT_OR_DEFAULT") }()
+
+	result, err := getEnvIntOrDefault("TEST_INT_OR_DEFAULT", 42)
+
+	if err == nil {
+		t.Error("getEnvIntOrDefault should return error when env var is set but invalid")
+	}
+	if result != 0 {
+		t.Errorf("Expected 0 for invalid value, got %d", result)
 	}
 }
 

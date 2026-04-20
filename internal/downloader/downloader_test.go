@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 )
@@ -525,7 +526,7 @@ func setupDeduplicationTest(t *testing.T, serverContent []byte) *dedupTestSetup 
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(context.Background(), dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath, &ownutil.Owner{})
 	require.NoError(t, err, "NewDB error")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1277,7 +1278,7 @@ func TestKnownBadHashDetection(t *testing.T) {
 	outputDir := t.TempDir()
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(context.Background(), dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath, &ownutil.Owner{})
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -1364,7 +1365,7 @@ func TestKnownBadHashDetection_ExistingFile(t *testing.T) {
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(context.Background(), dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath, &ownutil.Owner{})
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -1629,7 +1630,7 @@ func TestCheckAndHandleExistingFile_KnownBadHash(t *testing.T) {
 
 	dbDir := t.TempDir()
 	dbPath := filepath.Join(dbDir, "test.db")
-	db, err := storage.NewDB(context.Background(), dbPath)
+	db, err := storage.NewDB(context.Background(), dbPath, &ownutil.Owner{})
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
@@ -1997,7 +1998,7 @@ func TestDownloaderRespectsConfiguredDelay(t *testing.T) {
 	dbFile := filepath.Join(tempDir, "test.db")
 
 	// Create database
-	db, err := storage.NewDB(context.Background(), dbFile)
+	db, err := storage.NewDB(context.Background(), dbFile, &ownutil.Owner{})
 	require.NoError(t, err, "NewDB should not fail")
 	defer func() { _ = db.Close() }()
 

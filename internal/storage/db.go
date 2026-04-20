@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // Required for SQLite driver registration
+
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/ownutil"
 )
 
 // ErrPostNotFound is returned when a post is not found in the database.
@@ -124,8 +127,10 @@ func (db *DB) runMigrations(ctx context.Context) error {
 //   - dbPath: path to the SQLite database file
 //
 // Returns a pointer to the initialized DB and any error encountered.
-func NewDB(ctx context.Context, dbPath string) (*DB, error) {
-	conn, err := openAndInitializeDB(ctx, dbPath)
+func NewDB(ctx context.Context, dbPath string, owner *ownutil.Owner) (*DB, error) {
+	logger := slog.Default()
+
+	conn, err := openAndInitializeDB(ctx, dbPath, owner, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -142,13 +147,28 @@ func NewDB(ctx context.Context, dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to ensure hash column: %w; close error: %v", err, cerr)
 	}
 
+	if err := owner.Chown(dbPath); err != nil {
+		logger.Warn("failed to chown database file", "path", dbPath, "error", err)
+	}
+
+	for _, suffix := range []string{"-wal", "-shm"} {
+		auxPath := dbPath + suffix
+		if _, statErr := os.Stat(auxPath); statErr == nil {
+			if chownErr := owner.Chown(auxPath); chownErr != nil {
+				logger.Warn("failed to chown database auxiliary file", "path", auxPath, "error", chownErr)
+			}
+		}
+	}
+
 	return db, nil
 }
 
-func openAndInitializeDB(ctx context.Context, dbPath string) (*sql.DB, error) {
+func openAndInitializeDB(ctx context.Context, dbPath string, owner *ownutil.Owner, logger *slog.Logger) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return nil, fmt.Errorf("failed to create database directory: %w", err)
+	if dir != "." && dir != "" && dir != "/" {
+		if err := owner.ChownMkdirAllContext(ctx, dir, 0750, logger); err != nil {
+			return nil, fmt.Errorf("failed to create database directory: %w", err)
+		}
 	}
 
 	conn, err := sql.Open("sqlite3", dbPath)
@@ -362,8 +382,7 @@ func (db *DB) populatePostFromNullFields(post *Post, title, subreddit, author, u
 
 // IsDownloaded checks if a post has been downloaded.
 func (db *DB) IsDownloaded(ctx context.Context, id string) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?)`
-
+	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE id = ?)` //nolint:gosec
 	var exists bool
 	err := db.conn.QueryRowContext(ctx, query, id).Scan(&exists)
 	if err != nil {
