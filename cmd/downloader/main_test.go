@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1323,4 +1324,457 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 	}
 
 	t.Logf("Full sync correctly used higher fetch limit (upvoted=%d, saved=%d)", mockClient.upvotedLimit, mockClient.savedLimit)
+}
+
+// ============================================================================
+// PUID/PGID CONFIGURATION TESTS
+// ============================================================================
+
+func TestPUIDPGID_NoOp(t *testing.T) {
+	owner, err := ownutil.NewOwner(0, 0)
+	require.NoError(t, err, "Failed to create Owner with zero values")
+
+	assert.True(t, owner.IsNoOp(), "Expected IsNoOp() to return true for zero values")
+	assert.Equal(t, 0, owner.GetUID(), "Expected UID to be 0")
+	assert.Equal(t, 0, owner.GetGID(), "Expected GID to be 0")
+}
+
+func TestPUIDPGID_PartialZero(t *testing.T) {
+	tests := []struct {
+		name     string
+		uid      int
+		gid      int
+		wantNoOp bool
+	}{
+		{"UID zero", 0, 1000, false},
+		{"GID zero", 1000, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			owner, err := ownutil.NewOwner(tt.uid, tt.gid)
+			require.NoError(t, err, "Failed to create Owner")
+
+			assert.Equal(t, tt.wantNoOp, owner.IsNoOp(), "IsNoOp() mismatch")
+			assert.Equal(t, tt.uid, owner.GetUID(), "UID mismatch")
+			assert.Equal(t, tt.gid, owner.GetGID(), "GID mismatch")
+		})
+	}
+}
+
+func TestPUIDPGID_Normal(t *testing.T) {
+	owner, err := ownutil.NewOwner(1000, 1000)
+	require.NoError(t, err, "Failed to create Owner")
+
+	assert.False(t, owner.IsNoOp(), "Expected IsNoOp() to return false for non-zero values")
+	assert.Equal(t, 1000, owner.GetUID(), "Expected UID to be 1000")
+	assert.Equal(t, 1000, owner.GetGID(), "Expected GID to be 1000")
+}
+
+// ============================================================================
+// HELPER FUNCTION TESTS
+// ============================================================================
+
+func TestParseSlogLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		level    string
+		expected slog.Level
+	}{
+		{"debug", "debug", slog.LevelDebug},
+		{"info", "info", slog.LevelInfo},
+		{"warn", "warn", slog.LevelWarn},
+		{"warning", "warning", slog.LevelWarn},
+		{"error", "error", slog.LevelError},
+		{"unknown", "unknown", slog.LevelInfo},
+		{"empty", "", slog.LevelInfo},
+		{"DEBUG uppercase", "DEBUG", slog.LevelDebug},
+		{"Info mixed", "Info", slog.LevelInfo},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseSlogLevel(tt.level)
+			assert.Equal(t, tt.expected, got, "parseSlogLevel(%q) mismatch", tt.level)
+		})
+	}
+}
+
+func TestMaskToken(t *testing.T) {
+	tests := []struct {
+		name     string
+		token    string
+		expected string
+	}{
+		{"long token", "abc123xyz789", "****z789"},
+		{"short token", "abc", "****"},
+		{"empty token", "", "****"},
+		{"4 chars", "abcd", "****"},
+		{"5 chars", "abcde", "****bcde"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := maskToken(tt.token)
+			assert.Equal(t, tt.expected, got, "maskToken(%q) mismatch", tt.token)
+		})
+	}
+}
+
+func TestFindHashForPost_SingleItem(t *testing.T) {
+	hashes := map[string]string{
+		"post123": "hash1",
+		"post456": "hash2",
+	}
+
+	result := findHashForPost(hashes, "post123")
+	assert.Equal(t, "hash1", result, "Expected to find hash for post123")
+}
+
+func TestFindHashForPost_GalleryItems(t *testing.T) {
+	hashes := map[string]string{
+		"post123_0": "hash0",
+		"post123_1": "hash1",
+		"post123_2": "hash2",
+		"post456":   "hash3",
+	}
+
+	result := findHashForPost(hashes, "post123")
+	assert.NotEmpty(t, result, "Expected aggregate hash for gallery post")
+	assert.NotEqual(t, "hash0", result, "Expected aggregate hash, not single item hash")
+}
+
+func TestFindHashForPost_Missing(t *testing.T) {
+	hashes := map[string]string{
+		"post456": "hash1",
+	}
+
+	result := findHashForPost(hashes, "post123")
+	assert.Empty(t, result, "Expected empty string for missing post")
+}
+
+func TestFindHashForPost_SingleGalleryItem(t *testing.T) {
+	hashes := map[string]string{
+		"post123_0": "hash0",
+	}
+
+	result := findHashForPost(hashes, "post123")
+	assert.Equal(t, "hash0", result, "Expected single item hash for gallery with one item")
+}
+
+func TestAggregateItemHashes_Determinism(t *testing.T) {
+	// Verify that unsorted input produces the same hash as sorted input
+	hashes := []itemHash{
+		{hash: "hash2", index: 2},
+		{hash: "hash0", index: 0},
+		{hash: "hash1", index: 1},
+	}
+
+	sortedHash := aggregateItemHashes([]itemHash{
+		{hash: "hash0", index: 0},
+		{hash: "hash1", index: 1},
+		{hash: "hash2", index: 2},
+	})
+
+	unsortedHash := aggregateItemHashes(hashes)
+
+	assert.Equal(t, sortedHash, unsortedHash, "Unsorted input should produce same hash as sorted input")
+}
+
+func TestAggregateItemHashes(t *testing.T) {
+	tests := []struct {
+		name   string
+		hashes []itemHash
+	}{
+		{
+			name: "single item",
+			hashes: []itemHash{
+				{hash: "hash0", index: 0},
+			},
+		},
+		{
+			name: "multiple items",
+			hashes: []itemHash{
+				{hash: "hash0", index: 0},
+				{hash: "hash1", index: 1},
+				{hash: "hash2", index: 2},
+			},
+		},
+		{
+			name: "unsorted input",
+			hashes: []itemHash{
+				{hash: "hash2", index: 2},
+				{hash: "hash0", index: 0},
+				{hash: "hash1", index: 1},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := aggregateItemHashes(tt.hashes)
+			assert.NotEmpty(t, result, "Expected non-empty aggregate hash")
+			assert.Len(t, result, 64, "Expected SHA256 hex string (64 chars)")
+		})
+	}
+}
+
+func TestFilterCompletePosts_GalleryComplete(t *testing.T) {
+	// Test gallery post where all items are downloaded
+	items := []downloader.Downloadable{
+		{PostID: "post1"},
+		{PostID: "post1"},
+		{PostID: "post1"},
+	}
+	hashes := map[string]string{
+		"post1_0": "hash0",
+		"post1_1": "hash1",
+		"post1_2": "hash2",
+	}
+	newPosts := []storage.Post{
+		{ID: "post1", Title: "Post 1"},
+	}
+
+	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
+
+	assert.Len(t, complete, 1, "Expected 1 complete post (gallery fully downloaded)")
+	assert.Len(t, incomplete, 0, "Expected 0 incomplete posts")
+}
+
+func TestFilterCompletePosts_ExcludesDuplicateKeys(t *testing.T) {
+	// Test that _duplicate keys are excluded from actual count
+	items := []downloader.Downloadable{
+		{PostID: "post1"},
+	}
+	hashes := map[string]string{
+		"post1":          "hash1",
+		"post1_duplicate": "hash2", // Should be excluded
+	}
+	newPosts := []storage.Post{
+		{ID: "post1", Title: "Post 1"},
+	}
+
+	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
+
+	assert.Len(t, complete, 1, "Expected 1 complete post (_duplicate keys should be excluded)")
+	assert.Len(t, incomplete, 0, "Expected 0 incomplete posts")
+}
+
+func TestFilterCompletePosts_Complete(t *testing.T) {
+	items := []downloader.Downloadable{
+		{PostID: "post1"},
+		{PostID: "post2"},
+	}
+	hashes := map[string]string{
+		"post1": "hash1",
+		"post2": "hash2",
+	}
+	newPosts := []storage.Post{
+		{ID: "post1", Title: "Post 1"},
+		{ID: "post2", Title: "Post 2"},
+	}
+
+	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
+
+	assert.Len(t, complete, 2, "Expected 2 complete posts")
+	assert.Len(t, incomplete, 0, "Expected 0 incomplete posts")
+}
+
+func TestFilterCompletePosts_Incomplete(t *testing.T) {
+	items := []downloader.Downloadable{
+		{PostID: "post1"},
+		{PostID: "post2"},
+		{PostID: "post3"},
+	}
+	hashes := map[string]string{
+		"post1": "hash1",
+		// post2 missing
+		// post3 missing
+	}
+	newPosts := []storage.Post{
+		{ID: "post1", Title: "Post 1"},
+		{ID: "post2", Title: "Post 2"},
+		{ID: "post3", Title: "Post 3"},
+	}
+
+	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
+
+	assert.Len(t, complete, 1, "Expected 1 complete post")
+	assert.Len(t, incomplete, 2, "Expected 2 incomplete posts")
+}
+
+func TestFilterCompletePosts_GalleryPartial(t *testing.T) {
+	items := []downloader.Downloadable{
+		{PostID: "post1"},
+		{PostID: "post1"},
+		{PostID: "post1"},
+	}
+	hashes := map[string]string{
+		"post1_0": "hash0",
+		"post1_1": "hash1",
+		// post1_2 missing
+	}
+	newPosts := []storage.Post{
+		{ID: "post1", Title: "Post 1"},
+	}
+
+	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
+
+	assert.Len(t, complete, 0, "Expected 0 complete posts (gallery incomplete)")
+	assert.Len(t, incomplete, 1, "Expected 1 incomplete post")
+}
+
+func TestSaveCyclePosts_CompleteOnly(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
+	require.NoError(t, err, "Failed to create database")
+	defer func() { _ = db.Close() }()
+
+	slogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	completePosts := []storage.Post{
+		{ID: "post1", Title: "Post 1", DownloadedAt: time.Now()},
+	}
+	hashes := map[string]string{
+		"post1": "hash1",
+	}
+
+	err = saveCyclePosts(ctx, db, completePosts, nil, hashes, slogLogger)
+	assert.NoError(t, err, "saveCyclePosts should succeed")
+
+	// Verify post was saved
+	savedPost, err := db.GetPost(ctx, "post1")
+	require.NoError(t, err, "Failed to get saved post")
+	require.NotNil(t, savedPost, "Saved post should exist")
+	assert.Equal(t, "hash1", savedPost.Hash, "Hash should match")
+}
+
+func TestSaveCyclePosts_WithIncomplete(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
+	require.NoError(t, err, "Failed to create database")
+	defer func() { _ = db.Close() }()
+
+	slogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	completePosts := []storage.Post{
+		{ID: "post1", Title: "Post 1", DownloadedAt: time.Now()},
+	}
+	incompletePosts := []storage.Post{
+		{ID: "post2", Title: "Post 2", RetryCount: 0},
+	}
+	hashes := map[string]string{
+		"post1": "hash1",
+	}
+
+	err = saveCyclePosts(ctx, db, completePosts, incompletePosts, hashes, slogLogger)
+	assert.NoError(t, err, "saveCyclePosts should succeed")
+
+	// Verify complete post was saved
+	savedComplete, err := db.GetPost(ctx, "post1")
+	require.NoError(t, err, "Failed to get complete post")
+	require.NotNil(t, savedComplete, "Complete post should exist")
+
+	// Verify incomplete post was saved with retry tracking
+	savedIncomplete, err := db.GetPost(ctx, "post2")
+	require.NoError(t, err, "Failed to get incomplete post")
+	require.NotNil(t, savedIncomplete, "Incomplete post should exist")
+	assert.Greater(t, savedIncomplete.RetryCount, 0, "Retry count should be incremented")
+	assert.Equal(t, "incomplete_download", savedIncomplete.LastError, "Last error should be set")
+}
+
+func TestClassifyStepError_DeadlineExceeded(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	fatal, wrapped := classifyStepError(ctx, "test step", ctx.Err())
+
+	assert.True(t, fatal, "Expected deadline exceeded to be fatal")
+	assert.Error(t, wrapped, "Expected wrapped error")
+	assert.ErrorIs(t, wrapped, context.DeadlineExceeded, "Expected context.DeadlineExceeded in error chain")
+}
+
+func TestClassifyStepError_ContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	fatal, wrapped := classifyStepError(ctx, "test step", ctx.Err())
+
+	assert.True(t, fatal, "Expected context cancellation to be fatal")
+	assert.Error(t, wrapped, "Expected wrapped error")
+	assert.ErrorIs(t, wrapped, context.Canceled, "Expected context.Canceled in error chain")
+}
+
+func TestClassifyStepError_NoError(t *testing.T) {
+	ctx := context.Background()
+
+	fatal, wrapped := classifyStepError(ctx, "test step", nil)
+
+	assert.False(t, fatal, "Expected no error to be non-fatal")
+	assert.NoError(t, wrapped, "Expected nil wrapped error")
+}
+
+func TestClassifyStepError_NonContextError_NonFatal(t *testing.T) {
+	ctx := context.Background()
+	nonFatalErr := errors.New("non-fatal error")
+
+	fatal, wrapped := classifyStepError(ctx, "test step", nonFatalErr)
+
+	assert.False(t, fatal, "Expected non-context error to be non-fatal")
+	assert.Nil(t, wrapped, "Expected nil wrapped error for non-fatal")
+}
+
+func TestClassifyStepError_NonContextError(t *testing.T) {
+	ctx := context.Background()
+	nonFatalErr := errors.New("non-fatal error")
+
+	fatal, wrapped := classifyStepError(ctx, "test step", nonFatalErr)
+
+	assert.False(t, fatal, "Expected non-context error to be non-fatal")
+	assert.Nil(t, wrapped, "Expected nil wrapped error for non-fatal")
+}
+
+func TestFinalizeFullSyncIfNeeded_NotFullSync(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
+	require.NoError(t, err, "Failed to create database")
+	defer func() { _ = db.Close() }()
+
+	slogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	err = finalizeFullSyncIfNeeded(ctx, db, false, slogLogger)
+	assert.NoError(t, err, "finalizeFullSyncIfNeeded should return nil when !isFullSync")
+}
+
+func TestFinalizeFullSyncIfNeeded_FullSync(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+
+	db, err := storage.NewDB(ctx, dbPath, &ownutil.Owner{})
+	require.NoError(t, err, "Failed to create database")
+	defer func() { _ = db.Close() }()
+
+	// Set full_sync_once to pending
+	err = db.SetMetadata(ctx, "full_sync_once", storage.MetadataValuePending)
+	require.NoError(t, err, "Failed to set full_sync_once")
+
+	slogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	err = finalizeFullSyncIfNeeded(ctx, db, true, slogLogger)
+	assert.NoError(t, err, "finalizeFullSyncIfNeeded should succeed")
+
+	// Verify metadata was updated
+	value, err := db.GetMetadata(ctx, "full_sync_once")
+	require.NoError(t, err, "Failed to get metadata")
+	assert.Equal(t, fullSyncCompleted, value, "Expected full_sync_once to be completed")
 }

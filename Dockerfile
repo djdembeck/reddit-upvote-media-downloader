@@ -1,6 +1,8 @@
-ARG ALPINE_VERSION=3.19
+# Build argument for Alpine version - used in both builder and runtime stages
+# Update this to change the base Alpine version for the entire image
+ARG ALPINE_VERSION=3.20
 
-# Build stage
+# Build stage: compile Go binary with CGO enabled for SQLite support
 FROM golang:1.23-alpine${ALPINE_VERSION} AS builder
 
 # Install build dependencies
@@ -18,7 +20,8 @@ COPY . .
 # Build with CGO enabled for SQLite
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o reddit-downloader cmd/downloader/main.go
 
-# Runtime stage
+# Runtime stage: minimal Alpine image with required runtime dependencies
+# Uses same ALPINE_VERSION as builder for compatibility
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk --no-cache add \
