@@ -502,10 +502,12 @@ func run() error {
 	}
 
 	if owner.IsNoOp() {
-		slogLogger.Info("PUID/PGID not set — files will be owned by the container user")
+		slogLogger.Warn("PUID/PGID both zero — files will be owned by the current process user; set PUID/PGID to match your host user (e.g. 1000:1000)")
 	} else if owner.GetUID() == 0 || owner.GetGID() == 0 {
 		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field",
 			"PUID", owner.GetUID(), "PGID", owner.GetGID())
+	} else {
+		slogLogger.Info("file ownership configured", "PUID", owner.GetUID(), "PGID", owner.GetGID())
 	}
 
 	// Create context with cancellation
