@@ -501,12 +501,13 @@ func run() error {
 		return fmt.Errorf("invalid PUID/PGID: %w", err)
 	}
 
-	if owner.IsNoOp() {
+	switch {
+	case owner.IsNoOp():
 		slogLogger.Warn("PUID/PGID both zero — files will be owned by the current process user; set PUID/PGID to match your host user (e.g. 1000:1000)")
-	} else if owner.GetUID() == 0 || owner.GetGID() == 0 {
+	case owner.GetUID() == 0 || owner.GetGID() == 0:
 		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field",
 			"PUID", owner.GetUID(), "PGID", owner.GetGID())
-	} else {
+	default:
 		slogLogger.Info("file ownership configured", "PUID", owner.GetUID(), "PGID", owner.GetGID())
 	}
 
