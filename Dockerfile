@@ -22,10 +22,10 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o reddit-downloader
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk --no-cache add \
-    ca-certificates=20241121-r1 \
-    sqlite-libs=3.44.2-r0 \
-    su-exec=0.2-r1 \
-    shadow=4.14.2-r0
+    ca-certificates \
+    sqlite-libs \
+    su-exec \
+    shadow
 
 WORKDIR /app
 
