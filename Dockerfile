@@ -1,7 +1,7 @@
 ARG ALPINE_VERSION=3.19
 
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.23-alpine${ALPINE_VERSION} AS builder
 
 # Install build dependencies
 RUN apk add --no-cache gcc musl-dev sqlite-dev
@@ -34,6 +34,7 @@ COPY --from=builder /app/reddit-downloader .
 
 # Copy entrypoint script
 COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
 # Create non-root user and data directory
 RUN addgroup -g 1000 appgroup && \
