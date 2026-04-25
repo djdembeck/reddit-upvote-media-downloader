@@ -46,8 +46,12 @@ ensure_user() {
 
 chown_data_dirs() {
     if [ -d /data ]; then
-        current_owner="$(stat -c '%U:%G' /data 2>/dev/null || echo '?')"
-        if [ "$current_owner" != "appuser:appgroup" ]; then
+        # Use numeric IDs to avoid false mismatches with host-mounted volumes
+        current_numeric="$(stat -c '%u:%g' /data 2>/dev/null || echo '?:?')"
+        expected_uid="$(id -u appuser 2>/dev/null || echo 1000)"
+        expected_gid="$(id -g appgroup 2>/dev/null || echo 1000)"
+        expected_numeric="${expected_uid}:${expected_gid}"
+        if [ "$current_numeric" != "$expected_numeric" ]; then
             chown -R appuser:appgroup /data
         fi
     fi

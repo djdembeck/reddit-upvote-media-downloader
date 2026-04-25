@@ -20,6 +20,8 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o reddit-downloader
 FROM alpine:latest
 
 # Install ca-certificates, sqlite-libs, and su-exec for privilege dropping
+# Use fixed Alpine version for reproducible builds
+ARG ALPINE_VERSION=3.19
 RUN apk --no-cache add ca-certificates sqlite-libs su-exec shadow
 
 WORKDIR /app
