@@ -1,3 +1,5 @@
+ARG ALPINE_VERSION=3.19
+
 # Build stage
 FROM golang:1.23-alpine AS builder
 
@@ -17,7 +19,6 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o reddit-downloader cmd/downloader/main.go
 
 # Runtime stage
-ARG ALPINE_VERSION=3.19
 FROM alpine:${ALPINE_VERSION}
 
 RUN apk --no-cache add \
