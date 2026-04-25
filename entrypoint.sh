@@ -4,6 +4,23 @@ set -e
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
+validate_puid_pgid() {
+    case "$PUID" in
+        ''|*[!0-9]*) echo "Error: PUID must be a positive integer, got '$PUID'" >&2; exit 1 ;;
+    esac
+    case "$PGID" in
+        ''|*[!0-9]*) echo "Error: PGID must be a positive integer, got '$PGID'" >&2; exit 1 ;;
+    esac
+    if [ "$PUID" -eq 0 ]; then
+        echo "Error: PUID=0 would run as root — set PUID to your host user UID (e.g. 1000)" >&2
+        exit 1
+    fi
+    if [ "$PGID" -eq 0 ]; then
+        echo "Error: PGID=0 would use root group — set PGID to your host group GID (e.g. 1000)" >&2
+        exit 1
+    fi
+}
+
 ensure_group() {
     if getent group appgroup > /dev/null 2>&1; then
         current_gid="$(getent group appgroup | cut -d: -f3)"
@@ -29,7 +46,10 @@ ensure_user() {
 
 chown_data_dirs() {
     if [ -d /data ]; then
-        chown -R appuser:appgroup /data
+        current_owner="$(stat -c '%U:%G' /data 2>/dev/null || echo '?')"
+        if [ "$current_owner" != "appuser:appgroup" ]; then
+            chown -R appuser:appgroup /data
+        fi
     fi
 }
 
@@ -38,6 +58,7 @@ drop_privileges_and_exec() {
     exec su-exec appuser:appgroup "$@"
 }
 
+validate_puid_pgid
 ensure_group
 ensure_user
 chown_data_dirs
