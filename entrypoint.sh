@@ -48,9 +48,7 @@ chown_data_dirs() {
     if [ -d /data ]; then
         # Use numeric IDs to avoid false mismatches with host-mounted volumes
         current_numeric="$(stat -c '%u:%g' /data 2>/dev/null || echo '?:?')"
-        expected_uid="$(id -u appuser 2>/dev/null || echo 1000)"
-        expected_gid="$(id -g appgroup 2>/dev/null || echo 1000)"
-        expected_numeric="${expected_uid}:${expected_gid}"
+        expected_numeric="${PUID}:${PGID}"
         if [ "$current_numeric" != "$expected_numeric" ]; then
             chown -R appuser:appgroup /data
         fi

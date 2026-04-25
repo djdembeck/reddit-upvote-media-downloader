@@ -503,9 +503,9 @@ func run() error {
 
 	switch {
 	case owner.IsNoOp():
-		slogLogger.Warn("PUID/PGID both zero — files will be owned by the current process user; set PUID/PGID to match your host user (e.g. 1000:1000)")
+		slogLogger.Warn("PUID/PGID both zero — files will be owned by the current process user; set PUID/PGID to match your host user (e.g. 1000:1000). Note: When running via the container entrypoint, PUID=0 or PGID=0 causes the entrypoint to exit; these warnings apply mainly to direct binary runs.")
 	case owner.GetUID() == 0 || owner.GetGID() == 0:
-		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field",
+		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field (applies mainly to direct binary runs; container entrypoint exits on PUID=0/PGID=0)",
 			"PUID", owner.GetUID(), "PGID", owner.GetGID())
 	default:
 		slogLogger.Info("file ownership configured", "PUID", owner.GetUID(), "PGID", owner.GetGID())
