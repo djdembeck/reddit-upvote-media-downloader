@@ -82,7 +82,7 @@ test_validate_puid_pgid_invalid() {
     
     export PUID=""
     export PGID=1000
-    result=$(sh -c '. ./entrypoint.sh && echo "$PUID"' 2>&1)
+    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid && echo "$PUID"' 2>&1)
     exit_code=$?
     
     if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
@@ -93,7 +93,7 @@ test_validate_puid_pgid_invalid() {
     
     export PUID=1000
     export PGID=""
-    result=$(sh -c '. ./entrypoint.sh && echo "$PGID"' 2>&1)
+    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid && echo "$PGID"' 2>&1)
     exit_code=$?
     
     if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
