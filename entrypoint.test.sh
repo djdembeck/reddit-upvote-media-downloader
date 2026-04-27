@@ -82,13 +82,13 @@ test_validate_puid_pgid_invalid() {
     
     export PUID=""
     export PGID=1000
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    result=$(sh -c '. ./entrypoint.sh && echo "$PUID"' 2>&1)
     exit_code=$?
     
-    if [ $exit_code -eq 0 ]; then
-        pass "validate_puid_pgid accepts empty PUID (uses default 1000)"
+    if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
+        pass "validate_puid_pgid accepts empty PUID and applies default 1000"
     else
-        fail "validate_puid_pgid should accept empty PUID and use default (exit_code=$exit_code, result=$result)"
+        fail "validate_puid_pgid should accept empty PUID and set default to 1000 (exit_code=$exit_code, result=$result)"
     fi
 }
 

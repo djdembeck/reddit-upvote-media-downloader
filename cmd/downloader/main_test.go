@@ -1426,8 +1426,9 @@ func TestFindHashForPost_GalleryItems(t *testing.T) {
 	}
 
 	result := findHashForPost(hashes, "post123")
-	assert.NotEmpty(t, result, "Expected aggregate hash for gallery post")
-	assert.NotEqual(t, "hash0", result, "Expected aggregate hash, not single item hash")
+	// Expected: SHA256 of comma-joined hashes in index order: "hash0,hash1,hash2"
+	expectedHash := "36fbcd265f64ea6c5db78a36425420ba080bf54eb15a48d7465c6c8853907845"
+	assert.Equal(t, expectedHash, result, "Expected exact aggregate hash for gallery post with items 0,1,2")
 }
 
 func TestFindHashForPost_Missing(t *testing.T) {
