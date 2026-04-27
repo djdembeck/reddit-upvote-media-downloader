@@ -1330,24 +1330,19 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 // PUID/PGID CONFIGURATION TESTS
 // ============================================================================
 
-func TestPUIDPGID_NoOp(t *testing.T) {
-	owner, err := ownutil.NewOwner(0, 0)
-	require.NoError(t, err, "Failed to create Owner with zero values")
-
-	assert.True(t, owner.IsNoOp(), "Expected IsNoOp() to return true for zero values")
-	assert.Equal(t, 0, owner.GetUID(), "Expected UID to be 0")
-	assert.Equal(t, 0, owner.GetGID(), "Expected GID to be 0")
-}
-
-func TestPUIDPGID_PartialZero(t *testing.T) {
+func TestPUIDPGID_TableDriven(t *testing.T) {
 	tests := []struct {
-		name     string
-		uid      int
-		gid      int
-		wantNoOp bool
+		name          string
+		uid           int
+		gid           int
+		wantNoOp      bool
+		wantUID       int
+		wantGID       int
 	}{
-		{"UID zero", 0, 1000, false},
-		{"GID zero", 1000, 0, false},
+		{"NoOp (0,0)", 0, 0, true, 0, 0},
+		{"Partial-zero (0,1000)", 0, 1000, false, 0, 1000},
+		{"Partial-zero (1000,0)", 1000, 0, false, 1000, 0},
+		{"Normal (1000,1000)", 1000, 1000, false, 1000, 1000},
 	}
 
 	for _, tt := range tests {
@@ -1356,19 +1351,10 @@ func TestPUIDPGID_PartialZero(t *testing.T) {
 			require.NoError(t, err, "Failed to create Owner")
 
 			assert.Equal(t, tt.wantNoOp, owner.IsNoOp(), "IsNoOp() mismatch")
-			assert.Equal(t, tt.uid, owner.GetUID(), "UID mismatch")
-			assert.Equal(t, tt.gid, owner.GetGID(), "GID mismatch")
+			assert.Equal(t, tt.wantUID, owner.GetUID(), "UID mismatch")
+			assert.Equal(t, tt.wantGID, owner.GetGID(), "GID mismatch")
 		})
 	}
-}
-
-func TestPUIDPGID_Normal(t *testing.T) {
-	owner, err := ownutil.NewOwner(1000, 1000)
-	require.NoError(t, err, "Failed to create Owner")
-
-	assert.False(t, owner.IsNoOp(), "Expected IsNoOp() to return false for non-zero values")
-	assert.Equal(t, 1000, owner.GetUID(), "Expected UID to be 1000")
-	assert.Equal(t, 1000, owner.GetGID(), "Expected GID to be 1000")
 }
 
 // ============================================================================
@@ -1557,7 +1543,7 @@ func TestFilterCompletePosts_ExcludesDuplicateKeys(t *testing.T) {
 	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
 
 	assert.Len(t, complete, 1, "Expected 1 complete post (_duplicate keys should be excluded)")
-	assert.Len(t, incomplete, 0, "Expected 0 incomplete posts")
+	assert.Empty(t, incomplete, "Expected 0 incomplete posts")
 }
 
 func TestFilterCompletePosts_Complete(t *testing.T) {
@@ -1643,7 +1629,7 @@ func TestSaveCyclePosts_CompleteOnly(t *testing.T) {
 	}
 
 	err = saveCyclePosts(ctx, db, completePosts, nil, hashes, slogLogger)
-	assert.NoError(t, err, "saveCyclePosts should succeed")
+	require.NoError(t, err, "saveCyclePosts should succeed")
 
 	// Verify post was saved
 	savedPost, err := db.GetPost(ctx, "post1")
@@ -1674,7 +1660,7 @@ func TestSaveCyclePosts_WithIncomplete(t *testing.T) {
 	}
 
 	err = saveCyclePosts(ctx, db, completePosts, incompletePosts, hashes, slogLogger)
-	assert.NoError(t, err, "saveCyclePosts should succeed")
+	require.NoError(t, err, "saveCyclePosts should succeed")
 
 	// Verify complete post was saved
 	savedComplete, err := db.GetPost(ctx, "post1")
