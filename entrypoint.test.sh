@@ -22,7 +22,8 @@ test_validate_puid_pgid_valid() {
     export PUID=1000
     export PGID=1000
     
-    if sh -c '. ./entrypoint.sh && validate_puid_pgid'; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR"; then
         pass "validate_puid_pgid accepts valid positive integers"
     else
         fail "validate_puid_pgid should accept valid positive integers"
@@ -34,7 +35,8 @@ test_validate_puid_pgid_zero() {
     
     export PUID=0
     export PGID=0
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -ne 0 ] && echo "$result" | grep -q "Error: PUID=0"; then
@@ -45,7 +47,8 @@ test_validate_puid_pgid_zero() {
     
     export PUID=1000
     export PGID=0
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -ne 0 ] && echo "$result" | grep -q "Error: PGID=0"; then
@@ -60,7 +63,8 @@ test_validate_puid_pgid_invalid() {
     
     export PUID="abc"
     export PGID=1000
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -ne 0 ] && echo "$result" | grep -q "Error: PUID must be a positive integer"; then
@@ -71,7 +75,8 @@ test_validate_puid_pgid_invalid() {
     
     export PUID=1000
     export PGID="xyz"
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -ne 0 ] && echo "$result" | grep -q "Error: PGID must be a positive integer"; then
@@ -82,7 +87,8 @@ test_validate_puid_pgid_invalid() {
     
     export PUID=""
     export PGID=1000
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid && echo "$PUID"' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid && echo "$PUID"' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
@@ -93,7 +99,8 @@ test_validate_puid_pgid_invalid() {
     
     export PUID=1000
     export PGID=""
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid && echo "$PGID"' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid && echo "$PGID"' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
@@ -108,7 +115,8 @@ test_validate_puid_pgid_negative() {
     
     export PUID=-1
     export PGID=1000
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -ne 0 ] && echo "$result" | grep -q "Error: PUID must be a positive integer"; then
@@ -123,13 +131,42 @@ test_validate_puid_pgid_mixed_chars() {
     
     export PUID="1000abc"
     export PGID=1000
-    result=$(sh -c '. ./entrypoint.sh && validate_puid_pgid' 2>&1)
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid' _ "$SCRIPT_DIR" 2>&1)
     exit_code=$?
     
     if [ $exit_code -ne 0 ] && echo "$result" | grep -q "Error: PUID must be a positive integer"; then
         pass "validate_puid_pgid rejects mixed alphanumeric PUID"
     else
         fail "validate_puid_pgid should reject mixed alphanumeric PUID (exit_code=$exit_code, result=$result)"
+    fi
+}
+
+test_validate_puid_pgid_unset() {
+    echo "Testing validate_puid_pgid with unset values..."
+    
+    unset PUID
+    export PGID=1000
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid && echo "$PUID"' _ "$SCRIPT_DIR" 2>&1)
+    exit_code=$?
+    
+    if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
+        pass "validate_puid_pgid accepts unset PUID and applies default 1000"
+    else
+        fail "validate_puid_pgid should accept unset PUID and set default to 1000 (exit_code=$exit_code, result=$result)"
+    fi
+    
+    export PUID=1000
+    unset PGID
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    result=$(sh -c '. "$1/entrypoint.sh" && validate_puid_pgid && echo "$PGID"' _ "$SCRIPT_DIR" 2>&1)
+    exit_code=$?
+    
+    if [ $exit_code -eq 0 ] && [ "$result" = "1000" ]; then
+        pass "validate_puid_pgid accepts unset PGID and applies default 1000"
+    else
+        fail "validate_puid_pgid should accept unset PGID and set default to 1000 (exit_code=$exit_code, result=$result)"
     fi
 }
 
@@ -143,6 +180,7 @@ test_validate_puid_pgid_zero
 test_validate_puid_pgid_invalid
 test_validate_puid_pgid_negative
 test_validate_puid_pgid_mixed_chars
+test_validate_puid_pgid_unset
 
 echo ""
 echo "================================"
