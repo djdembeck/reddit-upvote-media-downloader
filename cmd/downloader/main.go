@@ -187,8 +187,7 @@ func setupLogger(cfg *config.Config) *slog.Logger {
 	return slogLogger
 }
 
-// setupDownloader creates and configures the downloader with output directory, concurrency,
-// download delay, logger, and ownership settings. Returns a ready-to-use Downloader instance.
+// setupDownloader creates and configures the downloader.
 func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger, owner *ownutil.Owner) *downloader.Downloader {
 	downloaderConfig := downloader.Config{
 		OutputDir:     cfg.Storage.OutputDir,
@@ -836,14 +835,7 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 // runCycle performs one complete download cycle: fetch posts, filter new ones, download, and save.
 // Returns cycleError for fatal errors (output dir creation, download subsystem failures).
 // Per-item extraction/download failures are logged but don't abort the cycle.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - db: Database for storing post metadata
-//   - client: Reddit API client for fetching posts
-//   - dl: Downloader instance for media downloads
-//   - cfg: Configuration for fetch limits and retry settings
-//   - slogLogger: Structured logger for contextual logging. Must be non-nil.
+// slogLogger must be non-nil.
 //
 //nolint:cyclop
 func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {

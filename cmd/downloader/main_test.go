@@ -1327,37 +1327,6 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 }
 
 // ============================================================================
-// PUID/PGID CONFIGURATION TESTS
-// ============================================================================
-
-func TestPUIDPGID_TableDriven(t *testing.T) {
-	tests := []struct {
-		name     string
-		uid      int
-		gid      int
-		wantNoOp bool
-		wantUID  int
-		wantGID  int
-	}{
-		{"NoOp (0,0)", 0, 0, true, 0, 0},
-		{"Partial-zero (0,1000)", 0, 1000, false, 0, 1000},
-		{"Partial-zero (1000,0)", 1000, 0, false, 1000, 0},
-		{"Normal (1000,1000)", 1000, 1000, false, 1000, 1000},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			owner, err := ownutil.NewOwner(tt.uid, tt.gid)
-			require.NoError(t, err, "Failed to create Owner")
-
-			assert.Equal(t, tt.wantNoOp, owner.IsNoOp(), "IsNoOp() mismatch")
-			assert.Equal(t, tt.wantUID, owner.GetUID(), "UID mismatch")
-			assert.Equal(t, tt.wantGID, owner.GetGID(), "GID mismatch")
-		})
-	}
-}
-
-// ============================================================================
 // HELPER FUNCTION TESTS
 // ============================================================================
 

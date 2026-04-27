@@ -66,12 +66,10 @@ ensure_user() {
     fi
 }
 
-# chown_data_dirs recursively changes ownership of /data to the configured PUID:PGID.
+# chown_data_dir recursively changes ownership of /data to the configured PUID:PGID.
 # Only performs chown if current ownership differs from expected PUID:PGID.
-# Uses numeric IDs consistently to avoid false mismatches with host-mounted volumes.
-chown_data_dirs() {
+chown_data_dir() {
     if [ -d /data ]; then
-        # Use numeric IDs to avoid false mismatches with host-mounted volumes
         current_numeric="$(stat -c '%u:%g' /data 2>/dev/null || echo '?:?')"
         expected_numeric="${PUID}:${PGID}"
         if [ "$current_numeric" != "$expected_numeric" ]; then
@@ -94,6 +92,6 @@ if [ "${0##*/}" = "entrypoint.sh" ]; then
     validate_puid_pgid
     ensure_group
     ensure_user
-    chown_data_dirs
+    chown_data_dir
     drop_privileges_and_exec "$@"
 fi
