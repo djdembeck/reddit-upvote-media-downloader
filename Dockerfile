@@ -22,7 +22,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o reddit-downloader
 
 # Runtime stage: minimal Alpine image with required runtime dependencies
 # Uses same ALPINE_VERSION as builder for compatibility
-FROM alpine:${ALPINE_VERSION}
+FROM alpine:${ALPINE_VERSION} AS runner
 
 RUN apk --no-cache add \
     ca-certificates \

@@ -31,6 +31,7 @@ test_validate_puid_pgid_valid() {
     
     # Source the validation function (main-guard prevents execution)
     . ./entrypoint.sh
+    validate_puid_pgid
     
     # If we reach here, validation passed
     pass "validate_puid_pgid accepts valid positive integers"

@@ -1538,7 +1538,7 @@ func TestFilterCompletePosts_GalleryComplete(t *testing.T) {
 	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
 
 	assert.Len(t, complete, 1, "Expected 1 complete post (gallery fully downloaded)")
-	assert.Len(t, incomplete, 0, "Expected 0 incomplete posts")
+	assert.Empty(t, incomplete, "Expected 0 incomplete posts")
 }
 
 func TestFilterCompletePosts_ExcludesDuplicateKeys(t *testing.T) {
@@ -1547,7 +1547,7 @@ func TestFilterCompletePosts_ExcludesDuplicateKeys(t *testing.T) {
 		{PostID: "post1"},
 	}
 	hashes := map[string]string{
-		"post1":          "hash1",
+		"post1":           "hash1",
 		"post1_duplicate": "hash2", // Should be excluded
 	}
 	newPosts := []storage.Post{
@@ -1685,7 +1685,7 @@ func TestSaveCyclePosts_WithIncomplete(t *testing.T) {
 	savedIncomplete, err := db.GetPost(ctx, "post2")
 	require.NoError(t, err, "Failed to get incomplete post")
 	require.NotNil(t, savedIncomplete, "Incomplete post should exist")
-	assert.Greater(t, savedIncomplete.RetryCount, 0, "Retry count should be incremented")
+	assert.Positive(t, savedIncomplete.RetryCount, "Retry count should be positive")
 	assert.Equal(t, "incomplete_download", savedIncomplete.LastError, "Last error should be set")
 }
 
@@ -1696,8 +1696,8 @@ func TestClassifyStepError_DeadlineExceeded(t *testing.T) {
 	fatal, wrapped := classifyStepError(ctx, "test step", ctx.Err())
 
 	assert.True(t, fatal, "Expected deadline exceeded to be fatal")
-	assert.Error(t, wrapped, "Expected wrapped error")
-	assert.ErrorIs(t, wrapped, context.DeadlineExceeded, "Expected context.DeadlineExceeded in error chain")
+	require.Error(t, wrapped, "Expected wrapped error")
+	require.ErrorIs(t, wrapped, context.DeadlineExceeded, "Expected context.DeadlineExceeded in error chain")
 }
 
 func TestClassifyStepError_ContextCanceled(t *testing.T) {
@@ -1707,8 +1707,8 @@ func TestClassifyStepError_ContextCanceled(t *testing.T) {
 	fatal, wrapped := classifyStepError(ctx, "test step", ctx.Err())
 
 	assert.True(t, fatal, "Expected context cancellation to be fatal")
-	assert.Error(t, wrapped, "Expected wrapped error")
-	assert.ErrorIs(t, wrapped, context.Canceled, "Expected context.Canceled in error chain")
+	require.Error(t, wrapped, "Expected wrapped error")
+	require.ErrorIs(t, wrapped, context.Canceled, "Expected context.Canceled in error chain")
 }
 
 func TestClassifyStepError_NoError(t *testing.T) {
@@ -1727,17 +1727,7 @@ func TestClassifyStepError_NonContextError_NonFatal(t *testing.T) {
 	fatal, wrapped := classifyStepError(ctx, "test step", nonFatalErr)
 
 	assert.False(t, fatal, "Expected non-context error to be non-fatal")
-	assert.Nil(t, wrapped, "Expected nil wrapped error for non-fatal")
-}
-
-func TestClassifyStepError_NonContextError(t *testing.T) {
-	ctx := context.Background()
-	nonFatalErr := errors.New("non-fatal error")
-
-	fatal, wrapped := classifyStepError(ctx, "test step", nonFatalErr)
-
-	assert.False(t, fatal, "Expected non-context error to be non-fatal")
-	assert.Nil(t, wrapped, "Expected nil wrapped error for non-fatal")
+	assert.NoError(t, wrapped, "Expected nil wrapped error for non-fatal")
 }
 
 func TestFinalizeFullSyncIfNeeded_NotFullSync(t *testing.T) {
