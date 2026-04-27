@@ -1332,12 +1332,12 @@ func TestE2E_FullSyncLimit(t *testing.T) {
 
 func TestPUIDPGID_TableDriven(t *testing.T) {
 	tests := []struct {
-		name          string
-		uid           int
-		gid           int
-		wantNoOp      bool
-		wantUID       int
-		wantGID       int
+		name     string
+		uid      int
+		gid      int
+		wantNoOp bool
+		wantUID  int
+		wantGID  int
 	}{
 		{"NoOp (0,0)", 0, 0, true, 0, 0},
 		{"Partial-zero (0,1000)", 0, 1000, false, 0, 1000},
@@ -1563,7 +1563,7 @@ func TestFilterCompletePosts_Complete(t *testing.T) {
 	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
 
 	assert.Len(t, complete, 2, "Expected 2 complete posts")
-	assert.Len(t, incomplete, 0, "Expected 0 incomplete posts")
+	assert.Empty(t, incomplete, "Expected 0 incomplete posts")
 }
 
 func TestFilterCompletePosts_Incomplete(t *testing.T) {
@@ -1606,7 +1606,7 @@ func TestFilterCompletePosts_GalleryPartial(t *testing.T) {
 
 	complete, incomplete := filterCompletePosts(items, hashes, newPosts)
 
-	assert.Len(t, complete, 0, "Expected 0 complete posts (gallery incomplete)")
+	assert.Empty(t, complete, "Expected 0 complete posts (gallery incomplete)")
 	assert.Len(t, incomplete, 1, "Expected 1 incomplete post")
 }
 
@@ -1747,7 +1747,7 @@ func TestFinalizeFullSyncIfNeeded_FullSync(t *testing.T) {
 	slogLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	err = finalizeFullSyncIfNeeded(ctx, db, true, slogLogger)
-	assert.NoError(t, err, "finalizeFullSyncIfNeeded should succeed")
+	require.NoError(t, err, "finalizeFullSyncIfNeeded should succeed")
 
 	// Verify metadata was updated
 	value, err := db.GetMetadata(ctx, "full_sync_once")
