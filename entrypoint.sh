@@ -17,24 +17,22 @@ set -e
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
-# validate_puid_pgid ensures PUID and PGID are positive integers and not zero.
-# Zero values would run the container as root, which is a security risk.
-# Exits with code 1 if validation fails.
+validate_id() {
+    name=$1
+    value=$2
+    id_type=$3
+    case "$value" in
+        ''|*[!0-9]*) echo "Error: $name must be a positive integer, got '$value'" >&2; exit 1 ;;
+    esac
+    if [ "$value" -eq 0 ]; then
+        echo "Error: $name=0 would run as root — set $name to your host $id_type (e.g. 1000)" >&2
+        exit 1
+    fi
+}
+
 validate_puid_pgid() {
-    case "$PUID" in
-        ''|*[!0-9]*) echo "Error: PUID must be a positive integer, got '$PUID'" >&2; exit 1 ;;
-    esac
-    case "$PGID" in
-        ''|*[!0-9]*) echo "Error: PGID must be a positive integer, got '$PGID'" >&2; exit 1 ;;
-    esac
-    if [ "$PUID" -eq 0 ]; then
-        echo "Error: PUID=0 would run as root — set PUID to your host user UID (e.g. 1000)" >&2
-        exit 1
-    fi
-    if [ "$PGID" -eq 0 ]; then
-        echo "Error: PGID=0 would use root group — set PGID to your host group GID (e.g. 1000)" >&2
-        exit 1
-    fi
+    validate_id PUID "$PUID" UID
+    validate_id PGID "$PGID" GID
 }
 
 # ensure_group creates or updates the appgroup with the specified PGID.
