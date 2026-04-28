@@ -26,9 +26,4 @@ services:
       - ./data:/data
       - ./.env:/.env:ro
     restart: unless-stopped
-    # Run once per hour using sleep loop
-    command: >
-      sh -c 'while true; do
-        ./reddit-downloader && echo "[$(date)] Download cycle complete." || echo "[$(date)] Download cycle failed.";
-        sleep 3600;
-      done'
+    command: ["./reddit-downloader"]
