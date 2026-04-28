@@ -29,7 +29,6 @@ import (
 
 const fullSyncCompleted = "completed"
 
-// parseSlogLevel converts a log level string to slog.Level.
 func parseSlogLevel(levelStr string) slog.Level {
 	switch strings.ToLower(levelStr) {
 	case "debug":
@@ -74,7 +73,6 @@ func (e *cycleError) Unwrap() error {
 	return e.cause
 }
 
-// buildTokenFromEnv builds an oauth2.Token from environment variables.
 func buildTokenFromEnv() *oauth2.Token {
 	accessToken := os.Getenv("REDDIT_ACCESS_TOKEN")
 	refreshToken := os.Getenv("REDDIT_REFRESH_TOKEN")
@@ -104,7 +102,6 @@ func buildTokenFromEnv() *oauth2.Token {
 	return nil
 }
 
-// maskToken masks a token showing only the last 4 characters.
 func maskToken(token string) string {
 	if len(token) > 4 {
 		return "****" + token[len(token)-4:]
@@ -112,7 +109,6 @@ func maskToken(token string) string {
 	return "****"
 }
 
-// setupTokenStore creates and initializes the token store with tokens from environment.
 func setupTokenStore(_ *config.Config) (*memoryTokenStore, error) {
 	tokenStore := &memoryTokenStore{}
 
@@ -129,7 +125,6 @@ func setupTokenStore(_ *config.Config) (*memoryTokenStore, error) {
 	return tokenStore, nil
 }
 
-// setupRedditClient creates and initializes the Reddit client.
 func setupRedditClient(cfg *config.Config, tokenStore *memoryTokenStore) (reddit.Client, error) {
 	redditConfig := &reddit.Config{
 		ClientID:     cfg.Reddit.ClientID,
@@ -148,7 +143,6 @@ func setupRedditClient(cfg *config.Config, tokenStore *memoryTokenStore) (reddit
 	return redditClient, nil
 }
 
-// setupLogger creates and configures the structured logger.
 func setupLogger(cfg *config.Config) *slog.Logger {
 	parsedLevel := parseSlogLevel(cfg.Log.Level)
 
@@ -186,7 +180,6 @@ func setupDownloader(cfg *config.Config, db *storage.DB, logger *slog.Logger, ow
 	return downloader.NewDownloader(downloaderConfig, db)
 }
 
-// findAndParseIndexHTML searches for and parses index.html in common locations.
 func findAndParseIndexHTML(ctx context.Context, parser *migration.HTMLParser, sourceDir string) error {
 	indexPaths := []struct {
 		path    string
@@ -217,8 +210,6 @@ func findAndParseIndexHTML(ctx context.Context, parser *migration.HTMLParser, so
 	return nil
 }
 
-// checkFullSyncStatus determines if full sync is needed and returns the fetch limit.
-//
 //nolint:unparam
 func checkFullSyncStatus(ctx context.Context, db *storage.DB, cfg *config.Config) (bool, int, error) {
 	fetchLimit := cfg.Download.FetchLimit
@@ -241,8 +232,6 @@ func checkFullSyncStatus(ctx context.Context, db *storage.DB, cfg *config.Config
 	return isFullSync, fetchLimit, nil
 }
 
-// filterNewPosts filters posts to include only new posts and posts eligible for retry.
-//
 //nolint:unparam
 func filterNewPosts(ctx context.Context, db *storage.DB, posts []storage.Post, cfg *config.Config) ([]storage.Post, error) {
 	var newPosts []storage.Post
@@ -267,7 +256,6 @@ func filterNewPosts(ctx context.Context, db *storage.DB, posts []storage.Post, c
 	return newPosts, nil
 }
 
-// saveDownloadedPosts saves downloaded posts to the database.
 func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Post, hashes map[string]string, slogLogger *slog.Logger) error {
 	var firstSaveErr error
 	for _, post := range posts {
@@ -291,7 +279,6 @@ func saveDownloadedPosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
-// saveIncompletePosts tracks posts that had extraction/download failures for retry.
 func saveIncompletePosts(ctx context.Context, db *storage.DB, posts []storage.Post, slogLogger *slog.Logger) error {
 	var firstSaveErr error
 	now := time.Now()
@@ -311,8 +298,6 @@ func saveIncompletePosts(ctx context.Context, db *storage.DB, posts []storage.Po
 	return firstSaveErr
 }
 
-// saveCyclePosts handles saving both complete and incomplete posts after a download cycle.
-// It returns a *cycleError on failure so the caller can decide whether to abort.
 func saveCyclePosts(
 	ctx context.Context,
 	db *storage.DB,
@@ -337,8 +322,6 @@ func saveCyclePosts(
 	return nil
 }
 
-// classifyStepError checks if an error is fatal (context cancellation)
-// and returns the appropriate wrapped error with the step name.
 func classifyStepError(ctx context.Context, step string, err error) (fatal bool, wrapped error) {
 	if err == nil {
 		return false, nil
@@ -353,10 +336,6 @@ func classifyStepError(ctx context.Context, step string, err error) (fatal bool,
 	return false, nil
 }
 
-// filterCompletePosts separates complete and incomplete posts.
-// Returns (completePosts, incompletePosts) where:
-// - completePosts: posts where expected > 0 && expected == actual
-// - incompletePosts: posts where expected == 0 || expected != actual
 func filterCompletePosts(
 	items []downloader.Downloadable,
 	hashes map[string]string,
@@ -397,8 +376,6 @@ func filterCompletePosts(
 	return completePosts, incompletePosts
 }
 
-// handleExtractionAndDownload handles extraction, download, and saving.
-// Returns items, hashes, and any error (fatal cycle errors or non-fatal extraction/download failures).
 func handleExtractionAndDownload(
 	ctx context.Context,
 	dl *downloader.Downloader,
@@ -447,8 +424,6 @@ func handleExtractionAndDownload(
 	return items, hashes, nil
 }
 
-// finalizeFullSyncIfNeeded marks full sync as completed when !isFullSync or if no cycle-level errors occurred.
-// Returns db.SetMetadata error if SetMetadata fails, or nil on success/when !isFullSync.
 func finalizeFullSyncIfNeeded(
 	ctx context.Context,
 	db *storage.DB,
@@ -501,11 +476,14 @@ func run() error {
 		return fmt.Errorf("invalid PUID/PGID: %w", err)
 	}
 
-	if owner.IsNoOp() {
-		slogLogger.Info("PUID/PGID not set — files will be owned by the container user")
-	} else if owner.GetUID() == 0 || owner.GetGID() == 0 {
-		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field",
+	switch {
+	case owner.IsNoOp():
+		slogLogger.Info("PUID/PGID not set — files will be owned by the container user; set PUID/PGID to match your host user (e.g. 1000:1000) to avoid permission issues")
+	case owner.GetUID() == 0 || owner.GetGID() == 0:
+		slogLogger.Warn("partial PUID/PGID configuration — zero value will not change that ownership field (applies mainly to direct binary runs; container entrypoint exits on PUID=0/PGID=0)",
 			"PUID", owner.GetUID(), "PGID", owner.GetGID())
+	default:
+		slogLogger.Info("file ownership configured", "PUID", owner.GetUID(), "PGID", owner.GetGID())
 	}
 
 	// Create context with cancellation
@@ -751,8 +729,6 @@ func runFileReorganization(ctx context.Context, sourceDir, destDir, htmlDir stri
 	return nil
 }
 
-// runReCheckMode verifies that all recorded files exist on disk and resets retry status for missing files.
-// This is useful for recovering from partial downloads, disk corruption, or accidental file deletion.
 func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	fmt.Println("Starting re-check mode...")
 	posts, err := db.GetAllPosts(ctx)
@@ -786,12 +762,6 @@ func runReCheckMode(ctx context.Context, db *storage.DB) error {
 	return nil
 }
 
-// runCycle performs one download cycle.
-//
-// Parameters:
-//   - slogLogger: Structured logger (*slog.Logger) for contextual fields and structured sink.
-//     Must be non-nil. Use this for structured logging with contextual attributes.
-//
 //nolint:cyclop
 func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *downloader.Downloader, cfg *config.Config, slogLogger *slog.Logger) error {
 	fmt.Println("Starting download cycle...")
@@ -864,7 +834,6 @@ func runCycle(ctx context.Context, db *storage.DB, client reddit.Client, dl *dow
 	return nil
 }
 
-// handleAuth runs the OAuth2 code flow to get a refresh token.
 func handleAuth(cfg *config.Config) error {
 	// Validate we have the required credentials
 	if cfg.Reddit.ClientID == "" || cfg.Reddit.ClientSecret == "" {
