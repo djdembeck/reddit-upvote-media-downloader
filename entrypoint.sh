@@ -42,7 +42,7 @@ ensure_group() {
     if getent group appgroup > /dev/null 2>&1; then
         current_gid="$(getent group appgroup | cut -d: -f3)"
         if [ "$current_gid" != "$PGID" ]; then
-            groupmod -g "$PGID" appgroup
+            groupmod -g "$PGID" -o appgroup
         fi
     else
         addgroup -g "$PGID" appgroup
@@ -57,7 +57,7 @@ ensure_user() {
         current_uid="$(id -u appuser)"
         current_gid="$(id -g appuser)"
         if [ "$current_uid" != "$PUID" ] || [ "$current_gid" != "$PGID" ]; then
-            usermod -u "$PUID" -g "$PGID" appuser
+            usermod -u "$PUID" -g "$PGID" -o appuser
         fi
     else
         adduser -D -u "$PUID" -G appgroup -h /home/appuser -s /sbin/nologin appuser
