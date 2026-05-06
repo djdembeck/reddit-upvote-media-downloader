@@ -362,3 +362,59 @@ func TestChownDir_NilLoggerFallsBackToDefault(t *testing.T) {
 		t.Fatalf("ChownDir error should be os.ErrNotExist, got: %v", err)
 	}
 }
+
+func TestIsEPERM(t *testing.T) {
+	if !isEPERM(syscall.EPERM) {
+		t.Fatal("isEPERM should return true for syscall.EPERM")
+	}
+	if isEPERM(syscall.ENOENT) {
+		t.Fatal("isEPERM should return false for syscall.ENOENT")
+	}
+	if isEPERM(errors.New("other")) {
+		t.Fatal("isEPERM should return false for non-syscall errors")
+	}
+}
+
+func TestProcessMatchesTargetUID(t *testing.T) {
+	o := mustNewOwner(t, os.Getuid(), 1000)
+	if !o.processMatchesTargetUID() {
+		t.Fatalf("processMatchesTargetUID should return true when process UID (%d) matches owner UID", os.Getuid())
+	}
+
+	other := mustNewOwner(t, os.Getuid()+9999, 1000)
+	if other.processMatchesTargetUID() {
+		t.Fatal("processMatchesTargetUID should return false when process UID does not match owner UID")
+	}
+}
+
+func TestChown_EPERM_SuppressedWhenProcessMatchesTarget(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: test requires non-root process to trigger EPERM")
+	}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "testfile")
+	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(path, 0444); err != nil {
+		t.Fatal(err)
+	}
+
+	oDiffGID := mustNewOwner(t, os.Getuid(), os.Getgid()+1)
+	if err := oDiffGID.Chown(path); err != nil {
+		t.Fatalf("Chown should suppress EPERM when process UID matches target, got: %v", err)
+	}
+}
+
+func TestChown_NonEPERMErrors_StillReturned(t *testing.T) {
+	o := mustNewOwner(t, 1000, 1000)
+	err := o.Chown("/nonexistent/path/file.txt")
+	if err == nil {
+		t.Fatal("Chown should return error for non-existent path")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Chown error should wrap ENOENT, got: %v", err)
+	}
+}

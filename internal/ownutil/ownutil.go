@@ -4,10 +4,12 @@ package ownutil
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // Owner holds UID and GID.
@@ -76,9 +78,20 @@ func (o *Owner) Chown(path string) error {
 		return nil
 	}
 	if err := os.Lchown(path, o.chownUID(), o.chownGID()); err != nil {
+		if isEPERM(err) && o.processMatchesTargetUID() {
+			return nil
+		}
 		return fmt.Errorf("chown %s: %w", path, err)
 	}
 	return nil
+}
+
+func (o *Owner) processMatchesTargetUID() bool {
+	return os.Getuid() == o.uid
+}
+
+func isEPERM(err error) bool {
+	return errors.Is(err, syscall.EPERM)
 }
 
 // ChownDir recursively changes ownership under dir, respecting ctx.
