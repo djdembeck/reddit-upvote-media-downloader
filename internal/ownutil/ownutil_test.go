@@ -362,3 +362,82 @@ func TestChownDir_NilLoggerFallsBackToDefault(t *testing.T) {
 		t.Fatalf("ChownDir error should be os.ErrNotExist, got: %v", err)
 	}
 }
+
+func TestIsEPERM(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"EPERM", syscall.EPERM, true},
+		{"ENOENT", syscall.ENOENT, false},
+		{"other error", errors.New("other"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isEPERM(tt.err); got != tt.want {
+				t.Errorf("isEPERM(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProcessMatchesTargetUID(t *testing.T) {
+	tests := []struct {
+		name     string
+		ownerUID int
+		expected bool
+	}{
+		{"matches", os.Getuid(), true},
+		{"does not match", os.Getuid() + 9999, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := mustNewOwner(t, tt.ownerUID, 1000)
+			if got := o.processMatchesTargetUID(); got != tt.expected {
+				t.Errorf("processMatchesTargetUID() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestChown_EPERM_SuppressedWhenProcessMatchesTarget(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping: test requires non-root process to trigger EPERM")
+	}
+
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "testfile")
+	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(path, 0444); err != nil {
+		t.Fatal(err)
+	}
+
+	oDiffGID := mustNewOwner(t, os.Getuid(), os.Getgid()+1)
+
+	precheckErr := os.Lchown(path, oDiffGID.chownUID(), oDiffGID.chownGID())
+	if precheckErr == nil {
+		t.Skip("environment does not produce EPERM")
+	}
+	if !errors.Is(precheckErr, syscall.EPERM) {
+		t.Fatalf("precheck got unexpected error: %v", precheckErr)
+	}
+
+	if err := oDiffGID.Chown(path); err == nil {
+		t.Fatal("Chown should return error when target GID differs from file GID")
+	}
+}
+
+func TestChown_NonEPERMErrors_StillReturned(t *testing.T) {
+	o := mustNewOwner(t, 1000, 1000)
+	err := o.Chown("/nonexistent/path/file.txt")
+	if err == nil {
+		t.Fatal("Chown should return error for non-existent path")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Chown error should wrap ENOENT, got: %v", err)
+	}
+}

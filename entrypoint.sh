@@ -64,16 +64,15 @@ ensure_user() {
     fi
 }
 
-# chown_data_dir recursively changes ownership of /data to the configured PUID:PGID.
-# Only performs chown if current ownership differs from expected PUID:PGID.
-chown_data_dir() {
-    if [ -d /data ]; then
-        current_numeric="$(stat -c '%u:%g' /data 2>/dev/null || echo '?:?')"
-        expected_numeric="${PUID}:${PGID}"
-        if [ "$current_numeric" != "$expected_numeric" ]; then
-            chown -R "${PUID}:${PGID}" /data
+chown_app_dirs() {
+    for dir in "$OUTPUT_DIR" "$(dirname "$DB_PATH")" /data; do
+        [ -z "$dir" ] || [ "$dir" = "." ] && continue
+        [ -d "$dir" ] || continue
+        [ "$dir" = "/" ] && continue
+        if find "$dir" \( ! -user "$PUID" -o ! -group "$PGID" \) -print -quit 2>/dev/null | grep -q .; then
+            chown -R -- "${PUID}:${PGID}" "$dir"
         fi
-    fi
+    done
 }
 
 # drop_privileges_and_exec switches to appuser:appgroup and executes the provided command.
@@ -90,6 +89,6 @@ if [ "${0##*/}" = "entrypoint.sh" ]; then
     validate_puid_pgid
     ensure_group
     ensure_user
-    chown_data_dir
+    chown_app_dirs
     drop_privileges_and_exec "$@"
 fi
