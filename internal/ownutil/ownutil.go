@@ -78,12 +78,26 @@ func (o *Owner) Chown(path string) error {
 		return nil
 	}
 	if err := os.Lchown(path, o.chownUID(), o.chownGID()); err != nil {
-		if isEPERM(err) && o.processMatchesTargetUID() {
+		if isEPERM(err) && o.processMatchesTargetUID() && o.ownershipAlreadyMatches(path) {
 			return nil
 		}
 		return fmt.Errorf("chown %s: %w", path, err)
 	}
 	return nil
+}
+
+func (o *Owner) ownershipAlreadyMatches(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	stat, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	uidMatch := o.chownUID() == -1 || int(stat.Uid) == o.chownUID()
+	gidMatch := o.chownGID() == -1 || int(stat.Gid) == o.chownGID()
+	return uidMatch && gidMatch
 }
 
 func (o *Owner) processMatchesTargetUID() bool {

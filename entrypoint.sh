@@ -65,13 +65,12 @@ ensure_user() {
 }
 
 chown_app_dirs() {
-    expected_numeric="${PUID}:${PGID}"
     for dir in "$OUTPUT_DIR" "$(dirname "$DB_PATH")" /data; do
         [ -z "$dir" ] || [ "$dir" = "." ] && continue
         [ -d "$dir" ] || continue
-        current_numeric="$(stat -c '%u:%g' "$dir" 2>/dev/null || echo '?:?')"
-        if [ "$current_numeric" != "$expected_numeric" ]; then
-            chown -R "${PUID}:${PGID}" "$dir"
+        [ "$dir" = "/" ] && continue
+        if find "$dir" \( ! -user "$PUID" -o ! -group "$PGID" \) -print -quit 2>/dev/null | grep -q .; then
+            chown -R -- "${PUID}:${PGID}" "$dir"
         fi
     done
 }
