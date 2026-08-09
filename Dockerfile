@@ -17,8 +17,14 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Version stamping: ARG VERSION is passed at build time (default "devel" for
+# local and CI builds). -ldflags -X injects it into the version package's var.
+ARG VERSION=devel
+
 # Build with CGO enabled for SQLite
-RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o reddit-downloader cmd/downloader/main.go
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo \
+	-ldflags "-w -s -X github.com/djdembeck/reddit-upvote-media-downloader/internal/version.Version=${VERSION}" \
+	-o reddit-downloader cmd/downloader/main.go
 
 # Runtime stage: minimal Alpine image with required runtime dependencies
 # Uses same ALPINE_VERSION as builder for compatibility

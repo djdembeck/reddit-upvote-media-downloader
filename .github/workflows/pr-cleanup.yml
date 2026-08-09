@@ -1,0 +1,43 @@
+name: PR Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: pr-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    name: Delete PR image tags
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Delete PR image from GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="${OWNER,,}/${REPO,,}"
+          TAG="pr-${PR_NUMBER}"
+
+          # Try org endpoint first, fall back to user endpoint
+          for ENDPOINT in "orgs/${OWNER}/packages/container/${REPO,,}" "users/${OWNER}/packages/container/${REPO,,}"; do
+            echo "Checking ${ENDPOINT} for tag ${TAG}..."
+            VERSION_ID=$(gh api "/${ENDPOINT}/versions" --jq ".[] | select(.metadata.container.tags[]? | contains(\"${TAG}\")) | .id" 2>/dev/null | head -1 || true)
+            if [ -n "$VERSION_ID" ]; then
+              echo "Found version ${VERSION_ID} with tag ${TAG}, deleting..."
+              gh api --method DELETE "/${ENDPOINT}/versions/${VERSION_ID}" || echo "Failed to delete (may already be gone)"
+              echo "✓ Deleted ${TAG} image tag"
+              exit 0
+            fi
+          done
+          echo "No image version found with tag ${TAG} — nothing to clean up"
