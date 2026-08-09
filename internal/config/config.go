@@ -27,6 +27,7 @@ type Config struct {
 	Backoff      BackoffConfig
 	SmartPolling SmartPollingConfig
 	Auth         bool
+	Version      bool
 }
 
 // RedditConfig holds Reddit API credentials and settings.
@@ -119,6 +120,7 @@ var (
 	flagBackoffBase    time.Duration
 	flagBackoffMax     time.Duration
 	flagAuth           bool
+	flagVersion        bool
 	flagsInitialized   sync.Once
 )
 
@@ -134,6 +136,7 @@ func initFlags() {
 		flag.DurationVar(&flagBackoffBase, "backoff-base", 0, "Base backoff delay for retries")
 		flag.DurationVar(&flagBackoffMax, "backoff-max", 0, "Max backoff delay for retries")
 		flag.BoolVar(&flagAuth, "auth", false, "Run OAuth2 authentication to get refresh token")
+		flag.BoolVar(&flagVersion, "version", false, "Print version and exit")
 	})
 }
 
@@ -262,6 +265,14 @@ func Load() (*Config, error) {
 	}
 	if flagWasSet("auth") {
 		cfg.Auth = flagAuth
+	}
+	if flagWasSet("version") {
+		cfg.Version = flagVersion
+	}
+
+	// Skip validation for --version (just prints and exits)
+	if cfg.Version {
+		return cfg, nil
 	}
 
 	if err := cfg.Validate(); err != nil {

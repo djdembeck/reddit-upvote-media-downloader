@@ -25,6 +25,7 @@ import (
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/reddit"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/storage"
 	"github.com/djdembeck/reddit-upvote-media-downloader/internal/strutil"
+	"github.com/djdembeck/reddit-upvote-media-downloader/internal/version"
 )
 
 const fullSyncCompleted = "completed"
@@ -443,20 +444,25 @@ func finalizeFullSyncIfNeeded(
 	return nil
 }
 func main() {
-	if err := run(); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg.Version {
+		fmt.Printf("reddit-downloader %s\n", version.Version)
+		return
+	}
+
+	if err := run(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
 //nolint:cyclop,gocyclo
-func run() error {
-	// Load configuration from environment variables
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
+func run(cfg *config.Config) error {
 	// Handle --auth flag: run OAuth2 code flow to get refresh token
 	if cfg.Auth {
 		if err := handleAuth(cfg); err != nil {
@@ -470,6 +476,8 @@ func run() error {
 
 	slogLogger := setupLogger(cfg)
 	slog.SetDefault(slogLogger)
+
+	slogLogger.Info("starting reddit-downloader", "version", version.Version)
 
 	owner, err := ownutil.NewOwner(cfg.Storage.PUID, cfg.Storage.PGID)
 	if err != nil {
